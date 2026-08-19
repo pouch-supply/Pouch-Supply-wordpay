@@ -52,6 +52,7 @@ router.get('/google/url', (req: Request, res: Response) => {
 
     return res.json({
       configured: true,
+      clientId,
       url,
       redirectUri
     });

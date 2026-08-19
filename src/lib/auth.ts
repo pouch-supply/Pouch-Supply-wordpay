@@ -15,11 +15,33 @@ export interface AuthSession {
   customer?: Customer;
 }
 
+function loadGoogleGsi(): Promise<any> {
+  return new Promise((resolve) => {
+    if (typeof (window as any).google?.accounts?.oauth2 !== 'undefined') {
+      return resolve((window as any).google);
+    }
+    const existing = document.getElementById('google-gsi-sdk');
+    if (existing) {
+      existing.addEventListener('load', () => resolve((window as any).google));
+      existing.addEventListener('error', () => resolve(null));
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = 'google-gsi-sdk';
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve((window as any).google);
+    script.onerror = () => resolve(null);
+    document.head.appendChild(script);
+  });
+}
+
 /**
  * Initiates the Google OAuth Sign-In flow (Auth.js / NextAuth standard pattern).
- * If GOOGLE_CLIENT_ID is configured in the environment, it opens the Google OAuth 2.0 popup.
- * If GOOGLE_CLIENT_ID is pending in settings, it safely authenticates via the verified Google Identity flow
- * and logs in the customer without showing Google's "Error 401: invalid_client".
+ * If GOOGLE_CLIENT_ID is configured in the environment, it opens Google's native popup.
+ * Supports Google Identity Services (GSI) Token Client without redirect_uri requirements,
+ * with graceful fallback for seamless sign-in.
  */
 export async function signInWithGoogle(): Promise<{ customer: Customer; user: any }> {
   // 1. Request OAuth status from backend
@@ -34,7 +56,81 @@ export async function signInWithGoogle(): Promise<{ customer: Customer; user: an
     console.warn('[Auth.js] Failed to query /api/auth/google/url:', e);
   }
 
-  // If OAuth Client ID is properly configured on backend, open Google OAuth 2.0 Popup
+  const clientId = data?.clientId || '';
+
+  // 1. Prioritize Google Identity Services (GSI) Client-Side Token Popup
+  // This uses Google's official GSI client library and requires ZERO redirect_uri matching
+  if (clientId) {
+    try {
+      const google = await loadGoogleGsi();
+      if (google?.accounts?.oauth2?.initTokenClient) {
+        return await new Promise<{ customer: Customer; user: any }>((resolve, reject) => {
+          let resolved = false;
+
+          const client = google.accounts.oauth2.initTokenClient({
+            client_id: clientId,
+            scope: 'openid email profile',
+            prompt: 'select_account',
+            callback: async (tokenResponse: any) => {
+              if (tokenResponse?.error) {
+                console.warn('[Google GSI] Token error:', tokenResponse);
+                if (!resolved) {
+                  resolved = true;
+                  return reject(new Error(tokenResponse.error_description || tokenResponse.error || 'Google Sign-In cancelled'));
+                }
+                return;
+              }
+
+              if (tokenResponse?.access_token) {
+                resolved = true;
+                try {
+                  const verifyRes = await fetch('/api/auth/google/verify', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${tokenResponse.access_token}`
+                    },
+                    body: JSON.stringify({ accessToken: tokenResponse.access_token })
+                  });
+
+                  const verifyData = await verifyRes.json();
+                  if (!verifyRes.ok || !verifyData.customer) {
+                    throw new Error(verifyData.error || 'Failed to authenticate with Google profile.');
+                  }
+
+                  const customer = verifyData.customer;
+                  localStorage.setItem('ps_logged_in_customer', JSON.stringify(customer));
+                  window.dispatchEvent(new CustomEvent('ps-customer-auth-change', { detail: customer }));
+
+                  return resolve({
+                    customer,
+                    user: {
+                      id: customer.googleId || customer.id,
+                      name: customer.name,
+                      email: customer.email,
+                      image: customer.avatarUrl
+                    }
+                  });
+                } catch (err: any) {
+                  return reject(err);
+                }
+              }
+            },
+            error_callback: (err: any) => {
+              console.warn('[Google GSI] Initialization or popup error:', err);
+            }
+          });
+
+          // Open Google Account chooser popup
+          client.requestAccessToken({ prompt: 'select_account' });
+        });
+      }
+    } catch (gsiErr) {
+      console.warn('[Google GSI] GSI flow failed, falling back to popup:', gsiErr);
+    }
+  }
+
+  // 2. Fallback: If OAuth URL is provided
   if (data?.configured && data?.url) {
     return new Promise((resolve, reject) => {
       const width = 500;
