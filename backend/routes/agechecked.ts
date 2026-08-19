@@ -3,7 +3,19 @@ import { Router, Request, Response } from 'express';
 const router = Router();
 
 const DEFAULT_BASE_URL = "https://staging.agechecked.com/api/acapiremote/ac0130";
+const DEFAULT_PORTAL_URL = "https://portal.agechecked.com/portal";
 const SECRET_FIELD_NAMES = ["merchantSecretKey", "merchantKey", "secretKey", "merchantSecret"] as const;
+
+// GET /api/agechecked/config - Returns client-safe AgeChecked configuration
+router.get("/config", (req: Request, res: Response) => {
+  const portalUrl = process.env.NEXT_PUBLIC_AGECHECKED_PORTAL_URL || process.env.AGECHECKED_PORTAL_URL || DEFAULT_PORTAL_URL;
+  const publicKey = process.env.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY || process.env.AGECHECKED_PUBLIC_KEY || "";
+  res.json({
+    portalUrl,
+    publicKey,
+    configured: Boolean(process.env.AGECHECKED_SECRET_KEY || publicKey)
+  });
+});
 
 function isApprovedStatus(status?: string | null | number): boolean {
   if (status === null || status === undefined) return false;

@@ -3,7 +3,7 @@ import { Customer, Product, Order, Discount } from '../types';
 import { getWishlistProductTitle } from '../utils/mediaUtils';
 import { parseOrderTime } from '../utils';
 import { motion, AnimatePresence } from 'motion/react';
-import { signInWithGoogleFirebase } from '../lib/firebase';
+import { signInWithGoogle } from '../lib/auth';
 import { 
   User, LogIn, Heart, PlusCircle, Trash2, MapPin, Package, ShoppingBag, 
   Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
@@ -64,17 +64,17 @@ export default function CustomerAccount({
     setErrorMsg('');
     setSuccessMsg('');
     try {
-      const res = await signInWithGoogleFirebase();
+      const res = await signInWithGoogle();
       if (res && res.customer) {
         localStorage.setItem('ps_logged_in_customer', JSON.stringify(res.customer));
         onLogin(res.customer);
         setSuccessMsg(`Signed in as ${res.customer.name || res.customer.email}!`);
       }
     } catch (err: any) {
-      console.warn('[Firebase Google Auth Error]', err);
-      if (err?.code === 'auth/popup-closed-by-user' || err?.message?.includes('closed-by-user')) {
-        setErrorMsg('Google Sign-In popup was closed. Please try again.');
-      } else if (err?.code === 'auth/popup-blocked') {
+      console.warn('[Google Auth Error]', err);
+      if (err?.message?.includes('closed') || err?.message?.includes('cancelled')) {
+        setErrorMsg('Google Sign-In was closed or cancelled. Please try again.');
+      } else if (err?.message?.includes('blocked')) {
         setErrorMsg('Sign-In popup was blocked by browser. Please allow popups for this site.');
       } else {
         setErrorMsg(err?.message || 'Google Sign-In could not be completed.');

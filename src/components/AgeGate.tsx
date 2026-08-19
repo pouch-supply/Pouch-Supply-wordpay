@@ -22,8 +22,13 @@ export interface AgeCheckedResponse {
   [key: string]: unknown;
 }
 
-function getPortalUrl(publicKey: string, returnUrl?: string) {
-  const baseUrl = (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGECHECKED_PORTAL_URL) || "https://staging.agechecked.com/portal";
+function getPortalUrl(publicKey: string, returnUrl?: string, customPortalUrl?: string) {
+  const baseUrl = 
+    customPortalUrl ||
+    (typeof import.meta !== "undefined" && (import.meta as any).env?.NEXT_PUBLIC_AGECHECKED_PORTAL_URL) ||
+    (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_AGECHECKED_PORTAL_URL) ||
+    (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGECHECKED_PORTAL_URL) || 
+    "https://portal.agechecked.com/portal";
 
   try {
     const url = new URL(baseUrl);
@@ -37,12 +42,15 @@ function getPortalUrl(publicKey: string, returnUrl?: string) {
     return url.toString();
   } catch {
     const separator = baseUrl.includes("?") ? "&" : "?";
-    const params = [`publicKey=${encodeURIComponent(publicKey)}`];
+    const params = [];
+    if (publicKey && publicKey !== "PUBLIC_KEY") {
+      params.push(`publicKey=${encodeURIComponent(publicKey)}`);
+    }
     if (returnUrl) {
       params.push(`returnUrl=${encodeURIComponent(returnUrl)}`);
       params.push(`redirectUrl=${encodeURIComponent(returnUrl)}`);
     }
-    return `${baseUrl}${separator}${params.join("&")}`;
+    return `${baseUrl}${params.length ? separator + params.join("&") : ""}`;
   }
 }
 
@@ -77,8 +85,26 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   const [isChecking, setIsChecking] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Age verification (18+) is required to complete your order.");
   const [agecheckId, setAgecheckId] = useState<string | null>(null);
+  const [serverConfig, setServerConfig] = useState<{ portalUrl?: string; publicKey?: string } | null>(null);
 
-  const publicKey = (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY) || "PUBLIC_KEY";
+  const publicKey = 
+    serverConfig?.publicKey ||
+    (typeof import.meta !== "undefined" && (import.meta as any).env?.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY) ||
+    (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_AGECHECKED_PUBLIC_KEY) ||
+    (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY) || 
+    "";
+
+  // Load AgeChecked server configuration
+  useEffect(() => {
+    fetch('/api/agechecked/config')
+      .then(res => res.json())
+      .then(cfg => {
+        if (cfg) {
+          setServerConfig(cfg);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const markApproved = (detail?: AgeCheckedResponse) => {
     if (typeof window === "undefined") return;
@@ -191,14 +217,22 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       });
 
       const data = (await response.json()) as AgeCheckedResponse & { error?: { message?: string; code?: string } };
-      const redirectUrl =
+      let finalRedirectUrl =
         (data as { url?: string }).url ||
         (data as { redirectUrl?: string }).redirectUrl ||
         (data as { redirect_url?: string }).redirect_url;
       const providerMessage =
         data?.error?.message || data?.message || data?.avstatus?.statusText || data?.avstatus?.statustext;
 
-      if (!response.ok || !redirectUrl) {
+      if (!finalRedirectUrl && publicKey) {
+        finalRedirectUrl = getPortalUrl(
+          publicKey,
+          `${window.location.origin}/api/agechecked/callback?returnUrl=${encodeURIComponent(window.location.href)}`,
+          serverConfig?.portalUrl
+        );
+      }
+
+      if (!finalRedirectUrl) {
         const fallbackMessage = providerMessage || "Age verification session creation failed. Please try again.";
         setStatusMessage(fallbackMessage);
         setIsChecking(false);
@@ -208,7 +242,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       setAgecheckId(data?.avstatus?.agecheckid ? String(data.avstatus.agecheckid) : null);
       setStatusMessage("Please complete age verification in the popup window.");
 
-      const popup = window.open(redirectUrl, "agechecked", "width=480,height=720,noopener,noreferrer");
+      const popup = window.open(finalRedirectUrl, "agechecked", "width=480,height=720,noopener,noreferrer");
       if (!popup) {
         setStatusMessage("Popup was blocked by your browser. Please allow popups and try again.");
         setIsChecking(false);

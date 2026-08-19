@@ -8,7 +8,7 @@ import {
   Clock, ExternalLink, Repeat, User
 } from 'lucide-react';
 import SubscriptionIcon from './SubscriptionIcon';
-import { signInWithGoogleFirebase } from '../lib/firebase';
+import { signInWithGoogle } from '../lib/auth';
 import AgeGate, { AgeGateHandle } from './AgeGate';
 import { calculateDiscountAmount, calculateVolumePrice } from '../utils';
 import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed, trackSubscriptionStarted } from '../utils/klaviyo';
@@ -109,7 +109,7 @@ export default function CheckoutView({
   const handleDirectGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
-      const res = await signInWithGoogleFirebase();
+      const res = await signInWithGoogle();
       if (res && res.customer) {
         if (res.customer.name) setFullName(res.customer.name);
         if (res.customer.email) setEmail(res.customer.email);

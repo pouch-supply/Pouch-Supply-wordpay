@@ -281,4 +281,50 @@ export async function handleGoogleOAuthCallback(req: Request, res: Response) {
   }
 }
 
+// Endpoint to get active Auth session
+router.get('/session', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const email = req.headers['x-user-email'] as string;
+      if (email) {
+        const customersList = await fetchResource('customers');
+        const found = customersList.find((c: any) => c.email.toLowerCase() === email.toLowerCase());
+        if (found) {
+          const { passwordHash, ...safeCustomer } = found;
+          return res.json({
+            user: {
+              name: safeCustomer.name,
+              email: safeCustomer.email,
+              image: safeCustomer.avatarUrl
+            },
+            customer: safeCustomer
+          });
+        }
+      }
+    }
+    return res.json({ user: null, customer: null });
+  } catch (err: any) {
+    return res.json({ user: null, customer: null });
+  }
+});
+
+// Endpoint for Auth.js Sign Out
+router.post('/signout', (req: Request, res: Response) => {
+  return res.json({ success: true, message: 'Signed out successfully' });
+});
+
+// Endpoint for Auth.js Providers list
+router.get('/providers', (req: Request, res: Response) => {
+  return res.json({
+    google: {
+      id: 'google',
+      name: 'Google',
+      type: 'oauth',
+      signinUrl: '/api/auth/google/url',
+      callbackUrl: '/auth/google/callback'
+    }
+  });
+});
+
 export default router;
