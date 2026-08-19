@@ -53,10 +53,44 @@ export interface EmailLogEntry {
   metadata?: any;
 }
 
+export function formatResendFromEmail(rawFrom?: string): string {
+  if (!rawFrom || typeof rawFrom !== 'string' || !rawFrom.trim()) {
+    return 'Pouch Supply Co. <onboarding@resend.dev>';
+  }
+
+  const cleaned = rawFrom.trim().replace(/^["']|["']$/g, '');
+
+  // Case 1: Already in valid "Name <email@domain.com>" format
+  const angleMatch = cleaned.match(/^([^<]+)<([^>]+)>$/);
+  if (angleMatch) {
+    const name = angleMatch[1].trim().replace(/[<>"]/g, '');
+    const email = angleMatch[2].trim().replace(/[<>"]/g, '');
+    if (email.includes('@')) {
+      return name ? `${name} <${email}>` : email;
+    }
+  }
+
+  // Case 2: Plain email address "orders@pouch-supply.com"
+  if (cleaned.includes('@') && !cleaned.includes(' ') && !cleaned.includes('<') && !cleaned.includes('>')) {
+    return `Pouch Supply Co. <${cleaned}>`;
+  }
+
+  // Case 3: Mixed string "Pouch Supply orders@pouch-supply.com"
+  const parts = cleaned.split(/\s+/);
+  const emailCandidate = parts.find(p => p.includes('@'));
+  if (emailCandidate) {
+    const email = emailCandidate.replace(/[<>,;"']/g, '').trim();
+    const name = parts.filter(p => !p.includes('@')).join(' ').replace(/[<>,;"']/g, '').trim();
+    return name ? `${name} <${email}>` : email;
+  }
+
+  return 'Pouch Supply Co. <onboarding@resend.dev>';
+}
+
 const DEFAULT_SETTINGS: EmailSettings = {
   enabled: true,
   resendApiKey: process.env.RESEND_API_KEY || '',
-  fromEmail: process.env.RESEND_FROM_EMAIL || 'Pouch Supply Co. <orders@support.pouch-supply.com>',
+  fromEmail: formatResendFromEmail(process.env.RESEND_FROM_EMAIL || 'Pouch Supply Co. <orders@support.pouch-supply.com>'),
   adminNotificationEmail: process.env.ADMIN_NOTIFICATION_EMAIL || 'admin@support.pouch-supply.com',
   templates: {
     order_confirmation: { enabled: true, subject: 'Order Confirmation - Pouch Supply Co.' },
@@ -244,9 +278,8 @@ export async function sendEmail(
 
   try {
     const resend = new Resend(apiKey);
-    let fromEmail = (fromEmailOverride && fromEmailOverride.trim() !== '')
-      ? fromEmailOverride.trim()
-      : (settings.fromEmail || 'Pouch Supply Co. <orders@support.pouch-supply.com>').trim();
+    const rawFrom = fromEmailOverride || settings.fromEmail || process.env.RESEND_FROM_EMAIL || 'Pouch Supply Co. <orders@support.pouch-supply.com>';
+    let fromEmail = formatResendFromEmail(rawFrom);
 
     console.log(`[EmailService] Sending '${type}' via Resend to '${recipient}' (From: ${fromEmail})...`);
 
@@ -257,14 +290,17 @@ export async function sendEmail(
       html
     });
 
-    // Fallback: If custom domain error or invalid from address occurs, retry with onboarding@resend.dev
+    // Fallback: If custom domain error, validation error, or invalid from address occurs, retry with onboarding@resend.dev
     if (resendResponse.error) {
       const errMsg = resendResponse.error.message || String(resendResponse.error);
-      const isDomainOrFromError = errMsg.toLowerCase().includes('domain') ||
+      const isDomainOrFromError = 
+        errMsg.toLowerCase().includes('domain') ||
         errMsg.toLowerCase().includes('not verified') ||
         errMsg.toLowerCase().includes('onboarding') ||
         errMsg.toLowerCase().includes('from') ||
-        errMsg.toLowerCase().includes('invalid');
+        errMsg.toLowerCase().includes('invalid') ||
+        errMsg.toLowerCase().includes('validation') ||
+        (resendResponse.error as any).name === 'validation_error';
 
       if (isDomainOrFromError && !fromEmail.includes('onboarding@resend.dev')) {
         console.warn(`[EmailService] Sender failed (${errMsg}). Retrying with fallback onboarding@resend.dev...`);

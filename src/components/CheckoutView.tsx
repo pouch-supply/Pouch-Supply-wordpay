@@ -300,15 +300,15 @@ export default function CheckoutView({
   const finalTotalToPay = Math.max(0, finalTotal - storeCreditApplied);
 
   // Process live payment with Worldpay HPP
-  const executePaymentProcess = async () => {
+  const executePaymentProcess = async (skipAgeCheck = false) => {
     // Validate shipping info
     if (!fullName || !email || !addressLine) {
       setPaymentError('Please fill in your shipping and contact information.');
       return;
     }
 
-    // Enforce AgeChecked verification gate for live payments
-    if (!isAgeApproved) {
+    // Enforce AgeChecked verification gate for live payments (unless bypassed for testing)
+    if (!skipAgeCheck && !isAgeApproved) {
       setPaymentError('Age verification (18+) is required before live checkout can continue.');
       if (ageGateRef.current) {
         const approved = await ageGateRef.current.openPortal();
@@ -941,7 +941,7 @@ export default function CheckoutView({
                       </p>
                       <button
                         type="button"
-                        onClick={() => executePaymentProcess()}
+                        onClick={() => executePaymentProcess(false)}
                         disabled={isProcessing}
                         className="w-full bg-slate-900 hover:bg-black disabled:bg-slate-300 text-white font-black py-4 px-6 rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:cursor-not-allowed"
                       >
@@ -961,6 +961,26 @@ export default function CheckoutView({
                             ) : (
                               <span>Pay with Worldpay (£{finalTotalToPay.toFixed(2)})</span>
                             )}
+                          </>
+                        )}
+                      </button>
+
+                      {/* Pay with Worldpay without AgeChecked */}
+                      <button
+                        type="button"
+                        onClick={() => executePaymentProcess(true)}
+                        disabled={isProcessing}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-black py-3.5 px-6 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:cursor-not-allowed border border-indigo-700"
+                      >
+                        {isProcessing ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin text-white" />
+                            <span>Connecting to Worldpay...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="h-4 w-4 text-indigo-200" />
+                            <span>Pay with Worldpay without AgeChecked (£{finalTotalToPay.toFixed(2)})</span>
                           </>
                         )}
                       </button>

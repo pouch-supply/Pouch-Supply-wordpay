@@ -256,11 +256,14 @@ router.post("/request-verification", async (req, res) => {
       await saveResource("customers", customersList);
     }
 
-    await sendEmailVerificationEmail(emailTrim, name || found?.name || 'Valued Customer', code);
+    const emailResult = await sendEmailVerificationEmail(emailTrim, name || found?.name || 'Valued Customer', code);
 
     res.json({
       success: true,
-      message: "Verification code sent to your email address."
+      message: emailResult.success
+        ? "Verification code sent to your email address."
+        : "Verification code generated.",
+      devNotice: !emailResult.success ? emailResult.message : undefined
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to send verification code" });

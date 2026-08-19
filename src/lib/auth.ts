@@ -25,7 +25,8 @@ export async function signInWithGoogle(): Promise<{ customer: Customer; user: an
   // 1. Request OAuth status from backend
   let data: any = {};
   try {
-    const res = await fetch('/api/auth/google/url');
+    const clientOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+    const res = await fetch(`/api/auth/google/url?origin=${encodeURIComponent(clientOrigin)}`);
     if (res.ok) {
       data = await res.json();
     }

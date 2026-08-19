@@ -4,15 +4,31 @@ import { sendWelcomeEmail } from '../services/emailService';
 
 const router = Router();
 
+function getRedirectUri(req: Request): string {
+  // 1. Check if NEXTAUTH_URL or APP_URL is explicitly set
+  const envUrl = process.env.NEXTAUTH_URL || process.env.APP_URL;
+  if (envUrl && !envUrl.includes('localhost') && envUrl !== 'MY_APP_URL') {
+    return `${envUrl.replace(/\/+$/, '')}/auth/google/callback`;
+  }
+
+  // 2. Check client passed query origin or header
+  const clientOrigin = (req.query.origin || req.headers['x-client-origin']) as string;
+  if (clientOrigin && (clientOrigin.startsWith('http://') || clientOrigin.startsWith('https://'))) {
+    return `${clientOrigin.replace(/\/+$/, '')}/auth/google/callback`;
+  }
+
+  // 3. Infer from request host and proto (defaulting to https for cloud container)
+  const host = req.get('x-forwarded-host') || req.get('host') || 'localhost:3000';
+  const isCloudHost = host.includes('run.app') || host.includes('.app');
+  const proto = (isCloudHost || req.get('x-forwarded-proto') === 'https' || req.secure) ? 'https' : (req.protocol || 'http');
+  return `${proto}://${host}/auth/google/callback`;
+}
+
 // Endpoint to generate Google OAuth Authorization URL
 router.get('/google/url', (req: Request, res: Response) => {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || '';
-    const host = req.get('host') || 'localhost:3000';
-    const protocol = req.protocol || 'https';
-    
-    // Construct dynamic redirect URI matching request host
-    const redirectUri = `${protocol}://${host}/auth/google/callback`;
+    const redirectUri = getRedirectUri(req);
 
     if (!clientId) {
       // Return configured indicator if client ID is missing
@@ -143,9 +159,7 @@ export async function handleGoogleOAuthCallback(req: Request, res: Response) {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || '';
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || '';
-    const host = req.get('host') || 'localhost:3000';
-    const protocol = req.protocol || 'https';
-    const redirectUri = `${protocol}://${host}/auth/google/callback`;
+    const redirectUri = getRedirectUri(req);
 
     // 1. Exchange authorization code for tokens
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {

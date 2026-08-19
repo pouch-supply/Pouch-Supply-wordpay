@@ -33,6 +33,9 @@ import { prisma } from "./src/lib/prisma";
 export async function createExpressApp() {
   const app = express();
 
+  // Trust reverse proxy for correct proto and host detection in Cloud Run
+  app.set('trust proxy', true);
+
   // Hydrate environment variables (including Cloudinary) from stored layout settings
   try {
     await fetchLayoutSettings();
