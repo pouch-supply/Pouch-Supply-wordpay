@@ -8,34 +8,10 @@ type WorldpayConfig = {
 };
 
 function getWorldpayConfig(): WorldpayConfig {
-  const testMode =
-    String(process.env.WORLDPAY_TEST_MODE || "").toLowerCase() === "true" ||
-    String(process.env.WORLDPAY_ENVIRONMENT || "").toLowerCase() === "test";
-
-  const username = testMode
-    ? process.env.WORLDPAY_TEST_API_USERNAME ||
-      process.env.WORLDPAY_API_USERNAME
-    : process.env.WORLDPAY_API_USERNAME;
-
-  const password = testMode
-    ? process.env.WORLDPAY_TEST_API_PASSWORD ||
-      process.env.WORLDPAY_API_PASSWORD
-    : process.env.WORLDPAY_API_PASSWORD;
-
-  const entity = testMode
-    ? process.env.WORLDPAY_TEST_ENTITY ||
-      process.env.WORLDPAY_ENTITY ||
-      process.env.WORLDPAY_ENTITY_ID
-    : process.env.WORLDPAY_ENTITY ||
-      process.env.WORLDPAY_ENTITY_ID;
-
-  const baseUrl = (
-    testMode
-      ? process.env.WORLDPAY_TEST_BASE_URL ||
-        "https://try.access.worldpay.com"
-      : process.env.WORLDPAY_BASE_URL ||
-        "https://access.worldpay.com"
-  ).replace(/\/+$/, "");
+  const username = process.env.WORLDPAY_API_USERNAME;
+  const password = process.env.WORLDPAY_API_PASSWORD;
+  const entity = process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID;
+  const baseUrl = (process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").replace(/\/+$/, "");
 
   if (!username || !password || !entity) {
     throw new Error(
@@ -45,10 +21,10 @@ function getWorldpayConfig(): WorldpayConfig {
 
   return {
     baseUrl,
-    entity: entity || 'TEST_ENTITY',
-    isTestMode: testMode,
+    entity: entity || '',
+    isTestMode: false,
     authHeader: `Basic ${Buffer.from(
-      `${username || 'user'}:${password || 'pass'}`
+      `${username}:${password}`
     ).toString("base64")}`,
   };
 }
@@ -184,12 +160,7 @@ export async function chargeRecurringSubscription({
     recurringHref.includes('/payments/recurring/sub_') ||
     recurringHref.includes('/payments/recurring/PS');
 
-  const testMode =
-    String(process.env.WORLDPAY_TEST_MODE || "").toLowerCase() === "true" ||
-    String(process.env.WORLDPAY_ENVIRONMENT || "").toLowerCase() === "test" ||
-    String(process.env.WORLDPAY_ENVIRONMENT || "").toLowerCase() === "sandbox";
-
-  if (isSyntheticHref || testMode) {
+  if (isSyntheticHref) {
     console.log(`[Worldpay Subscription] Processing simulated MIT recurring authorization for tx: ${transactionReference}`);
     return {
       id: `WP-SUB-RECURRING-${Date.now().toString().slice(-6)}`,
@@ -198,7 +169,7 @@ export async function chargeRecurringSubscription({
       amount,
       currency,
       authCode: 'AUTH-OK-MIT',
-      paymentMethod: 'Worldpay Recurring Token (Sandbox)',
+      paymentMethod: 'Worldpay Recurring Token',
       timestamp: new Date().toISOString()
     };
   }

@@ -187,10 +187,7 @@ async function saveVerifiedOrder(
       const { calculateNextBillingDate } = await import('../services/subscriptionCron');
       const nextBillingDate = calculateNextBillingDate(billingInterval, new Date());
 
-      const isTestSub = Boolean(pending?.isTestMode || !process.env.WORLDPAY_API_USERNAME || (process.env.WORLDPAY_ENVIRONMENT || '').toLowerCase() === 'test');
-      const recurringHref = isTestSub
-        ? `https://access.worldpay.com/payments/recurring/test-simulation-wp-${details.transactionId || orderId}`
-        : `https://access.worldpay.com/payments/recurring/wp-${details.transactionId || orderId}`;
+      const recurringHref = `https://access.worldpay.com/payments/recurring/wp-${details.transactionId || orderId}`;
       const schemeReference = `SCHEME-${details.transactionId || orderId}`;
       const subAmount = subItem.price && subItem.price > 0 ? Number(subItem.price) : Number(total);
 
