@@ -4,6 +4,7 @@ import { getWishlistProductTitle } from '../utils/mediaUtils';
 import { parseOrderTime } from '../utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
+import SubscriptionIcon from './SubscriptionIcon';
 import { 
   User, LogIn, Heart, PlusCircle, Trash2, MapPin, Package, ShoppingBag, 
   Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
@@ -3248,10 +3249,25 @@ export default function CustomerAccount({
                 <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden bg-white">
                   {selectedOrderDetails.items.map((item, idx) => {
                     const prodImage = allProducts.find(p => p.id === item.productId)?.image || item.image || '';
+                    const isSubscriptionItem = Boolean(
+                      (item as any).isSubscription ||
+                      item.productId?.startsWith('sub-pack') ||
+                      item.productId?.includes('sub-pack') ||
+                      item.productTitle?.toLowerCase().includes('subscription') ||
+                      item.productTitle?.toLowerCase().includes('plan') ||
+                      (item as any).vendor === 'Subscription Pack'
+                    );
+
                     return (
                       <div key={idx} className="flex gap-3 items-center justify-between p-3">
-                        <div className="flex gap-2 items-center min-w-0">
-                          {prodImage && <img src={prodImage} className="w-8 h-8 object-cover rounded bg-slate-50 border border-slate-100" alt="" referrerPolicy="no-referrer" />}
+                        <div className="flex gap-2.5 items-center min-w-0">
+                          {isSubscriptionItem ? (
+                            <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-slate-100 bg-slate-50">
+                              <SubscriptionIcon planName={item.productTitle} className="!w-full !h-full" />
+                            </div>
+                          ) : prodImage ? (
+                            <img src={prodImage} className="w-10 h-10 object-cover rounded-xl bg-slate-50 border border-slate-100 shrink-0" alt="" referrerPolicy="no-referrer" />
+                          ) : null}
                           <div className="min-w-0">
                             <p className="font-bold text-[#071d37] truncate">{item.productTitle}</p>
                             <p className="text-slate-400 text-[10px]">Qty: {item.quantity}</p>
