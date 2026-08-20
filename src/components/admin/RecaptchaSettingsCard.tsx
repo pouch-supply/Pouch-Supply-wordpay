@@ -26,7 +26,14 @@ export function RecaptchaSettingsCard() {
 
   useEffect(() => {
     fetch('/api/email/recaptcha-settings')
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          return await res.json();
+        }
+        return null;
+      })
       .then((data) => {
         if (data) {
           setSettings({

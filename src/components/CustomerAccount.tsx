@@ -10,7 +10,7 @@ import {
   Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
   Copy, Share2, HelpCircle, ShieldAlert, CreditCard, Star, ChevronRight, 
   CheckCircle2, AlertTriangle, Play, Pause, ChevronDown, CheckCircle, Tag, LifeBuoy,
-  Layout, LogOut, Plus, RotateCcw
+  Layout, LogOut, Plus, RotateCcw, Send, Mail, Loader2
 } from 'lucide-react';
 
 interface CustomerAccountProps {
@@ -28,6 +28,7 @@ interface CustomerAccountProps {
   discounts?: Discount[];
   onAddToCart?: (product: Product, qty: number) => void;
   onOpenCart?: () => void;
+  onNavigate?: (tab: string, arg?: string) => void;
 }
 
 export default function CustomerAccount({
@@ -44,7 +45,8 @@ export default function CustomerAccount({
   onUpdateOrder,
   discounts = [],
   onAddToCart,
-  onOpenCart
+  onOpenCart,
+  onNavigate
 }: CustomerAccountProps) {
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'forgot' | 'reset' | 'verify'>('login');
   const [nameInput, setNameInput] = useState('');
@@ -117,6 +119,56 @@ export default function CustomerAccount({
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
+
+  // Support Form state
+  const [supportSubject, setSupportSubject] = useState('');
+  const [supportMessage, setSupportMessage] = useState('');
+  const [supportSubmitting, setSupportSubmitting] = useState(false);
+  const [supportStatus, setSupportStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleSupportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loggedInCustomer) return;
+    if (!supportMessage.trim()) return;
+
+    setSupportSubmitting(true);
+    setSupportStatus(null);
+    try {
+      const res = await fetch('/api/email/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: loggedInCustomer.name || 'Account Member',
+          email: loggedInCustomer.email,
+          phone: loggedInCustomer.phone || '',
+          subject: supportSubject.trim() || 'Help & Support Request from Customer Portal',
+          message: supportMessage.trim()
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setSupportStatus({
+          type: 'success',
+          text: 'Your support request has been submitted successfully to our team! A confirmation email was dispatched to your address.'
+        });
+        setSupportSubject('');
+        setSupportMessage('');
+      } else {
+        setSupportStatus({
+          type: 'error',
+          text: data.error || 'Failed to submit support request. Please try again or reach out to support@pouch-supply.com directly.'
+        });
+      }
+    } catch (err: any) {
+      setSupportStatus({
+        type: 'error',
+        text: err.message || 'Failed to connect to support service. Please try again.'
+      });
+    } finally {
+      setSupportSubmitting(false);
+    }
+  };
 
   // Star Progress System definition and calculations
   const TIERS = [
@@ -451,9 +503,7 @@ export default function CustomerAccount({
         referredCount: referredCount,
         referralCredit: realStoreCredit,
         referralsList: referralsList,
-        savedCards: (loggedInCustomer as any).savedCards || [
-          { id: 'card_1', brand: 'Visa', last4: '4242', exp: '12/28', default: true }
-        ],
+        savedCards: ((loggedInCustomer as any).savedCards || []).filter((c: any) => c.id !== 'card_1'),
         ordersCount: orders.filter(o => o.customerEmail && o.customerEmail.toLowerCase() === loggedInCustomer.email.toLowerCase()).length,
         subItems: (loggedInCustomer as any).subItems || (latestSubOrder && allProducts.length >= 2 ? [
           { productId: allProducts[0].id, title: allProducts[0].title, quantity: Math.floor(chosenCans / 2) || 3, image: allProducts[0].image, price: allProducts[0].price },
@@ -486,7 +536,11 @@ export default function CustomerAccount({
       }
 
       if ((loggedInCustomer as any).unlockedRewards !== undefined) state.unlockedRewards = (loggedInCustomer as any).unlockedRewards;
-      if ((loggedInCustomer as any).savedCards !== undefined) state.savedCards = (loggedInCustomer as any).savedCards;
+      if ((loggedInCustomer as any).savedCards !== undefined) {
+        state.savedCards = ((loggedInCustomer as any).savedCards || []).filter((c: any) => c.id !== 'card_1');
+      } else if (Array.isArray(state.savedCards)) {
+        state.savedCards = state.savedCards.filter((c: any) => c.id !== 'card_1');
+      }
 
       if ((loggedInCustomer as any).subItems !== undefined) {
         state.subItems = (loggedInCustomer as any).subItems;
@@ -531,7 +585,7 @@ export default function CustomerAccount({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: emailInput.toLowerCase().trim() })
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || 'Failed to send password reset request.');
         setSuccessMsg('Password reset link and code dispatched to your email address via Resend!');
         setAuthMode('reset');
@@ -563,7 +617,7 @@ export default function CustomerAccount({
             newPassword: passwordInput
           })
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || 'Password reset failed.');
         setSuccessMsg('Password successfully updated! You can now log in.');
         setAuthMode('login');
@@ -593,7 +647,7 @@ export default function CustomerAccount({
             code: verificationCodeInput.trim()
           })
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || 'Verification failed.');
 
         if (data.customer) {
@@ -639,7 +693,7 @@ export default function CustomerAccount({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: nameInput.trim(), email, phone: phoneInput.trim(), password: passwordInput, referredByCode: referredByCodeInput.trim() })
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || 'Registration failed.');
 
         // Request 6-digit email verification code via Resend
@@ -657,7 +711,7 @@ export default function CustomerAccount({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password: passwordInput })
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || 'Authentication failed.');
 
         onLogin(data.customer);
@@ -1183,7 +1237,15 @@ export default function CustomerAccount({
                 We're here for you. Get in touch with our specialist support team.
               </p>
               <button 
-                onClick={() => setActiveTab('support')}
+                type="button"
+                onClick={() => {
+                  if (onNavigate) {
+                    onNavigate('pages/contact');
+                  } else {
+                    window.history.pushState({}, '', '/pages/contact');
+                    window.dispatchEvent(new Event('popstate'));
+                  }
+                }}
                 className="w-full bg-white hover:bg-slate-100 text-[#071d37] font-bold text-[10px] uppercase tracking-wider py-2 rounded-xl transition-colors cursor-pointer"
               >
                 Contact Support
@@ -2984,19 +3046,20 @@ export default function CustomerAccount({
                     </div>
                     <button 
                       onClick={() => {
-                        const last4 = window.prompt("Enter 4-digit card number (e.g. 4242):", "4242");
+                        const last4 = window.prompt("Enter 4-digit card number (e.g. 4242):", "");
                         if (last4 && last4.trim().length === 4) {
                           const newCard = {
                             id: 'card_' + Date.now(),
                             brand: 'VISA',
                             last4: last4.trim(),
                             exp: '12/28',
-                            default: false
+                            default: (custState?.savedCards || []).length === 0
                           };
-                          setCustState((prev: any) => ({
-                            ...prev,
-                            savedCards: [...(prev.savedCards || []), newCard]
-                          }));
+                          const updatedCards = [...(custState?.savedCards || []), newCard];
+                          updateCustState({
+                            ...custState,
+                            savedCards: updatedCards
+                          });
                         }
                       }}
                       className="text-xs font-black text-[#dfa047] uppercase tracking-wider flex items-center gap-1 hover:underline cursor-pointer"
@@ -3005,22 +3068,47 @@ export default function CustomerAccount({
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {custState.savedCards.map((card: any) => (
-                      <div key={card.id} className="bg-gradient-to-br from-[#071d37] to-[#123157] text-white p-5 rounded-2xl relative overflow-hidden flex flex-col justify-between h-36 shadow-md">
-                        <div className="absolute right-[-10px] bottom-[-10px] w-24 h-24 rounded-full bg-white/5 border border-white/5" />
-                        <div className="flex justify-between items-start">
-                          <span className="text-xs font-bold uppercase tracking-widest text-[#dfa047]">{card.brand} CARD</span>
-                          {card.default && <span className="text-[9px] bg-white/20 px-2 py-0.5 rounded-full font-bold">DEFAULT</span>}
+                  {(!custState?.savedCards || custState.savedCards.length === 0) ? (
+                    <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 p-6 space-y-2">
+                      <CreditCard className="h-8 w-8 mx-auto text-slate-300 stroke-1" />
+                      <p className="text-xs font-bold text-slate-600">No payment methods saved</p>
+                      <p className="text-[10px] text-slate-400 max-w-xs mx-auto">
+                        Payment cards used during checkout or added here will appear in your wallet for recurring subscriptions and quick refills.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {custState.savedCards.map((card: any) => (
+                        <div key={card.id} className="bg-gradient-to-br from-[#071d37] to-[#123157] text-white p-5 rounded-2xl relative overflow-hidden flex flex-col justify-between h-36 shadow-md">
+                          <div className="absolute right-[-10px] bottom-[-10px] w-24 h-24 rounded-full bg-white/5 border border-white/5" />
+                          <div className="flex justify-between items-start">
+                            <span className="text-xs font-bold uppercase tracking-widest text-[#dfa047]">{card.brand} CARD</span>
+                            <div className="flex items-center gap-2">
+                              {card.default && <span className="text-[9px] bg-white/20 px-2 py-0.5 rounded-full font-bold">DEFAULT</span>}
+                              <button
+                                onClick={() => {
+                                  const updatedCards = (custState.savedCards || []).filter((c: any) => c.id !== card.id);
+                                  updateCustState({
+                                    ...custState,
+                                    savedCards: updatedCards
+                                  });
+                                }}
+                                className="text-slate-400 hover:text-red-400 p-1 transition-colors cursor-pointer"
+                                title="Remove card"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="font-mono text-base font-bold tracking-widest mt-4">•••• •••• •••• {card.last4}</p>
+                          <div className="flex justify-between text-[10px] text-slate-300 font-semibold mt-2">
+                            <span>EXPIRY: {card.exp}</span>
+                            <span>POUCH SUPPLY CUSTOMER</span>
+                          </div>
                         </div>
-                        <p className="font-mono text-base font-bold tracking-widest mt-4">•••• •••• •••• {card.last4}</p>
-                        <div className="flex justify-between text-[10px] text-slate-300 font-semibold mt-2">
-                          <span>EXPIRY: {card.exp}</span>
-                          <span>POUCH SUPPLY CUSTOMER</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -3155,35 +3243,96 @@ export default function CustomerAccount({
                   
                   {/* Support form */}
                   <div className="md:col-span-2 bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
-                    <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">Contact Specialist Support</h3>
-                    <p className="text-slate-400 text-[10.5px]">Send a direct message below. Our average client response speed is 15 minutes.</p>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">Contact Specialist Support</h3>
+                        <p className="text-slate-400 text-[10.5px]">Send a direct message below. Submissions are delivered straight to our support dispatch inbox.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onNavigate) {
+                            onNavigate('pages/contact');
+                          } else {
+                            window.history.pushState({}, '', '/pages/contact');
+                            window.dispatchEvent(new Event('popstate'));
+                          }
+                        }}
+                        className="text-[10px] font-bold text-[#071d37] bg-slate-100 hover:bg-slate-200 py-1.5 px-3 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <Mail className="h-3 w-3 text-slate-600" />
+                        Main Contact Page
+                      </button>
+                    </div>
+
+                    {supportStatus && (
+                      <div className={`p-4 rounded-2xl text-xs flex items-start gap-2.5 ${
+                        supportStatus.type === 'success' 
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+                          : 'bg-red-50 text-red-700 border border-red-200'
+                      }`}>
+                        {supportStatus.type === 'success' ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                        )}
+                        <p className="leading-relaxed font-medium">{supportStatus.text}</p>
+                      </div>
+                    )}
                     
                     <form 
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        alert('Message sent successfully! Our client support agents are reviewing your request.');
-                      }} 
+                      onSubmit={handleSupportSubmit} 
                       className="space-y-4"
                     >
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Your Name</label>
-                          <input type="text" readOnly value={loggedInCustomer.name} className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl bg-slate-50 text-slate-500" />
+                          <input type="text" readOnly value={loggedInCustomer.name} className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl bg-slate-50 text-slate-600" />
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Email Address</label>
-                          <input type="email" readOnly value={loggedInCustomer.email} className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl bg-slate-50 text-slate-500" />
+                          <input type="email" readOnly value={loggedInCustomer.email} className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl bg-slate-50 text-slate-600" />
                         </div>
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Subject Topic</label>
-                        <input type="text" required placeholder="e.g., Subscription Swapping question" className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37]" />
+                        <input 
+                          type="text" 
+                          required 
+                          value={supportSubject}
+                          onChange={(e) => setSupportSubject(e.target.value)}
+                          placeholder="e.g., Subscription flavour swapping / Delivery question" 
+                          className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] outline-none" 
+                        />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Detailed Message</label>
-                        <textarea required rows={4} placeholder="Tell us how we can help you today..." className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37]"></textarea>
+                        <textarea 
+                          required 
+                          rows={4} 
+                          value={supportMessage}
+                          onChange={(e) => setSupportMessage(e.target.value)}
+                          placeholder="Tell us how we can help you today..." 
+                          className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] outline-none"
+                        ></textarea>
                       </div>
-                      <button type="submit" className="bg-[#071d37] hover:bg-[#0c2e56] text-white font-bold text-xs uppercase py-2.5 px-6 rounded-xl cursor-pointer">Submit Request</button>
+                      <button 
+                        type="submit" 
+                        disabled={supportSubmitting}
+                        className="bg-[#071d37] hover:bg-[#0c2e56] disabled:opacity-50 text-white font-bold text-xs uppercase py-2.5 px-6 rounded-xl cursor-pointer flex items-center gap-2 transition-all shadow-xs"
+                      >
+                        {supportSubmitting ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Sending to Admin...
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-3.5 w-3.5" />
+                            Submit Request
+                          </>
+                        )}
+                      </button>
                     </form>
                   </div>
 

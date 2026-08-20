@@ -392,21 +392,35 @@ export default function App() {
   useEffect(() => {
     async function loadDataFromDb() {
       try {
+        const safeFetchJson = async (url: string) => {
+          try {
+            const r = await fetch(url);
+            if (!r.ok) return null;
+            const ct = r.headers.get('content-type');
+            if (ct && ct.includes('application/json')) {
+              return await r.json();
+            }
+            return null;
+          } catch {
+            return null;
+          }
+        };
+
         // Fetch store data
         const [
           prodsRes, collsRes, ordersRes, filesRes,
           custsRes, discsRes, pagesRes, blogsRes, layoutRes, devRes
         ] = await Promise.all([
-          fetch('/api/products').then(r => r.ok ? r.json() : null),
-          fetch('/api/collections').then(r => r.ok ? r.json() : null),
-          fetch('/api/orders').then(r => r.ok ? r.json() : null),
-          fetch('/api/files').then(r => r.ok ? r.json() : null),
-          fetch('/api/customers').then(r => r.ok ? r.json() : null),
-          fetch('/api/discounts').then(r => r.ok ? r.json() : null),
-          fetch('/api/custompages').then(r => r.ok ? r.json() : null),
-          fetch('/api/blogs').then(r => r.ok ? r.json() : null),
-          fetch('/api/layoutsettings').then(r => r.ok ? r.json() : null),
-          fetch('/api/devsettings').then(r => r.ok ? r.json() : null),
+          safeFetchJson('/api/products'),
+          safeFetchJson('/api/collections'),
+          safeFetchJson('/api/orders'),
+          safeFetchJson('/api/files'),
+          safeFetchJson('/api/customers'),
+          safeFetchJson('/api/discounts'),
+          safeFetchJson('/api/custompages'),
+          safeFetchJson('/api/blogs'),
+          safeFetchJson('/api/layoutsettings'),
+          safeFetchJson('/api/devsettings'),
         ]);
 
         if (Array.isArray(prodsRes) && prodsRes.length > 0) {
@@ -2254,6 +2268,7 @@ export default function App() {
                 discounts={discounts}
                 onAddToCart={handleAddToCart}
                 onOpenCart={() => setCartOpen(true)}
+                onNavigate={navigateToTab}
               />
             )}
 

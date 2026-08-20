@@ -23,9 +23,16 @@ export function useRecaptcha() {
   useEffect(() => {
     let isMounted = true;
     fetch('/api/email/recaptcha-settings')
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          return await res.json();
+        }
+        return null;
+      })
       .then((data) => {
-        if (isMounted && data.siteKey && typeof data.siteKey === 'string' && data.siteKey.trim().length > 0) {
+        if (isMounted && data && data.siteKey && typeof data.siteKey === 'string' && data.siteKey.trim().length > 0) {
           setSiteKey(data.siteKey.trim());
         }
       })

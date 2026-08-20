@@ -36,8 +36,9 @@ export interface EmailTemplateData {
 }
 
 const BRAND_NAME = "Pouch Supply Co.";
+const BRAND_HEADER_BG = "#e7e7e7";
 const BRAND_PRIMARY = "#071d37";
-const BRAND_ACCENT = "#00e599";
+const BRAND_ACCENT = "#008060";
 const BRAND_BG = "#f8fafc";
 const SUPPORT_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || "support@pouch-supply.com";
 
@@ -54,7 +55,7 @@ function renderBaseHeader(title: string, subtitle?: string, data?: EmailTemplate
     <style>
       body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: ${BRAND_BG}; color: #334155; }
       .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; margin-top: 24px; margin-bottom: 24px; border: 1px solid #e2e8f0; }
-      .header { background-color: ${BRAND_PRIMARY}; padding: 24px 20px; text-align: center; color: #ffffff; }
+      .header { background-color: ${BRAND_HEADER_BG}; padding: 24px 20px; text-align: center; color: #071d37; border-bottom: 1px solid #e2e8f0; }
       .title-box { padding: 24px 24px 12px 24px; text-align: center; }
       .heading { font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 8px 0; }
       .subheading { font-size: 14px; color: #64748b; margin: 0; leading: 1.5; }
@@ -62,7 +63,7 @@ function renderBaseHeader(title: string, subtitle?: string, data?: EmailTemplate
       .card { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
       .btn { display: inline-block; background-color: ${BRAND_PRIMARY}; color: #ffffff !important; font-weight: 700; font-size: 14px; text-decoration: none; padding: 12px 24px; border-radius: 8px; text-transform: uppercase; letter-spacing: 1px; margin-top: 12px; margin-bottom: 12px; }
       .footer { background-color: #0f172a; padding: 24px; text-align: center; font-size: 12px; color: #94a3b8; }
-      .footer a { color: ${BRAND_ACCENT}; text-decoration: none; }
+      .footer a { color: #00e599; text-decoration: none; }
       .item-table { width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px; }
       .item-table th { text-align: left; font-size: 11px; text-transform: uppercase; color: #64748b; border-b: 1px solid #e2e8f0; padding-bottom: 8px; }
       .item-table td { padding: 12px 0; border-b: 1px solid #f1f5f9; font-size: 13px; }
@@ -88,8 +89,8 @@ function renderBaseHeader(title: string, subtitle?: string, data?: EmailTemplate
                 </div>
               </td>
               <td style="vertical-align: middle; text-align: left;">
-                <div style="font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #ffffff; text-transform: uppercase; line-height: 1.1;">POUCH SUPPLY</div>
-                <div style="font-size: 10px; font-weight: 700; color: ${BRAND_ACCENT}; letter-spacing: 2px; text-transform: uppercase;">PREMIUM CANISTERS</div>
+                <div style="font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #071d37; text-transform: uppercase; line-height: 1.1;">POUCH SUPPLY</div>
+                <div style="font-size: 10px; font-weight: 700; color: #008060; letter-spacing: 2px; text-transform: uppercase;">PREMIUM CANISTERS</div>
               </td>
             </tr>
           </table>

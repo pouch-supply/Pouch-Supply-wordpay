@@ -100,6 +100,39 @@ router.post('/settings', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/email/recaptcha-settings
+router.get('/recaptcha-settings', async (_req: Request, res: Response) => {
+  try {
+    const settings = await getRecaptchaSettings();
+    res.json({
+      enabled: settings.enabled,
+      siteKey: settings.siteKey,
+      minScore: settings.minScore,
+      hasSecretKey: Boolean(settings.secretKey && settings.secretKey.trim().length > 0)
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch recaptcha settings' });
+  }
+});
+
+// POST /api/email/recaptcha-settings
+router.post('/recaptcha-settings', async (req: Request, res: Response) => {
+  try {
+    const updated = await saveRecaptchaSettings(req.body);
+    res.json({
+      success: true,
+      settings: {
+        enabled: updated.enabled,
+        siteKey: updated.siteKey,
+        minScore: updated.minScore,
+        hasSecretKey: Boolean(updated.secretKey && updated.secretKey.trim().length > 0)
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to save recaptcha settings' });
+  }
+});
+
 // GET /api/email/logs
 router.get('/logs', async (_req: Request, res: Response) => {
   try {

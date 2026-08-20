@@ -97,7 +97,14 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   // Load AgeChecked server configuration
   useEffect(() => {
     fetch('/api/agechecked/config')
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) return null;
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          return await res.json();
+        }
+        return null;
+      })
       .then(cfg => {
         if (cfg) {
           setServerConfig(cfg);
