@@ -39,7 +39,7 @@ import {
   renderAdminNewOrderTemplate,
   EmailTemplateData
 } from '../services/emailTemplates';
-import { saveResource, saveSingleItem } from '../../serverDb';
+import { saveResource, saveSingleItem, fetchLayoutSettings } from '../../serverDb';
 
 const router = Router();
 
@@ -121,11 +121,20 @@ router.post('/logs/clear', async (_req: Request, res: Response) => {
 });
 
 // POST /api/email/preview - Render HTML for visual previewer
-router.post('/preview', (req: Request, res: Response) => {
+router.post('/preview', async (req: Request, res: Response) => {
   try {
     const { type, customData } = req.body;
     const templateType = (type || 'order_confirmation') as EmailTemplateType;
     const data = getSampleTemplateData(templateType, customData);
+
+    if (!data.headerLogoImage && !data.logoUrl) {
+      try {
+        const layout = await fetchLayoutSettings();
+        if (layout?.headerLogoImage) {
+          data.headerLogoImage = layout.headerLogoImage;
+        }
+      } catch (e) {}
+    }
 
     let html = '';
     switch (templateType) {

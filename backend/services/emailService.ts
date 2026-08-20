@@ -1,5 +1,5 @@
 import { Resend } from 'resend';
-import { fetchResource, saveResource } from '../../serverDb';
+import { fetchResource, saveResource, fetchLayoutSettings } from '../../serverDb';
 import {
   EmailTemplateData,
   renderOrderConfirmationTemplate,
@@ -210,6 +210,16 @@ export async function sendEmail(
 
   // Determine subject
   const subject = customSubject || templateConfig?.subject || `Notification from Pouch Supply Co.`;
+
+  // Hydrate header logo image if not already provided
+  if (!data.headerLogoImage && !data.logoUrl) {
+    try {
+      const layout = await fetchLayoutSettings();
+      if (layout?.headerLogoImage) {
+        data.headerLogoImage = layout.headerLogoImage;
+      }
+    } catch (e) {}
+  }
 
   // Render HTML for template
   let html = '';

@@ -949,58 +949,6 @@ export default function CheckoutView({
                 )}
               </div>
             </div>
-
-          {/* Developer logs */}
-          {showLogs && (
-            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 shadow-2xl space-y-3 font-mono text-xs">
-              <div className="flex items-center justify-between text-slate-450 border-b border-slate-800 pb-2.5">
-                <div className="flex items-center gap-2 text-indigo-400">
-                  <Terminal className="h-4 w-4" />
-                  <span className="font-extrabold text-[10px] tracking-wider uppercase">API Logs</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <button 
-                    onClick={() => setApiLogs([])}
-                    className="text-[9px] underline text-slate-450 hover:text-white cursor-pointer ml-2"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-
-              <div className="max-h-48 overflow-y-auto space-y-3 pr-2">
-                {apiLogs.length === 0 ? (
-                  <p className="text-slate-600 text-[10px] italic py-2">
-                    &gt; No logs yet. Submit a payment to see API requests.
-                  </p>
-                ) : (
-                  apiLogs.map((log, i) => (
-                    <div key={i} className="space-y-1 border-l-2 pl-3.5 border-slate-700/60">
-                      <div className="flex justify-between items-center text-[10px]">
-                        <span className={`font-extrabold ${
-                          log.type === 'REQUEST' ? 'text-blue-400' : log.type === 'RESPONSE' ? 'text-emerald-400' : 'text-red-400'
-                        }`}>
-                          [{log.type}]
-                        </span>
-                        <span className="text-slate-600 font-semibold">{log.timestamp}</span>
-                      </div>
-                      <pre className="text-[10px] text-slate-300 overflow-x-auto bg-slate-900/60 p-2 rounded-lg">
-                        {JSON.stringify(log.payload, null, 2)}
-                      </pre>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-
-          <button
-            onClick={() => setShowLogs(!showLogs)}
-            className="text-[10px] text-slate-400 hover:text-slate-600 font-semibold underline cursor-pointer"
-          >
-            {showLogs ? 'Hide' : 'Show'} Debug Logs
-          </button>
         </div>
 
         {/* Right Side: Order summary */}

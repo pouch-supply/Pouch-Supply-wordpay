@@ -73,7 +73,7 @@ export interface ContactMessageEntry {
 }
 
 export function EmailSettingsTab() {
-  const [activeSubTab, setActiveSubTab] = useState<'config' | 'templates' | 'preview' | 'test' | 'logs' | 'klaviyo' | 'inquiries'>('config');
+  const [activeSubTab, setActiveSubTab] = useState<'config' | 'templates' | 'preview' | 'test' | 'logs' | 'klaviyo'>('config');
   
   // Settings state
   const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null);
@@ -485,15 +485,6 @@ export function EmailSettingsTab() {
             }`}
           >
             <Sparkles className="h-3.5 w-3.5" /> Klaviyo Integration
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('inquiries')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeSubTab === 'inquiries' ? 'bg-emerald-500 text-slate-950 shadow-lg' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            <Mail className="h-3.5 w-3.5" /> Customer Inquiries ({contactMessages.length})
           </button>
         </div>
       </div>
@@ -1259,147 +1250,6 @@ export function EmailSettingsTab() {
               </div>
             )}
           </div>
-        </div>
-      )}
-
-      {/* SUBTAB: Customer Inquiries / Contact Messages */}
-      {activeSubTab === 'inquiries' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-            <div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
-                <Mail className="h-5 w-5 text-emerald-600" /> Customer Contact Submissions
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Messages submitted via the Contact Form section on your storefront, persisted directly in your database.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <input
-                type="text"
-                placeholder="Search by name, email, subject..."
-                value={inquirySearch}
-                onChange={(e) => setInquirySearch(e.target.value)}
-                className="text-xs p-2 border border-slate-200 rounded-lg w-full sm:w-64 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
-              />
-              <button
-                onClick={loadData}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                title="Refresh messages"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-
-          {(() => {
-            const filtered = contactMessages.filter(m => {
-              if (!inquirySearch) return true;
-              const q = inquirySearch.toLowerCase();
-              return (
-                m.name?.toLowerCase().includes(q) ||
-                m.email?.toLowerCase().includes(q) ||
-                m.subject?.toLowerCase().includes(q) ||
-                m.message?.toLowerCase().includes(q)
-              );
-            });
-
-            if (filtered.length === 0) {
-              return (
-                <div className="text-center py-16 bg-slate-50 rounded-2xl border border-dashed border-slate-200 p-6 space-y-3">
-                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-                    <Mail className="h-6 w-6" />
-                  </div>
-                  <h4 className="text-sm font-bold text-slate-800">No Contact Messages Found</h4>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
-                    When customers submit the Contact Form on your storefront, their entries will automatically save into this database log.
-                  </p>
-                </div>
-              );
-            }
-
-            return (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-xs text-slate-500 font-semibold px-1">
-                  <span>Showing {filtered.length} of {contactMessages.length} inquiries</span>
-                </div>
-
-                <div className="space-y-3">
-                  {filtered.map((m) => {
-                    const statusClass = m.status === 'Read' 
-                      ? 'bg-blue-50 text-blue-700 border-blue-200' 
-                      : m.status === 'Replied' 
-                      ? 'bg-purple-50 text-purple-700 border-purple-200' 
-                      : 'bg-emerald-100 text-emerald-800 border-emerald-300 font-extrabold';
-
-                    return (
-                      <div key={m.id} className="p-4 sm:p-5 rounded-2xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-slate-300 transition-all space-y-3 shadow-xs">
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                          <div className="flex items-center gap-3">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] uppercase tracking-wider border ${statusClass}`}>
-                              {m.status || 'Unread'}
-                            </span>
-                            <h4 className="text-sm font-black text-slate-900">{m.subject || 'General Inquiry'}</h4>
-                          </div>
-
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            {new Date(m.createdAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                          <div>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase block">From</span>
-                            <span className="font-bold text-slate-800">{m.name}</span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Email Address</span>
-                            <a href={`mailto:${m.email}`} className="font-bold text-indigo-600 hover:underline">{m.email}</a>
-                          </div>
-                          {m.phone && (
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase block">Phone</span>
-                              <span className="font-bold text-slate-700">{m.phone}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="bg-white p-3 sm:p-4 rounded-xl border border-slate-200/80 text-xs text-slate-700 leading-relaxed font-sans whitespace-pre-wrap">
-                          {m.message}
-                        </div>
-
-                        <div className="flex items-center justify-between pt-1">
-                          <button
-                            onClick={() => handleToggleMessageStatus(m.id, m.status)}
-                            className="text-xs text-slate-600 hover:text-slate-900 font-bold underline cursor-pointer"
-                          >
-                            Mark as {m.status === 'Unread' ? 'Read' : m.status === 'Read' ? 'Replied' : 'Unread'}
-                          </button>
-
-                          <div className="flex items-center gap-3">
-                            <a
-                              href={`mailto:${m.email}?subject=Re: ${encodeURIComponent(m.subject || 'Inquiry')}`}
-                              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg flex items-center gap-1 transition shadow-xs"
-                            >
-                              <Send className="h-3 w-3" /> Reply via Email
-                            </a>
-                            <button
-                              onClick={() => handleDeleteMessage(m.id)}
-                              className="text-red-600 hover:text-red-800 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
-                              title="Delete from database"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" /> Delete
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
         </div>
       )}
     </div>

@@ -699,16 +699,6 @@ export default function CollectionEditor({
                 <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-sm" />
                 <span>Online Store Portal</span>
               </div>
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                <span className="h-2 w-2 rounded-full bg-slate-400 shadow-sm" />
-                <span>Point of Sales Registers</span>
-              </div>
-            </div>
-
-            {/* Warning notify box */}
-            <div className="bg-[#cbdcf7]/25 border border-indigo-150 rounded-xl p-3 text-[10.5px] leading-normal text-slate-600/90 text-left font-sans space-y-1 select-none">
-              <p>🛈 To add this collection to your online store's navigation, you need to update your menu layouts.</p>
-              <button type="button" className="text-indigo-650 hover:text-indigo-850 hover:underline font-bold">Update navigation menus</button>
             </div>
           </div>
 

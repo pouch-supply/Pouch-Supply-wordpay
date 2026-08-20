@@ -174,12 +174,12 @@ export default function Header({
           onClick={() => {
             onTabChange('frontend-home');
           }}
-          className="flex items-center gap-2.5 cursor-pointer group shrink-0 animate-fade-in"
+          className="flex items-center gap-3 cursor-pointer group shrink-0 animate-fade-in"
         >
           {layoutSettings?.headerLogoImage ? (
             <img 
               src={cleanMediaUrl(layoutSettings.headerLogoImage)} 
-              className="max-h-11 max-w-[150px] object-contain rounded-md transition-transform group-hover:scale-102" 
+              className="max-h-13 sm:max-h-14 max-w-[200px] sm:max-w-[240px] object-contain rounded-md transition-transform group-hover:scale-102" 
               alt={layoutSettings?.headerLogoText || 'Pouch Supply'} 
               referrerPolicy="no-referrer"
               onError={(e) => {
@@ -189,14 +189,14 @@ export default function Header({
             />
           ) : (
             <>
-              <div className="w-9 h-9 bg-gradient-to-tr from-[#008060] to-[#00a880] rounded-xl flex items-center justify-center shadow-sm group-hover:scale-105 group-hover:rotate-3 transition-all duration-300">
-                <div className="w-4 h-4 border-2 border-white rounded-md"></div>
+              <div className="w-11 h-11 bg-gradient-to-tr from-[#008060] to-[#00a880] rounded-xl flex items-center justify-center shadow-md group-hover:scale-105 group-hover:rotate-3 transition-all duration-300">
+                <div className="w-5 h-5 border-2 border-white rounded-md"></div>
               </div>
               <div className="flex flex-col">
-                <span className="font-extrabold text-[#1a1c1d] tracking-tight text-base sm:text-lg leading-none transition-colors group-hover:text-[#008060]">
+                <span className="font-black text-[#1a1c1d] tracking-tight text-lg sm:text-xl leading-none transition-colors group-hover:text-[#008060]">
                   {layoutSettings?.headerLogoText || 'Pouch Supply'}
                 </span>
-                <span className="text-[8px] sm:text-[9px] text-[#707579] font-extrabold uppercase tracking-widest mt-1">
+                <span className="text-[9px] sm:text-[10px] text-[#707579] font-black uppercase tracking-widest mt-1">
                   {layoutSettings?.headerLogoSubtext || 'Premium Nicotine'}
                 </span>
               </div>

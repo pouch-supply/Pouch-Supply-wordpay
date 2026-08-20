@@ -1,5 +1,7 @@
 // Email templates for Pouch Supply Co. with responsive cross-client styling
 export interface EmailTemplateData {
+  headerLogoImage?: string;
+  logoUrl?: string;
   customerName?: string;
   customerEmail?: string;
   orderId?: string;
@@ -38,9 +40,10 @@ const BRAND_PRIMARY = "#071d37";
 const BRAND_ACCENT = "#00e599";
 const BRAND_BG = "#f8fafc";
 const SUPPORT_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || "support@pouch-supply.com";
-const LOGO_TEXT = "POUCH SUPPLY CO.";
 
-function renderBaseHeader(title: string, subtitle?: string): string {
+function renderBaseHeader(title: string, subtitle?: string, data?: EmailTemplateData): string {
+  const logoUrl = data?.headerLogoImage || data?.logoUrl || '';
+
   return `
   <!DOCTYPE html>
   <html>
@@ -51,9 +54,7 @@ function renderBaseHeader(title: string, subtitle?: string): string {
     <style>
       body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: ${BRAND_BG}; color: #334155; }
       .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; margin-top: 24px; margin-bottom: 24px; border: 1px solid #e2e8f0; }
-      .header { background-color: ${BRAND_PRIMARY}; padding: 32px 24px; text-align: center; color: #ffffff; }
-      .logo { font-size: 22px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin: 0; color: #ffffff; }
-      .tagline { font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: ${BRAND_ACCENT}; margin-top: 6px; font-weight: 700; }
+      .header { background-color: ${BRAND_PRIMARY}; padding: 24px 20px; text-align: center; color: #ffffff; }
       .title-box { padding: 24px 24px 12px 24px; text-align: center; }
       .heading { font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 8px 0; }
       .subheading { font-size: 14px; color: #64748b; margin: 0; leading: 1.5; }
@@ -76,8 +77,23 @@ function renderBaseHeader(title: string, subtitle?: string): string {
   <body>
     <div class="container">
       <div class="header">
-        <div class="logo">${LOGO_TEXT}</div>
-        <div class="tagline">Premium Nicotine Canisters • UK Lab Standards</div>
+        ${logoUrl ? `
+          <img src="${logoUrl}" alt="${BRAND_NAME}" style="max-height: 52px; max-width: 240px; object-fit: contain; margin: 0 auto; display: block;" />
+        ` : `
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+            <tr>
+              <td style="vertical-align: middle; padding-right: 10px;">
+                <div style="width: 38px; height: 38px; background: #008060; border-radius: 10px; text-align: center; line-height: 38px;">
+                  <span style="color: #ffffff; font-weight: 900; font-size: 18px; font-family: sans-serif;">P</span>
+                </div>
+              </td>
+              <td style="vertical-align: middle; text-align: left;">
+                <div style="font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #ffffff; text-transform: uppercase; line-height: 1.1;">POUCH SUPPLY</div>
+                <div style="font-size: 10px; font-weight: 700; color: ${BRAND_ACCENT}; letter-spacing: 2px; text-transform: uppercase;">PREMIUM CANISTERS</div>
+              </td>
+            </tr>
+          </table>
+        `}
       </div>
       <div class="title-box">
         <h1 class="heading">${title}</h1>
@@ -164,7 +180,7 @@ export function renderOrderConfirmationTemplate(data: EmailTemplateData): string
   const name = data.customerName || 'Valued Customer';
   const orderId = data.orderId || 'PS10001';
 
-  return renderBaseHeader(`Order Confirmation #${orderId}`, `Thank you for your order, ${name}!`) + `
+  return renderBaseHeader(`Order Confirmation #${orderId}`, `Thank you for your order, ${name}!`, data) + `
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -204,7 +220,7 @@ export function renderOrderProcessingTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Valued Customer';
   const orderId = data.orderId || 'PS10001';
 
-  return renderBaseHeader(`Order Processing #${orderId}`, `We are packing your canisters, ${name}!`) + `
+  return renderBaseHeader(`Order Processing #${orderId}`, `We are packing your canisters, ${name}!`, data) + `
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -235,7 +251,7 @@ export function renderOrderShippedTemplate(data: EmailTemplateData): string {
   const tracking = data.trackingNumber || 'GB982341234UK';
   const carrier = data.carrier || 'Royal Mail Tracked 24';
 
-  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`) + `
+  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -264,7 +280,7 @@ export function renderOutForDeliveryTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Valued Customer';
   const orderId = data.orderId || 'PS10001';
 
-  return renderBaseHeader(`Out for Delivery #${orderId}`, `Arriving today, ${name}!`) + `
+  return renderBaseHeader(`Out for Delivery #${orderId}`, `Arriving today, ${name}!`, data) + `
     <div class="card" style="background-color: #f0f9ff; border-color: #bae6fd;">
       <span class="badge badge-info" style="margin-bottom: 8px;">Out for Delivery</span>
       <p style="font-size: 14px; color: #0369a1; font-weight: 700; margin: 0 0 6px 0;">
@@ -284,7 +300,7 @@ export function renderDeliveredTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Valued Customer';
   const orderId = data.orderId || 'PS10001';
 
-  return renderBaseHeader(`Order Delivered #${orderId}`, `Enjoy your pouch supply, ${name}!`) + `
+  return renderBaseHeader(`Order Delivered #${orderId}`, `Enjoy your pouch supply, ${name}!`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0; text-align: center;">
       <span class="badge badge-success" style="margin-bottom: 8px;">Delivered</span>
       <p style="font-size: 15px; color: #166534; font-weight: 800; margin: 0 0 6px 0;">
@@ -310,7 +326,7 @@ export function renderOrderCancelledTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Valued Customer';
   const orderId = data.orderId || 'PS10001';
 
-  return renderBaseHeader(`Order Cancelled #${orderId}`, `Notice regarding your order`) + `
+  return renderBaseHeader(`Order Cancelled #${orderId}`, `Notice regarding your order`, data) + `
     <div class="card" style="background-color: #fef2f2; border-color: #fecaca;">
       <span class="badge badge-danger" style="margin-bottom: 8px;">Cancelled</span>
       <p style="font-size: 13px; color: #991b1b; font-weight: 600; margin: 0 0 4px 0;">
@@ -331,7 +347,7 @@ export function renderOrderRefundedTemplate(data: EmailTemplateData): string {
   const orderId = data.orderId || 'PS10001';
   const refundAmount = data.refundAmount !== undefined ? data.refundAmount : (data.total || 0);
 
-  return renderBaseHeader(`Refund Processed #${orderId}`, `Refund confirmation for ${name}`) + `
+  return renderBaseHeader(`Refund Processed #${orderId}`, `Refund confirmation for ${name}`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
@@ -356,7 +372,7 @@ export function renderOrderExchangedTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Valued Customer';
   const orderId = data.orderId || 'PS10001';
 
-  return renderBaseHeader(`Order Exchange Processed #${orderId}`, `Exchange confirmation for ${name}`) + `
+  return renderBaseHeader(`Order Exchange Processed #${orderId}`, `Exchange confirmation for ${name}`, data) + `
     <div class="card" style="background-color: #f0f9ff; border-color: #bae6fd;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
@@ -385,7 +401,7 @@ export function renderPasswordResetTemplate(data: EmailTemplateData): string {
   const resetLink = data.resetLink || `${data.siteUrl || '#'}`;
   const token = data.resetToken || '';
 
-  return renderBaseHeader(`Reset Your Password`, `Security request for ${name}`) + `
+  return renderBaseHeader(`Reset Your Password`, `Security request for ${name}`, data) + `
     <div class="card" style="text-align: center;">
       <p style="font-size: 13px; color: #334155; margin: 0 0 12px 0;">
         We received a request to reset the password for your account associated with <strong>${data.customerEmail || ''}</strong>.
@@ -418,7 +434,7 @@ export function renderEmailVerificationTemplate(data: EmailTemplateData): string
   const name = data.customerName || 'Customer';
   const code = data.verificationCode || '849201';
 
-  return renderBaseHeader(`Verify Your Email`, `Welcome to ${BRAND_NAME}, ${name}!`) + `
+  return renderBaseHeader(`Verify Your Email`, `Welcome to ${BRAND_NAME}, ${name}!`, data) + `
     <div class="card" style="text-align: center;">
       <p style="font-size: 13px; color: #475569; margin: 0 0 16px 0;">
         Please verify your email address to complete your account setup and access member-only canister pricing.
@@ -440,7 +456,7 @@ export function renderWelcomeTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Friend';
   const code = data.discountCode || 'WELCOME10';
 
-  return renderBaseHeader(`Welcome to ${BRAND_NAME}!`, `Your laboratory pouch subscription begins here`) + `
+  return renderBaseHeader(`Welcome to ${BRAND_NAME}!`, `Your laboratory pouch subscription begins here`, data) + `
     <div class="card" style="background-color: #f8fafc; text-align: center; padding: 24px;">
       <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0 0 12px 0;">
         Welcome to the UK's premier nicotine canister compounding standard.
@@ -466,7 +482,7 @@ export function renderAdminNewOrderTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Customer';
   const total = data.total !== undefined ? data.total : 0;
 
-  return renderBaseHeader(`🚨 New Order #${orderId}`, `Storefront Sale Alert: £${total.toFixed(2)} GBP`) + `
+  return renderBaseHeader(`🚨 New Order #${orderId}`, `Storefront Sale Alert: £${total.toFixed(2)} GBP`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
