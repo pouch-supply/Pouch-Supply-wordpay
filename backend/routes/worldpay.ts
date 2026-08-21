@@ -246,16 +246,7 @@ async function saveVerifiedOrder(
     gatewayAuthCode: details.authCode || 'AUTH-OK',
     cardBrand: details.cardBrand || 'Worldpay Card',
     deliveryMethod: 'Royal Mail Tracked 24/48',
-    trackingId: 'RM' + Math.floor(100000000 + Math.random() * 900000000) + 'GB',
     carrier: 'Royal Mail',
-    trackingHistory: [
-      {
-        status: 'Sender dispatching item',
-        date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        location: 'Pouch Supply Hub, London MC',
-        description: 'We have received sender advice. Royal Mail is awaiting receipt of the physical package.'
-      }
-    ],
     tags: ['Storefront', pending?.isTestMode ? 'Worldpay Test Order' : 'Worldpay Live Order'],
     date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     createdAt: new Date().toISOString(),

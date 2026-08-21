@@ -1403,9 +1403,6 @@ export default function App() {
     cardBrand: string;
     storeCreditApplied?: number;
   }) => {
-    // Generate Royal Mail Track & Trace ID
-    const generatedTrackingId = 'RM' + Math.floor(100000000 + Math.random() * 900000000) + 'GB';
-
     // Construct order
     const newOrder: Order = {
       id: paymentDetails.orderId,
@@ -1423,16 +1420,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       deliveryMethod: 'Royal Mail Tracked 24/48',
       items: paymentDetails.items,
-      trackingId: generatedTrackingId,
-      carrier: 'Royal Mail',
-      trackingHistory: [
-        {
-          status: 'Sender dispatching item',
-          date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          location: 'Pouch Supply Hub, London MC',
-          description: 'We have received sender advice. Royal Mail is awaiting receipt of the physical package.'
-        }
-      ]
+      carrier: 'Royal Mail'
     };
 
     setOrders(prev => [newOrder, ...prev]);
@@ -1471,12 +1459,8 @@ export default function App() {
                 <td style="font-weight: bold; color: #0f172a; text-align: right; padding: 4px 0;">Royal Mail Tracked 24/48</td>
               </tr>
               <tr>
-                <td style="color: #64748b; padding: 4px 0;">Tracking reference number:</td>
-                <td style="font-family: monospace; font-weight: 900; color: #0f172a; text-align: right; padding: 4px 0; font-size: 13px; letter-spacing: 0.5px;">${generatedTrackingId}</td>
-              </tr>
-              <tr>
                 <td style="color: #64748b; padding: 4px 0;">Parcel Status:</td>
-                <td style="font-weight: bold; color: #15803d; text-align: right; padding: 4px 0;">Sender advice received</td>
+                <td style="font-weight: bold; color: #15803d; text-align: right; padding: 4px 0;">Preparing for dispatch</td>
               </tr>
             </table>
 
@@ -1519,16 +1503,16 @@ export default function App() {
 
     const customerEmailObj = {
       to: paymentDetails.customerEmail,
-      subject: `Your Pouch Supply Order Despatch Advice [Royal Mail: ${generatedTrackingId}]`,
-      preview: `Your order #${paymentDetails.orderId} is being prepared. Royal Mail tracking reference: ${generatedTrackingId}.`,
+      subject: `Your Pouch Supply Order Confirmation #${paymentDetails.orderId}`,
+      preview: `Your order #${paymentDetails.orderId} has been confirmed and is being prepared for dispatch with Royal Mail.`,
       body: emailHtml,
       date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
     const adminEmailObj = {
       to: 'scott@pouch-supply.com',
-      subject: `[Copy] Pouch Supply Order Dispatch Reference #${paymentDetails.orderId} [Royal Mail: ${generatedTrackingId}]`,
-      preview: `Dispatched notification for customer ${paymentDetails.customerName} (${paymentDetails.customerEmail}) with Royal Mail ID: ${generatedTrackingId}.`,
+      subject: `[New Order] Pouch Supply Order #${paymentDetails.orderId}`,
+      preview: `New order for customer ${paymentDetails.customerName} (${paymentDetails.customerEmail}) awaiting Royal Mail dispatch.`,
       body: emailHtml,
       date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };

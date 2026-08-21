@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Truck, CheckCircle2, AlertCircle, RefreshCw, Printer, Download, 
-  RotateCcw, ExternalLink, X, Compass, FileText, Send, ShieldCheck
+  RotateCcw, ExternalLink, X, Compass, FileText, Send, ShieldCheck, Edit3, Check
 } from 'lucide-react';
 import { Order } from '../../types';
 
@@ -23,6 +23,12 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   const [returning, setReturning] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Edit Real Tracking Modal / Input state
+  const [showEditTrackingModal, setShowEditTrackingModal] = useState(false);
+  const [customTrackingInput, setCustomTrackingInput] = useState('');
+  const [customCarrierInput, setCustomCarrierInput] = useState(order.carrier || 'Royal Mail Tracked 24');
+  const [savingTracking, setSavingTracking] = useState(false);
+
   // Tracking modal state
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [trackingData, setTrackingData] = useState<any>(null);
@@ -33,6 +39,65 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
 
   const trackingNumber = order.trackingNumber || order.trackingId || order.data?.royalMail?.trackingNumber;
   const isShipped = Boolean(trackingNumber && (order.fulfillmentStatus === 'Shipped' || order.fulfillmentStatus === 'Fulfilled'));
+  const isSimulated = Boolean(order.data?.royalMail?.isSimulated || (trackingNumber && trackingNumber.startsWith('RM') && trackingNumber.length === 13 && !order.data?.royalMail?.isRealApi));
+
+  const handleSaveRealTracking = async (newTracking: string, carrierName: string) => {
+    const trimmed = newTracking.trim();
+    if (!trimmed) {
+      alert('Please enter a valid tracking number.');
+      return;
+    }
+    setSavingTracking(true);
+    setStatusMessage(null);
+    try {
+      const updatedOrder: Order = {
+        ...order,
+        fulfillmentStatus: 'Shipped',
+        trackingNumber: trimmed,
+        trackingId: trimmed,
+        carrier: carrierName || 'Royal Mail Tracked 24',
+        data: {
+          ...(order.data || {}),
+          royalMail: {
+            ...(order.data?.royalMail || {}),
+            trackingNumber: trimmed,
+            carrier: carrierName || 'Royal Mail Tracked 24',
+            shippedAt: order.data?.royalMail?.shippedAt || new Date().toISOString(),
+            isSimulated: false,
+            isRealApi: true
+          }
+        }
+      };
+
+      const res = await fetch(`/api/orders/${order.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedOrder)
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to update tracking on server');
+      }
+
+      onUpdateOrder(updatedOrder);
+      setShowEditTrackingModal(false);
+      setStatusMessage({
+        type: 'success',
+        text: `Real tracking number updated to ${trimmed}.`
+      });
+
+      if (onAddTimelineComment) {
+        onAddTimelineComment(`Updated Royal Mail tracking number to: ${trimmed}`);
+      }
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: err.message || 'Failed to save tracking number'
+      });
+    } finally {
+      setSavingTracking(false);
+    }
+  };
 
   const handleCreateShipment = async () => {
     setCreating(true);
@@ -69,7 +134,8 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
               serviceCode: data.serviceName,
               carrier: data.carrier,
               shippedAt: new Date().toISOString(),
-              isSimulated: data.isSimulated
+              isSimulated: data.isSimulated,
+              isRealApi: !data.isSimulated
             }
           }
         };
@@ -141,7 +207,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   };
 
   const handleCancelShipment = async () => {
-    if (!confirm('Are you sure you want to cancel this Royal Mail shipment?')) return;
+    if (!confirm('Are you sure you want to cancel / clear this Royal Mail shipment? You will be able to enter a real tracking number or regenerate shipment.')) return;
     setCancelling(true);
     setStatusMessage(null);
     try {
@@ -155,17 +221,28 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setStatusMessage({ type: 'success', text: 'Royal Mail shipment cancelled.' });
+        setStatusMessage({ type: 'success', text: 'Royal Mail shipment cleared.' });
         const updated: Order = {
           ...order,
           fulfillmentStatus: 'Unfulfilled',
           trackingNumber: undefined,
           trackingId: undefined,
-          carrier: undefined
+          carrier: undefined,
+          data: {
+            ...(order.data || {}),
+            royalMail: undefined
+          }
         };
+
+        await fetch(`/api/orders/${order.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated)
+        });
+
         onUpdateOrder(updated);
         if (onAddTimelineComment) {
-          onAddTimelineComment('Cancelled Royal Mail shipment.');
+          onAddTimelineComment('Cancelled / cleared Royal Mail shipment details.');
         }
       } else {
         throw new Error(data.error || 'Failed to cancel shipment');
@@ -283,12 +360,38 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
       {/* SHIPPED: Active Tracking & Label Management */}
       {isShipped && (
         <div className="space-y-3 pt-1">
+          {/* Simulated / Preview Tracking Notice */}
+          {isSimulated && (
+            <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <p className="font-bold">
+                  ⚠️ Preview / Test Tracking Reference: <code className="font-mono bg-amber-100/80 px-1 py-0.5 rounded text-amber-950">{trackingNumber}</code>
+                </p>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  This test reference was generated for store simulation and is not yet registered in Royal Mail's public system. To link your real Royal Mail parcel barcode, click <strong>"Enter Real Tracking #"</strong> below or connect your live Click & Drop API Key.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="p-3 bg-white border border-rose-200 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 shadow-2xs">
             <div>
-              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
-                Royal Mail Tracking Number
-              </span>
-              <span className="text-sm font-mono font-black text-rose-950 tracking-wider">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                  Royal Mail Tracking Number
+                </span>
+                {isSimulated ? (
+                  <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.2 rounded">
+                    Test Mode
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
+                    Live Verified
+                  </span>
+                )}
+              </div>
+              <span className="text-sm font-mono font-black text-rose-950 tracking-wider block mt-0.5">
                 {trackingNumber}
               </span>
               <span className="text-xs text-slate-500 font-semibold block">
@@ -297,6 +400,19 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => {
+                  setCustomTrackingInput(trackingNumber || '');
+                  setCustomCarrierInput(order.carrier || 'Royal Mail Tracked 24');
+                  setShowEditTrackingModal(true);
+                }}
+                className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
+                title="Enter or update real Royal Mail tracking number"
+              >
+                <Edit3 className="h-3.5 w-3.5 text-slate-600" />
+                <span>Enter Real Tracking #</span>
+              </button>
+
               <button
                 onClick={handlePrintLabel}
                 className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
@@ -326,10 +442,98 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                 onClick={handleCancelShipment}
                 disabled={cancelling}
                 className="px-2.5 py-1.5 bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-bold text-xs rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
-                title="Cancel Royal Mail Shipment"
+                title="Cancel / Reset Royal Mail Shipment"
               >
                 {cancelling ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-                <span>Cancel</span>
+                <span>Clear</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Real Tracking Number Modal */}
+      {showEditTrackingModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 border border-slate-200 shadow-2xl relative animate-scale">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-rose-600 text-white flex items-center justify-center font-black text-xs">RM</div>
+                <div>
+                  <h3 className="font-black text-sm text-slate-900">Enter Real Royal Mail Tracking Number</h3>
+                  <p className="text-[10px] text-slate-400 font-semibold">Order #{order.id} • {order.customerName}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => !savingTracking && setShowEditTrackingModal(false)}
+                disabled={savingTracking}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-slate-600 text-[11px]">
+                <p className="font-bold text-slate-800">Paste your official Royal Mail barcode:</p>
+                <p>• Standard 13-character code (e.g. <code>JG123456789GB</code>, <code>GB123456789</code>)</p>
+                <p>• 21-character 2D barcode from your Click & Drop or Post Office receipt</p>
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-700 uppercase tracking-wider text-[10px] mb-1">
+                  Royal Mail Tracking Reference
+                </label>
+                <input
+                  type="text"
+                  value={customTrackingInput}
+                  onChange={(e) => setCustomTrackingInput(e.target.value.toUpperCase())}
+                  placeholder="e.g. JG123456789GB"
+                  className="w-full border border-slate-200 p-2.5 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono text-xs font-bold text-slate-900 uppercase"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-700 uppercase tracking-wider text-[10px] mb-1">
+                  Postage Service / Carrier Name
+                </label>
+                <input
+                  type="text"
+                  value={customCarrierInput}
+                  onChange={(e) => setCustomCarrierInput(e.target.value)}
+                  placeholder="e.g. Royal Mail Tracked 24®"
+                  className="w-full border border-slate-200 p-2.5 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-rose-500 text-xs font-medium text-slate-900"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowEditTrackingModal(false)}
+                disabled={savingTracking}
+                className="py-2 px-3.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveRealTracking(customTrackingInput, customCarrierInput)}
+                disabled={savingTracking || !customTrackingInput.trim()}
+                className="py-2 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-md transition-colors disabled:opacity-50"
+              >
+                {savingTracking ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3.5 w-3.5" />
+                    <span>Save Real Tracking Number</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
