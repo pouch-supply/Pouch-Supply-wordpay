@@ -810,6 +810,8 @@ export default function App() {
 
       if (path === '/' || path === '' || path === '/home' || path === '/home/' || path === '/homepage') {
         setCurrentTab('frontend-home');
+      } else if (path === '/checkout' || path === '/checkout/') {
+        setCurrentTab('frontend-checkout');
       } else if (path === '/blogs' || path === '/blogs/') {
         setCurrentTab('blogs');
       } else if (path.startsWith('/blogs/')) {

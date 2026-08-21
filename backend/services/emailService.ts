@@ -115,7 +115,7 @@ export function formatResendFromEmail(rawFrom?: string): string {
 
 const DEFAULT_SETTINGS: EmailSettings = {
   enabled: true,
-  provider: (process.env.EMAIL_PROVIDER as EmailProvider) || 'gmail',
+  provider: (process.env.EMAIL_PROVIDER as EmailProvider) || (process.env.RESEND_API_KEY ? 'resend' : 'resend'),
   gmailUser: process.env.GMAIL_USER || 'scottkivlinpouch@gmail.com',
   gmailAppPassword: process.env.GMAIL_APP_PASSWORD || '',
   smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -125,7 +125,7 @@ const DEFAULT_SETTINGS: EmailSettings = {
   smtpPassword: process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD || '',
   resendApiKey: process.env.RESEND_API_KEY || '',
   fromName: 'Pouch Supply Co.',
-  fromEmail: process.env.GMAIL_USER || process.env.RESEND_FROM_EMAIL || 'scottkivlinpouch@gmail.com',
+  fromEmail: process.env.RESEND_FROM_EMAIL || 'orders@pouch-supply.com',
   adminNotificationEmail: process.env.ADMIN_NOTIFICATION_EMAIL || process.env.GMAIL_USER || 'scottkivlinpouch@gmail.com',
   templates: {
     order_confirmation: { enabled: true, subject: 'Order Confirmation - Pouch Supply Co.' },
@@ -303,19 +303,22 @@ export async function verifyEmailConnection(config?: Partial<EmailSettings>): Pr
   }
 
   if (provider === 'resend') {
-    const key = (merged.resendApiKey || '').trim();
+    const key = (merged.resendApiKey || process.env.RESEND_API_KEY || '').trim();
     if (!key) {
-      return { success: false, provider: 'resend', message: 'Resend API Key is missing.' };
+      return { success: false, provider: 'resend', message: 'Resend API Key is missing. Please enter your Resend API Key (re_...).' };
     }
     try {
       const resend = new Resend(key);
-      const test = await resend.apiKeys.list().catch(() => null);
-      if (test) {
-        return { success: true, provider: 'resend', message: 'Resend API key is valid.' };
+      const test = await resend.apiKeys.list().catch((err: any) => ({ error: err }));
+      if (test && !test.error) {
+        return { success: true, provider: 'resend', message: 'Resend API key is valid and connected successfully!' };
       }
-      return { success: true, provider: 'resend', message: 'Resend configured.' };
+      if (test && test.error) {
+        return { success: false, provider: 'resend', message: `Resend validation failed: ${test.error.message || test.error}` };
+      }
+      return { success: true, provider: 'resend', message: 'Resend API connection initialized.' };
     } catch (err: any) {
-      return { success: false, provider: 'resend', message: `Resend error: ${err.message}` };
+      return { success: false, provider: 'resend', message: `Resend error: ${err.message || String(err)}` };
     }
   }
 

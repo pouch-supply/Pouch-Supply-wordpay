@@ -427,7 +427,7 @@ export function EmailSettingsTab() {
             }`}
           >
             <Server className="w-3.5 h-3.5 text-emerald-600" />
-            Email Transport (Gmail / SMTP)
+            Email Transport (Resend / Gmail / SMTP)
           </button>
 
           <button
@@ -574,9 +574,39 @@ export function EmailSettingsTab() {
                 Select Outgoing Email Provider
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Resend Option */}
+                <button
+                  type="button"
+                  id="provider-resend-btn"
+                  onClick={() => setEmailSettings({ ...emailSettings, provider: 'resend' })}
+                  className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                    emailSettings.provider === 'resend'
+                      ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
+                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-neutral-900 flex items-center justify-center text-white font-bold text-xs">
+                        R
+                      </div>
+                      <span className="font-bold text-sm text-neutral-900">Resend API</span>
+                    </div>
+                    {emailSettings.provider === 'resend' && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-600 text-white rounded-full">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-2">
+                    Direct transactional API with high deliverability via your Resend API Key and custom domain.
+                  </p>
+                </button>
+
                 {/* Gmail Option */}
                 <button
                   type="button"
+                  id="provider-gmail-btn"
                   onClick={() => setEmailSettings({ ...emailSettings, provider: 'gmail' })}
                   className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
                     emailSettings.provider === 'gmail'
@@ -598,13 +628,14 @@ export function EmailSettingsTab() {
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 mt-2">
-                    Send real order emails directly through your Gmail account with 100% inbox delivery and no third-party restrictions.
+                    Send real order emails directly through your Gmail account with 100% inbox delivery.
                   </p>
                 </button>
 
                 {/* Custom SMTP Option */}
                 <button
                   type="button"
+                  id="provider-smtp-btn"
                   onClick={() => setEmailSettings({ ...emailSettings, provider: 'smtp' })}
                   className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
                     emailSettings.provider === 'smtp'
@@ -627,34 +658,6 @@ export function EmailSettingsTab() {
                   </div>
                   <p className="text-[11px] text-neutral-500 mt-2">
                     Connect any custom mail server or corporate SMTP host (Outlook, SendGrid, Amazon SES SMTP).
-                  </p>
-                </button>
-
-                {/* Resend Option */}
-                <button
-                  type="button"
-                  onClick={() => setEmailSettings({ ...emailSettings, provider: 'resend' })}
-                  className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
-                    emailSettings.provider === 'resend'
-                      ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
-                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-neutral-900 flex items-center justify-center text-white font-bold text-xs">
-                        R
-                      </div>
-                      <span className="font-bold text-sm text-neutral-900">Resend API</span>
-                    </div>
-                    {emailSettings.provider === 'resend' && (
-                      <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-600 text-white rounded-full">
-                        Active
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-neutral-500 mt-2">
-                    Developer-focused API requiring DNS domain verification (SPF, DKIM, DMARC).
                   </p>
                 </button>
               </div>
@@ -1197,6 +1200,11 @@ export function EmailSettingsTab() {
                   <span>{testResult.success ? 'Email Dispatched Successfully!' : 'Email Dispatch Failed'}</span>
                 </div>
                 <p>{testResult.message || (testResult.error && String(testResult.error)) || JSON.stringify(testResult)}</p>
+                {testResult.log?.resendId && (
+                  <p className="mt-1 font-mono text-[10px] text-emerald-700 bg-emerald-100/60 px-2 py-1 rounded inline-block">
+                    Resend Email ID: {testResult.log.resendId}
+                  </p>
+                )}
                 {testResult.log?.messageId && (
                   <p className="mt-1 font-mono text-[10px] text-neutral-600">Message ID: {testResult.log.messageId}</p>
                 )}

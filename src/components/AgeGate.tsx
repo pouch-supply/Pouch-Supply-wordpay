@@ -54,10 +54,10 @@ function getPortalUrl(publicKey: string, returnUrl?: string, customPortalUrl?: s
   }
 }
 
-function isApprovedStatus(value?: string | null) {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "approved" || normalized === "true" || normalized === "6" || normalized === "7";
+function isApprovedStatus(value?: string | number | null) {
+  if (value === undefined || value === null) return false;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === "approved" || normalized === "true" || normalized === "6" || normalized === "7" || normalized === "pass" || normalized === "verified";
 }
 
 export interface AgeGateProps {
@@ -81,11 +81,36 @@ export interface AgeGateHandle {
 }
 
 export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = false, onApprovedChange, customerData }, ref) => {
-  const [approved, setApproved] = useState(false);
+  const [approved, setApproved] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    const storedValue = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const params = new URLSearchParams(window.location.search);
+    return (
+      storedValue === "true" ||
+      params.get("agechecked") === "approved" ||
+      params.get("approved") === "true" ||
+      isApprovedStatus(params.get("status"))
+    );
+  });
   const [isChecking, setIsChecking] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("Age verification (18+) is required to complete your order.");
-  const [agecheckId, setAgecheckId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState(
+    approved
+      ? "Your age (18+) has been verified successfully."
+      : "Age verification (18+) is required to complete your order."
+  );
+  const [agecheckId, setAgecheckId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("agecheckid") || window.localStorage.getItem("agechecked-id") || null;
+  });
   const [serverConfig, setServerConfig] = useState<{ portalUrl?: string; publicKey?: string } | null>(null);
+
+  const onApprovedChangeRef = React.useRef(onApprovedChange);
+  useEffect(() => {
+    onApprovedChangeRef.current = onApprovedChange;
+  }, [onApprovedChange]);
+
+  const activeResolverRef = React.useRef<((approved: boolean) => void) | null>(null);
 
   const publicKey = 
     serverConfig?.publicKey ||
@@ -113,18 +138,30 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       .catch(() => {});
   }, []);
 
-  const markApproved = (detail?: AgeCheckedResponse) => {
+  const markApproved = React.useCallback((detail?: AgeCheckedResponse) => {
     if (typeof window === "undefined") return;
 
     window.localStorage.setItem(AGE_APPROVED_STORAGE_KEY, "true");
     window.localStorage.setItem(AGE_APPROVED_AT_STORAGE_KEY, new Date().toISOString());
     setApproved(true);
     setIsChecking(false);
-    const resolvedAgeCheckId = detail?.avstatus?.agecheckid ? String(detail.avstatus.agecheckid) : undefined;
+    
+    const resolvedAgeCheckId = 
+      detail?.avstatus?.agecheckid ? String(detail.avstatus.agecheckid) : 
+      (detail?.agecheckid ? String(detail.agecheckid) : undefined);
+    
     if (resolvedAgeCheckId) {
       setAgecheckId(resolvedAgeCheckId);
+      window.localStorage.setItem("agechecked-id", resolvedAgeCheckId);
     }
     setStatusMessage("Your age (18+) has been verified successfully.");
+
+    if (activeResolverRef.current) {
+      activeResolverRef.current(true);
+      activeResolverRef.current = null;
+    }
+
+    onApprovedChangeRef.current?.(true);
     
     // Dispatch Klaviyo Age Verified Event
     try {
@@ -134,151 +171,235 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         verified_at: new Date().toISOString(),
       });
     } catch (_e) {}
-  };
+  }, [customerData?.email]);
 
+  // Sync with localStorage on mount & URL parameters
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const storedValue = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
     const params = new URLSearchParams(window.location.search);
-    const isApproved =
+    const isApprovedFromParam =
       storedValue === "true" ||
       params.get("agechecked") === "approved" ||
       params.get("approved") === "true" ||
       isApprovedStatus(params.get("status"));
 
-    setApproved(isApproved);
-    if (params.get("agecheckid")) {
-      setAgecheckId(params.get("agecheckid"));
+    if (isApprovedFromParam && !approved) {
+      markApproved({
+        avstatus: { agecheckid: params.get("agecheckid") || undefined }
+      });
     }
-    setStatusMessage(
-      isApproved
-        ? "Your age (18+) has been verified successfully."
-        : "Age verification (18+) is required to complete your order."
-    );
-  }, []);
+  }, [approved, markApproved]);
 
-  useEffect(() => {
-    onApprovedChange?.(approved);
-  }, [approved, onApprovedChange]);
-
+  // Listen to postMessage, storage events & BroadcastChannel
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const handleMessage = (event: MessageEvent) => {
-      const payload = event.data;
-      const isApprovedPayload =
-        payload && typeof payload === "object" && (payload as { type?: string; status?: string }).type === "agechecked-approved";
-      const isApprovedStatusMsg =
-        payload && typeof payload === "object" && (payload as { status?: string }).status === "approved";
-
-      if (isApprovedPayload || isApprovedStatusMsg) {
-        if (payload?.agecheckid) {
-          setAgecheckId(String(payload.agecheckid));
+      let payload = event.data;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          if (payload === "agechecked-approved" || payload === "approved") {
+            markApproved();
+            return;
+          }
         }
+      }
+
+      if (!payload || typeof payload !== "object") return;
+
+      const isApproved =
+        payload.type === "agechecked-approved" ||
+        payload.event === "agechecked:approved" ||
+        payload.event === "agechecked-verified" ||
+        isApprovedStatus(payload.status) ||
+        payload.approved === true ||
+        payload.approved === "true" ||
+        (typeof payload.statusText === "string" && isApprovedStatus(payload.statusText)) ||
+        (typeof payload.statustext === "string" && isApprovedStatus(payload.statustext)) ||
+        (payload.avstatus && (
+          isApprovedStatus(payload.avstatus.status) ||
+          isApprovedStatus(payload.avstatus.statustext) ||
+          isApprovedStatus(payload.avstatus.statusText)
+        ));
+
+      if (isApproved) {
         markApproved(payload as AgeCheckedResponse);
       }
     };
 
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === AGE_APPROVED_STORAGE_KEY && e.newValue === "true") {
+        markApproved();
+      }
+    };
+
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
+    window.addEventListener("storage", handleStorage);
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        bc = new BroadcastChannel("agechecked_channel");
+        bc.onmessage = (ev) => {
+          if (ev.data && (ev.data.type === "agechecked-approved" || ev.data.approved === true || ev.data.status === "approved")) {
+            markApproved(ev.data);
+          }
+        };
+      }
+    } catch (_e) {}
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      window.removeEventListener("storage", handleStorage);
+      if (bc) {
+        bc.close();
+      }
+    };
+  }, [markApproved]);
 
   const resetApproval = () => {
     if (typeof window === "undefined") return;
 
     window.localStorage.removeItem(AGE_APPROVED_STORAGE_KEY);
     window.localStorage.removeItem(AGE_APPROVED_AT_STORAGE_KEY);
+    window.localStorage.removeItem("agechecked-id");
     setApproved(false);
     setIsChecking(false);
     setAgecheckId(null);
     setStatusMessage("Age verification (18+) is required to complete your order.");
+    onApprovedChangeRef.current?.(false);
   };
 
   const openPortal = async (): Promise<boolean> => {
     if (typeof window === "undefined") return approved;
+
+    // Check localStorage immediately
+    if (window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true") {
+      setApproved(true);
+      return true;
+    }
 
     if (approved) return true;
 
     setIsChecking(true);
     setStatusMessage("Connecting to AgeChecked verification service...");
 
-    try {
-      const nameParts = (customerData?.name || "Customer").split(" ");
-      const firstName = nameParts[0] || "Customer";
-      const lastName = nameParts.slice(1).join(" ") || customerData?.surname || "Customer";
+    return new Promise<boolean>(async (resolve) => {
+      activeResolverRef.current = resolve;
 
-      const response = await fetch("/api/agechecked/init", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: firstName,
-          surname: lastName,
-          dob: customerData?.dob || "01/01/2000",
-          postcode: customerData?.postcode || "EC1A 1BB",
-          countrycode: customerData?.countrycode || "GB",
-          email: customerData?.email || "customer@example.com",
-          reference: customerData?.reference || `ref-${Date.now()}`,
-          withforce: "true",
-        }),
-      });
+      try {
+        const nameParts = (customerData?.name || "Customer").split(" ");
+        const firstName = nameParts[0] || "Customer";
+        const lastName = nameParts.slice(1).join(" ") || customerData?.surname || "Customer";
 
-      const data = (await response.json()) as AgeCheckedResponse & { error?: { message?: string; code?: string } };
-      let finalRedirectUrl =
-        (data as { url?: string }).url ||
-        (data as { redirectUrl?: string }).redirectUrl ||
-        (data as { redirect_url?: string }).redirect_url;
-      const providerMessage =
-        data?.error?.message || data?.message || data?.avstatus?.statusText || data?.avstatus?.statustext;
+        const response = await fetch("/api/agechecked/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: firstName,
+            surname: lastName,
+            dob: customerData?.dob || "01/01/2000",
+            postcode: customerData?.postcode || "EC1A 1BB",
+            countrycode: customerData?.countrycode || "GB",
+            email: customerData?.email || "customer@example.com",
+            reference: customerData?.reference || `ref-${Date.now()}`,
+            withforce: "true",
+          }),
+        });
 
-      if (!finalRedirectUrl && publicKey) {
-        finalRedirectUrl = getPortalUrl(
-          publicKey,
-          `${window.location.origin}/api/agechecked/callback?returnUrl=${encodeURIComponent(window.location.href)}`,
-          serverConfig?.portalUrl
-        );
-      }
+        const data = (await response.json()) as AgeCheckedResponse & { error?: { message?: string; code?: string } };
+        let finalRedirectUrl =
+          (data as { url?: string }).url ||
+          (data as { redirectUrl?: string }).redirectUrl ||
+          (data as { redirect_url?: string }).redirect_url;
+        const providerMessage =
+          data?.error?.message || data?.message || data?.avstatus?.statusText || data?.avstatus?.statustext;
 
-      if (!finalRedirectUrl) {
-        const fallbackMessage = providerMessage || "Age verification session creation failed. Please try again.";
-        setStatusMessage(fallbackMessage);
-        setIsChecking(false);
-        return false;
-      }
-
-      setAgecheckId(data?.avstatus?.agecheckid ? String(data.avstatus.agecheckid) : null);
-      setStatusMessage("Please complete age verification in the popup window.");
-
-      const popup = window.open(finalRedirectUrl, "agechecked", "width=480,height=720,noopener,noreferrer");
-      if (!popup) {
-        setStatusMessage("Popup was blocked by your browser. Please allow popups and try again.");
-        setIsChecking(false);
-        return false;
-      }
-
-      const checkPopup = window.setInterval(() => {
-        if (!popup.closed) return;
-        window.clearInterval(checkPopup);
-        setIsChecking(false);
-        const isApprovedNow = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true";
-        if (!isApprovedNow) {
-          setStatusMessage("Verification window closed before completion. Please try again.");
+        if (!finalRedirectUrl && publicKey) {
+          finalRedirectUrl = getPortalUrl(
+            publicKey,
+            `${window.location.origin}/api/agechecked/callback?returnUrl=${encodeURIComponent(window.location.href)}`,
+            serverConfig?.portalUrl
+          );
         }
-      }, 500);
 
-      return false;
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Age verification failed.");
-      setIsChecking(false);
-      return false;
-    }
+        if (!finalRedirectUrl) {
+          const fallbackMessage = providerMessage || "Age verification session creation failed. Please try again.";
+          setStatusMessage(fallbackMessage);
+          setIsChecking(false);
+          activeResolverRef.current = null;
+          resolve(false);
+          return;
+        }
+
+        if (data?.avstatus?.agecheckid) {
+          setAgecheckId(String(data.avstatus.agecheckid));
+        }
+        setStatusMessage("Please complete age verification in the popup window.");
+
+        // Open popup with window.opener intact (no noopener/noreferrer)
+        const width = 500;
+        const height = 720;
+        const left = Math.max(0, (window.screen.width - width) / 2);
+        const top = Math.max(0, (window.screen.height - height) / 2);
+        const windowFeatures = `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+        
+        const popup = window.open(finalRedirectUrl, "agechecked_popup", windowFeatures);
+        if (!popup) {
+          setStatusMessage("Popup was blocked by your browser. Please allow popups and click Verify Age again.");
+          setIsChecking(false);
+          activeResolverRef.current = null;
+          resolve(false);
+          return;
+        }
+
+        const checkPopup = window.setInterval(() => {
+          // Check if approved in localStorage while popup is open
+          if (window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true") {
+            window.clearInterval(checkPopup);
+            markApproved();
+            try {
+              if (!popup.closed) popup.close();
+            } catch (_e) {}
+            return;
+          }
+
+          if (popup.closed) {
+            window.clearInterval(checkPopup);
+            setIsChecking(false);
+            const isApprovedNow = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true";
+            if (isApprovedNow) {
+              markApproved();
+            } else {
+              setStatusMessage("Verification window closed. If you completed verification, please click Verify Age again.");
+              if (activeResolverRef.current) {
+                activeResolverRef.current(false);
+                activeResolverRef.current = null;
+              }
+            }
+          }
+        }, 400);
+
+      } catch (error) {
+        setStatusMessage(error instanceof Error ? error.message : "Age verification failed.");
+        setIsChecking(false);
+        if (activeResolverRef.current) {
+          activeResolverRef.current(false);
+          activeResolverRef.current = null;
+        }
+      }
+    });
   };
 
   useImperativeHandle(ref, () => ({
     openPortal,
     resetApproval,
     isApproved: approved,
-  }));
+  }), [approved]);
 
   return (
     <div

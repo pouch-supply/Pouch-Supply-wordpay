@@ -165,6 +165,27 @@ router.post("/init", async (req: Request, res: Response) => {
   });
 });
 
+// In-memory verification cache for active session references
+const verifiedSessions = new Map<string, { approved: boolean; agecheckid: string; timestamp: number }>();
+
+// GET /api/agechecked/status - Check if reference or agecheckid has been verified
+router.get("/status", (req: Request, res: Response) => {
+  const reference = String(req.query.reference || "");
+  const agecheckid = String(req.query.agecheckid || "");
+
+  if (reference && verifiedSessions.has(reference)) {
+    const data = verifiedSessions.get(reference)!;
+    return res.json({ success: true, ...data });
+  }
+
+  if (agecheckid && verifiedSessions.has(agecheckid)) {
+    const data = verifiedSessions.get(agecheckid)!;
+    return res.json({ success: true, ...data });
+  }
+
+  res.json({ success: false, approved: false });
+});
+
 // GET /api/agechecked/demo-portal - Staging/Sandbox portal
 router.get("/demo-portal", (req: Request, res: Response) => {
   const reference = String(req.query.reference || "checkout-ref");
@@ -201,19 +222,41 @@ router.get("/demo-portal", (req: Request, res: Response) => {
         </div>
         <script>
           function approve() {
-            if (window.opener) {
-              window.opener.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}' }, '*');
-              window.close();
+            try {
+              localStorage.setItem('agechecked-approved', 'true');
+              localStorage.setItem('agechecked-verified-at', new Date().toISOString());
+              localStorage.setItem('agechecked-id', '${agecheckid}');
+            } catch(e) {}
+
+            try {
+              if (typeof BroadcastChannel !== 'undefined') {
+                const bc = new BroadcastChannel('agechecked_channel');
+                bc.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}' });
+                bc.close();
+              }
+            } catch(e) {}
+
+            if (window.opener && !window.opener.closed) {
+              try {
+                window.opener.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', avstatus: { status: 6, statustext: 'Approved' } }, '*');
+                window.opener.postMessage('agechecked-approved', '*');
+              } catch(e) {}
+              setTimeout(function() { window.close(); }, 150);
             } else {
-              window.location.href = '/checkout?agechecked=approved&status=approved&agecheckid=${agecheckid}';
+              window.location.href = '/pages/checkout?agechecked=approved&status=approved&agecheckid=${agecheckid}';
             }
           }
           function decline() {
-            if (window.opener) {
-              window.opener.postMessage({ type: 'agechecked-declined', status: 'declined' }, '*');
-              window.close();
+            try {
+              localStorage.setItem('agechecked-approved', 'false');
+            } catch(e) {}
+            if (window.opener && !window.opener.closed) {
+              try {
+                window.opener.postMessage({ type: 'agechecked-declined', status: 'declined' }, '*');
+              } catch(e) {}
+              setTimeout(function() { window.close(); }, 150);
             } else {
-              window.location.href = '/checkout?agechecked=declined&status=declined';
+              window.location.href = '/pages/checkout?agechecked=declined&status=declined';
             }
           }
         </script>
@@ -229,10 +272,16 @@ const handleCallback = (req: Request, res: Response) => {
 
   const status = String(query.status || body.status || body.avstatus?.status || "");
   const statusText = String(query.statusText || query.statustext || body.statusText || body.statustext || body.avstatus?.statusText || body.avstatus?.statustext || "");
-  const agecheckid = String(query.agecheckid || query.ageverifiedid || body.agecheckid || body.avstatus?.agecheckid || "");
-  const returnUrl = String(query.returnUrl || query.redirectUrl || query.return || body.returnUrl || body.redirectUrl || "/checkout");
+  const agecheckid = String(query.agecheckid || query.ageverifiedid || body.agecheckid || body.avstatus?.agecheckid || `AC-${Date.now()}`);
+  const reference = String(query.reference || body.reference || "");
+  const returnUrl = String(query.returnUrl || query.redirectUrl || query.return || body.returnUrl || body.redirectUrl || "/pages/checkout");
 
   const approved = isApprovedStatus(status) || query.approved === "true" || query.agechecked === "approved" || body.approved === true || statusText.toLowerCase() === "approved";
+
+  if (approved) {
+    if (reference) verifiedSessions.set(reference, { approved: true, agecheckid, timestamp: Date.now() });
+    if (agecheckid) verifiedSessions.set(agecheckid, { approved: true, agecheckid, timestamp: Date.now() });
+  }
 
   if (req.headers.accept?.includes("application/json") || req.xhr) {
     return res.json({
@@ -254,21 +303,50 @@ const handleCallback = (req: Request, res: Response) => {
       <body>
         <script>
           try {
-            if (window.opener) {
+            localStorage.setItem('agechecked-approved', '${approved ? "true" : "false"}');
+            if (${approved}) {
+              localStorage.setItem('agechecked-verified-at', new Date().toISOString());
+              localStorage.setItem('agechecked-id', '${agecheckid}');
+            }
+          } catch(e) {}
+
+          try {
+            if (typeof BroadcastChannel !== 'undefined') {
+              const bc = new BroadcastChannel('agechecked_channel');
+              bc.postMessage({ 
+                type: ${approved ? "'agechecked-approved'" : "'agechecked-declined'"}, 
+                status: '${approved ? "approved" : "declined"}',
+                agecheckid: '${agecheckid}',
+                approved: ${approved}
+              });
+              bc.close();
+            }
+          } catch(e) {}
+
+          try {
+            if (window.opener && !window.opener.closed) {
               window.opener.postMessage({ 
                 type: ${approved ? "'agechecked-approved'" : "'agechecked-declined'"}, 
                 status: '${approved ? "approved" : "declined"}',
-                agecheckid: '${agecheckid}'
+                agecheckid: '${agecheckid}',
+                approved: ${approved},
+                avstatus: { status: ${approved ? '6' : '0'}, statustext: '${approved ? "Approved" : "Declined"}' }
               }, '*');
-              window.close();
+              if (${approved}) {
+                window.opener.postMessage('agechecked-approved', '*');
+              }
+              setTimeout(function() { window.close(); }, 150);
             } else {
-              window.location.href = '${returnUrl}${returnUrl.includes('?') ? '&' : '?'}agechecked=${approved ? "approved" : "declined"}&agecheckid=${agecheckid}';
+              window.location.href = '${returnUrl}${returnUrl.includes('?') ? '&' : '?'}agechecked=${approved ? "approved" : "declined"}&status=${approved ? "approved" : "declined"}&agecheckid=${agecheckid}';
             }
           } catch(e) {
             window.location.href = '${returnUrl}';
           }
         </script>
-        <p>AgeChecked processing complete. Redirecting...</p>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px;">
+          <h2>AgeChecked Processing Complete</h2>
+          <p>You may now return to your checkout window.</p>
+        </div>
       </body>
     </html>
   `);

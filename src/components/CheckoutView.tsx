@@ -81,8 +81,43 @@ export default function CheckoutView({
     if (typeof window === 'undefined') return false;
     const stored = window.localStorage.getItem('agechecked-approved');
     const params = new URLSearchParams(window.location.search);
-    return stored === 'true' || params.get('agechecked') === 'approved' || params.get('approved') === 'true';
+    return (
+      stored === 'true' ||
+      params.get('agechecked') === 'approved' ||
+      params.get('approved') === 'true' ||
+      params.get('status') === '6' ||
+      params.get('status') === '7' ||
+      params.get('status') === 'approved'
+    );
   });
+
+  // Keep isAgeApproved synchronized with localStorage & storage events
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const checkAgeApprovedStorage = () => {
+      const stored = window.localStorage.getItem('agechecked-approved');
+      if (stored === 'true') {
+        setIsAgeApproved(true);
+      }
+    };
+
+    checkAgeApprovedStorage();
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'agechecked-approved') {
+        setIsAgeApproved(e.newValue === 'true');
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('focus', checkAgeApprovedStorage);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('focus', checkAgeApprovedStorage);
+    };
+  }, []);
 
   // Logging for development
   const [showLogs, setShowLogs] = useState(false);
@@ -303,6 +338,8 @@ export default function CheckoutView({
         if (!approved) {
           return;
         }
+        currentAgeVerified = true;
+        setIsAgeApproved(true);
       } else {
         return;
       }
@@ -832,12 +869,6 @@ export default function CheckoutView({
                       setIsAgeApproved(approved);
                       if (approved) {
                         setPaymentError(null);
-                        // Auto-proceed with checkout upon successful AgeChecked verification if fields are filled
-                        if (fullName && email && addressLine && !isProcessing) {
-                          setTimeout(() => {
-                            executePaymentProcess(true);
-                          }, 300);
-                        }
                       }
                     }}
                     customerData={{
