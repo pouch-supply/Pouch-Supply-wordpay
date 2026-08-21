@@ -863,10 +863,14 @@ export async function getRoyalMailTracking(trackingNumberOrQuery: string): Promi
 
   if (matchedOrder?.trackingNumber) {
     trackingNumber = matchedOrder.trackingNumber;
+  } else if (matchedOrder?.data?.royalMail?.trackingNumber) {
+    trackingNumber = matchedOrder.data.royalMail.trackingNumber;
   } else if (matchedOrder?.trackingId) {
     trackingNumber = matchedOrder.trackingId;
-  } else if (!trackingNumber.startsWith('RM') && !trackingNumber.startsWith('GB')) {
-    trackingNumber = `RM${Math.floor(100000000 + Math.random() * 900000000)}GB`;
+  } else if (query && query.length >= 9 && !query.startsWith('PS') && !query.startsWith('ord_')) {
+    trackingNumber = query;
+  } else if (!trackingNumber || trackingNumber.startsWith('PS')) {
+    trackingNumber = matchedOrder?.id ? `RM-${matchedOrder.id}` : query;
   }
 
   // Attempt live Click & Drop API lookup if we have an API key and RM Order ID / Reference
