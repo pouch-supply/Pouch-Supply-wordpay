@@ -386,12 +386,24 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
               <div className="space-y-4">
                 <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
                   <div className="flex justify-between items-center text-xs font-bold text-slate-800">
-                    <span>Tracking #: <code className="font-mono text-rose-900">{trackingData.trackingNumber}</code></span>
+                    <span>Tracking #: <code className="font-mono text-rose-900 select-all">{trackingData.trackingNumber || trackingNumber}</code></span>
                     <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-[10px] uppercase font-black">
-                      {trackingData.status}
+                      {trackingData.status || 'Active'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-600 mt-1">Est. Delivery: {trackingData.estimatedDelivery}</p>
+                  <p className="text-[11px] text-slate-600 mt-1">Est. Delivery: {trackingData.estimatedDelivery || 'Within 24-48 Hours'}</p>
+                  
+                  <div className="pt-2 mt-2 border-t border-rose-200/60 flex justify-end">
+                    <a
+                      href={`https://www.royalmail.com/track-your-item#/tracking-results/${encodeURIComponent(trackingData.trackingNumber || trackingNumber)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-lg transition-colors shadow-2xs"
+                    >
+                      <span>Open on RoyalMail.com Official Tracker</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -402,7 +414,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                         <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-rose-600 ring-4 ring-rose-100" />
                         <div className="text-xs font-bold text-slate-900">{h.status} - {h.location}</div>
                         <div className="text-[11px] text-slate-500">{h.description}</div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">{h.timestamp}</div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">{h.timestamp || h.date}</div>
                       </div>
                     ))}
                   </div>

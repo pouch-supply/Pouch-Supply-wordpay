@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Download, Upload, Search, Eye, ArrowLeft, AlertTriangle, 
   ChevronDown, ChevronUp, MoreHorizontal, Calendar, Truck, Tag, MessageSquare, Send, Trash2, RotateCcw, CheckSquare, Square,
-  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign
+  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink
 } from 'lucide-react';
 import { Order } from '../../types';
 import { parseOrderTime } from '../../utils';
@@ -507,12 +507,34 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       </td>
                       <td className="p-4 text-center">
                         <span className={`inline-block text-[10px] uppercase font-bold py-0.5 px-2 rounded-full tracking-wider ${
-                          order.fulfillmentStatus === 'Fulfilled' 
+                          order.fulfillmentStatus === 'Fulfilled' || order.fulfillmentStatus === 'Shipped'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-150' 
+                            : order.fulfillmentStatus === 'Cancelled'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-150'
                             : 'bg-amber-100 text-amber-800 border border-amber-200'
                         }`}>
-                          {order.fulfillmentStatus}
+                          {order.fulfillmentStatus || 'Unfulfilled'}
                         </span>
+                        {(() => {
+                          const trk = order.trackingNumber || order.trackingId || order.data?.royalMail?.trackingNumber;
+                          if (!trk) return null;
+                          return (
+                            <div className="mt-1 flex items-center justify-center gap-1">
+                              <a
+                                href={`https://www.royalmail.com/track-your-item#/tracking-results/${encodeURIComponent(trk)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 text-[9px] font-mono font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 px-1.5 py-0.5 rounded transition-colors shadow-3xs"
+                                title="Click to track on Royal Mail official site"
+                              >
+                                <span className="font-sans font-black text-rose-600">RM</span>
+                                <span>{trk}</span>
+                                <ExternalLink className="h-2.5 w-2.5 opacity-70" />
+                              </a>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="p-4 text-right font-extrabold text-slate-900">£{(Number(order.total) || 0).toFixed(2)}</td>
                       <td className="p-4 text-center flex items-center justify-center gap-2">
