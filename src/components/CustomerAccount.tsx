@@ -11,7 +11,7 @@ import {
   Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
   Copy, Share2, HelpCircle, ShieldAlert, CreditCard, Star, ChevronRight, 
   CheckCircle2, AlertTriangle, Play, Pause, ChevronDown, CheckCircle, Tag, LifeBuoy,
-  Layout, LogOut, Plus, RotateCcw, Send, Mail, Loader2
+  Layout, LogOut, Plus, RotateCcw, Send, Mail, Loader2, ExternalLink
 } from 'lucide-react';
 
 interface CustomerAccountProps {
@@ -115,6 +115,8 @@ export default function CustomerAccount({
   const [trackerInput, setTrackerInput] = useState('');
   const [trackedOrder, setTrackedOrder] = useState<Order | null>(null);
   const [trackerError, setTrackerError] = useState('');
+  const [liveTrackingInfo, setLiveTrackingInfo] = useState<any>(null);
+  const [liveTrackingLoading, setLiveTrackingLoading] = useState(false);
 
   // Profile editing local states
   const [editName, setEditName] = useState('');
@@ -733,21 +735,41 @@ export default function CustomerAccount({
   };
 
 
-  const handleTrackOrder = (e?: React.FormEvent) => {
+  const handleTrackOrder = async (e?: React.FormEvent, customTargetId?: string) => {
     if (e) e.preventDefault();
     setTrackerError('');
     setTrackedOrder(null);
-    const checkId = trackerInput.trim().toUpperCase();
+    setLiveTrackingInfo(null);
+    const checkId = (customTargetId || trackerInput).trim().toUpperCase();
     if (!checkId) {
       setTrackerError('Please enter an Order ID or Tracking reference.');
       return;
     }
     const found = orders.find(o => 
       o.id.toUpperCase() === checkId || 
-      (o.trackingId && o.trackingId.toUpperCase() === checkId)
+      (o.trackingId && o.trackingId.toUpperCase() === checkId) ||
+      (o.trackingNumber && o.trackingNumber.toUpperCase() === checkId) ||
+      (o.data?.royalMail?.trackingNumber && o.data.royalMail.trackingNumber.toUpperCase() === checkId)
     );
     if (found) {
       setTrackedOrder(found);
+      const trackingNo = found.trackingNumber || found.trackingId || found.data?.royalMail?.trackingNumber;
+      if (trackingNo) {
+        setLiveTrackingLoading(true);
+        try {
+          // Sync with Royal Mail Click & Drop backend to get latest status
+          fetch(`/api/royalmail/sync-status/${found.id}`, { method: 'POST' }).catch(() => {});
+          const res = await fetch(`/api/royalmail/track/${encodeURIComponent(trackingNo)}`);
+          if (res.ok) {
+            const data = await res.json();
+            setLiveTrackingInfo(data);
+          }
+        } catch (err) {
+          console.warn('Live tracking fetch error:', err);
+        } finally {
+          setLiveTrackingLoading(false);
+        }
+      }
     } else {
       setTrackerError(`No order found matching "${checkId}".`);
     }
@@ -1591,8 +1613,9 @@ export default function CustomerAccount({
                             </button>
                             <button 
                               onClick={() => {
-                                setTrackerInput(myOrders[0].trackingId || myOrders[0].id);
-                                setTrackedOrder(myOrders[0]);
+                                const target = myOrders[0].trackingNumber || myOrders[0].trackingId || myOrders[0].id;
+                                setTrackerInput(target);
+                                handleTrackOrder(undefined, target);
                                 setActiveTab('orders');
                               }}
                               className="flex-1 bg-white hover:bg-slate-50 border border-slate-200 text-[#071d37] font-bold text-xs uppercase tracking-wider py-2.5 rounded-xl transition-colors cursor-pointer text-center"
@@ -1884,158 +1907,210 @@ export default function CustomerAccount({
                     {trackerError && <p className="text-xs text-rose-500 font-bold">{trackerError}</p>}
 
                     {trackedOrder ? (
-                      trackedOrder.carrier === 'Royal Mail' || trackedOrder.carrier === 'Express Courier' || trackedOrder.trackingId ? (
-                        <div className="bg-[#f8fafc] border-2 border-slate-800 rounded-3xl overflow-hidden shadow-xs">
-                          {/* Royal Mail Brand Header */}
-                          <div className="bg-slate-900 p-4 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                            <div className="flex items-center gap-2">
-                              <span className="font-serif font-black tracking-widest text-lg">Royal Mail</span>
-                              <span className="text-[9px] font-bold bg-white/20 text-white px-2 py-0.5 rounded-md uppercase tracking-wider">
-                                Track & Trace Live
-                              </span>
-                            </div>
-                            <div className="text-left sm:text-right">
-                              <span className="text-[8px] text-slate-300 block uppercase font-extrabold">TRACKING NUMBER</span>
-                              <span className="font-mono font-black text-sm tracking-wider text-white select-all">{trackedOrder.trackingId}</span>
-                            </div>
-                          </div>
-
-                          {/* Courier Content Area */}
-                          <div className="p-5 sm:p-6 space-y-6">
-                            {/* Status Quick Look */}
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200">
-                              <div>
-                                <span className="text-[9px] text-slate-400 uppercase font-extrabold block">Current Status</span>
-                                <span className={`text-sm font-black uppercase tracking-wide flex items-center gap-1.5 mt-0.5 ${
-                                  trackedOrder.fulfillmentStatus === 'Delivered' ? 'text-emerald-600' :
-                                  trackedOrder.fulfillmentStatus === 'Fulfilled' ? 'text-indigo-600 animate-pulse' : 'text-[#dfa047]'
-                                }`}>
-                                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-current" />
-                                  {trackedOrder.fulfillmentStatus === 'Delivered' ? 'Delivered & Signed' : 
-                                   trackedOrder.fulfillmentStatus === 'Fulfilled' ? 'In Transit via Royal Mail' : 'Awaiting Collection'}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-[9px] text-slate-400 uppercase font-extrabold block">Last Scanned Depot</span>
-                                <span className="text-xs font-bold text-slate-800 mt-0.5 block">
-                                  {trackedOrder.trackingHistory && trackedOrder.trackingHistory.length > 0
-                                    ? trackedOrder.trackingHistory[0].location
-                                    : 'Pouch Supply Hub, London MC'}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-[9px] text-slate-400 uppercase font-extrabold block">Estimated Arrival</span>
-                                <span className="text-xs font-black text-slate-900 mt-0.5 block">
-                                  {trackedOrder.fulfillmentStatus === 'Delivered' ? 'Delivered successfully' : 'Within 24 Hours'}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Courier Progress Timeline */}
-                            <div className="relative pt-2 pb-4">
-                              <div className="absolute top-[2.1rem] left-8 right-8 h-1 bg-slate-200" />
-                              <div className="absolute top-[2.1rem] left-8 h-1 bg-[#e1192e] transition-all duration-500" style={{
-                                width: trackedOrder.fulfillmentStatus === 'Delivered' ? 'calc(100% - 64px)' :
-                                       trackedOrder.fulfillmentStatus === 'Fulfilled' ? '50%' : '0%'
-                              }} />
-
-                              <div className="flex justify-between items-start text-center relative z-10">
-                                {[
-                                  { id: 'placed', label: 'Accepted', desc: 'Package registered', status: 'completed' },
-                                  { id: 'transit', label: 'In Transit', desc: 'Outward MC hub', status: trackedOrder.fulfillmentStatus !== 'Unfulfilled' ? 'completed' : 'pending' },
-                                  { id: 'delivered', label: 'Delivered', desc: 'At destination', status: trackedOrder.fulfillmentStatus === 'Delivered' ? 'completed' : 'pending' }
-                                ].map((pt, idx) => (
-                                  <div key={idx} className="flex flex-col items-center flex-1">
-                                    <div className={`w-10 h-10 rounded-full border-4 flex items-center justify-center transition-all ${
-                                      pt.status === 'completed' 
-                                        ? 'bg-[#e1192e] border-[#ffd6d9] text-white shadow-xs' 
-                                        : 'bg-white border-slate-200 text-slate-400'
-                                    }`}>
-                                      {pt.status === 'completed' ? <Check className="h-4.5 w-4.5 font-bold" /> : <Clock className="h-4.5 w-4.5" />}
-                                    </div>
-                                    <div className="mt-2.5">
-                                      <span className={`text-[10.5px] font-black uppercase block tracking-wider ${pt.status === 'completed' ? 'text-[#e1192e]' : 'text-slate-400'}`}>{pt.label}</span>
-                                      <span className="text-[8.5px] text-slate-400 block mt-0.5">{pt.desc}</span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Detailed Checkpoints */}
-                            <div className="space-y-3 bg-white p-4 sm:p-5 rounded-2xl border border-red-50 text-xs">
-                              <div className="flex justify-between items-center border-b border-red-100 pb-2">
-                                <span className="font-extrabold text-slate-800 uppercase text-[10px] tracking-wider">Courier Routing History</span>
-                                <span className="text-[9px] font-bold text-slate-400 uppercase">Live Updates via API</span>
-                              </div>
-                              
-                              <div className="space-y-4 pt-1">
-                                {trackedOrder.trackingHistory && trackedOrder.trackingHistory.map((hist, idx) => (
-                                  <div key={idx} className="flex gap-4 items-start relative">
-                                    {idx < trackedOrder.trackingHistory!.length - 1 && (
-                                      <div className="absolute left-2.5 top-6 bottom-[-16px] w-0.5 bg-red-100" />
-                                    )}
-                                    <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 ${
-                                      idx === 0 ? 'bg-[#e1192e] text-white ring-4 ring-red-100 animate-pulse' : 'bg-red-50 text-[#e1192e]'
-                                    }`}>
-                                      <div className="w-1.5 h-1.5 rounded-full bg-current" />
-                                    </div>
-                                    <div className="space-y-0.5 flex-1">
-                                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
-                                        <span className="font-black text-slate-800 text-[11px] uppercase tracking-wide">{hist.status}</span>
-                                        <span className="text-[9px] font-mono text-slate-400 font-bold">{hist.date}</span>
-                                      </div>
-                                      <p className="text-[10px] text-slate-500 font-bold flex items-center gap-1 mt-0.5">
-                                        <MapPin className="h-3.5 w-3.5 text-red-400" /> {hist.location}
-                                      </p>
-                                      <p className="text-[10.5px] text-slate-600 leading-normal mt-1">{hist.description}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-6">
-                          <div className="bg-[#f4f6f9] border border-slate-100 p-4 rounded-2xl grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-semibold">
-                            <div>
-                              <span className="text-[9px] text-slate-400 uppercase font-bold">Currently Tracking</span>
-                              <p className="font-bold text-[#071d37] mt-0.5">{trackedOrder.id}</p>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-slate-400 uppercase font-bold">Recipient Address</span>
-                              <p className="font-bold text-slate-600 mt-0.5">{trackedOrder.destination}</p>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-slate-400 uppercase font-bold">Courier Status</span>
-                              <p className="text-emerald-700 font-black mt-0.5">{trackedOrder.fulfillmentStatus.toUpperCase()}</p>
-                            </div>
-                          </div>
-
-                          {/* Interactive Timeline layout */}
-                          <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-6 pt-2 pb-4">
-                            <div className="absolute hidden md:block left-6 right-6 top-[2rem] h-0.5 bg-slate-200" />
-                            {getTimelineSteps(trackedOrder).map((step) => {
-                              const isCompleted = step.status === 'completed';
-                              const isCurrent = step.status === 'current';
-                              return (
-                                <div key={step.key} className="flex md:flex-col items-center gap-3 flex-1 text-left md:text-center z-10 w-full">
-                                  <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                                    isCompleted ? 'bg-[#071d37] border-[#071d37] text-white' : isCurrent ? 'bg-white border-[#dfa047] text-[#dfa047] animate-pulse' : 'bg-white border-slate-200 text-slate-400'
-                                  }`}>
-                                    {isCompleted ? <Check className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
-                                  </div>
-                                  <div>
-                                    <h4 className="text-[11px] font-black uppercase tracking-wider text-[#071d37]">{step.label}</h4>
-                                    <p className="text-[10px] text-slate-400 mt-0.5 leading-snug">{step.description}</p>
-                                  </div>
+                      (() => {
+                        const currentTrackingNumber = trackedOrder.trackingNumber || trackedOrder.trackingId || trackedOrder.data?.royalMail?.trackingNumber;
+                        const isRoyalMail = trackedOrder.carrier === 'Royal Mail' || 
+                                            trackedOrder.carrier?.toLowerCase().includes('royal mail') || 
+                                            trackedOrder.carrier === 'Express Courier' || 
+                                            Boolean(currentTrackingNumber);
+                        
+                        if (!isRoyalMail) {
+                          return (
+                            <div className="space-y-6">
+                              <div className="bg-[#f4f6f9] border border-slate-100 p-4 rounded-2xl grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-semibold">
+                                <div>
+                                  <span className="text-[9px] text-slate-400 uppercase font-bold">Currently Tracking</span>
+                                  <p className="font-bold text-[#071d37] mt-0.5">{trackedOrder.id}</p>
                                 </div>
-                              );
-                            })}
+                                <div>
+                                  <span className="text-[9px] text-slate-400 uppercase font-bold">Recipient Address</span>
+                                  <p className="font-bold text-slate-600 mt-0.5">{trackedOrder.destination}</p>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] text-slate-400 uppercase font-bold">Courier Status</span>
+                                  <p className="text-emerald-700 font-black mt-0.5">{trackedOrder.fulfillmentStatus.toUpperCase()}</p>
+                                </div>
+                              </div>
+
+                              {/* Interactive Timeline layout */}
+                              <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-6 pt-2 pb-4">
+                                <div className="absolute hidden md:block left-6 right-6 top-[2rem] h-0.5 bg-slate-200" />
+                                {getTimelineSteps(trackedOrder).map((step) => {
+                                  const isCompleted = step.status === 'completed';
+                                  const isCurrent = step.status === 'current';
+                                  return (
+                                    <div key={step.key} className="flex md:flex-col items-center gap-3 flex-1 text-left md:text-center z-10 w-full">
+                                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                        isCompleted ? 'bg-[#071d37] border-[#071d37] text-white' : isCurrent ? 'bg-white border-[#dfa047] text-[#dfa047] animate-pulse' : 'bg-white border-slate-200 text-slate-400'
+                                      }`}>
+                                        {isCompleted ? <Check className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
+                                      </div>
+                                      <div>
+                                        <h4 className="text-[11px] font-black uppercase tracking-wider text-[#071d37]">{step.label}</h4>
+                                        <p className="text-[10px] text-slate-400 mt-0.5 leading-snug">{step.description}</p>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // Royal Mail Live Tracking Card
+                        const events = (liveTrackingInfo?.events && liveTrackingInfo.events.length > 0)
+                          ? liveTrackingInfo.events
+                          : (trackedOrder.trackingHistory || []);
+                        
+                        const displayStatus = liveTrackingInfo?.status || 
+                          (trackedOrder.fulfillmentStatus === 'Delivered' ? 'Delivered & Signed' : 
+                           trackedOrder.fulfillmentStatus === 'Fulfilled' || trackedOrder.fulfillmentStatus === 'Shipped' ? 'In Transit via Royal Mail' : 'Awaiting Collection');
+
+                        const estimatedArrival = liveTrackingInfo?.estimatedDelivery || 
+                          (trackedOrder.fulfillmentStatus === 'Delivered' ? 'Delivered successfully' : 'Within 24-48 Hours');
+
+                        const lastDepot = liveTrackingInfo?.lastLocation || 
+                          (events.length > 0 ? events[0].location : 'Royal Mail National Hub');
+
+                        return (
+                          <div className="bg-[#f8fafc] border-2 border-slate-800 rounded-3xl overflow-hidden shadow-xs">
+                            {/* Royal Mail Brand Header */}
+                            <div className="bg-slate-900 p-4 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-serif font-black tracking-widest text-lg">Royal Mail</span>
+                                <span className="text-[9px] font-bold bg-white/20 text-white px-2 py-0.5 rounded-md uppercase tracking-wider">
+                                  Click & Drop® Live
+                                </span>
+                              </div>
+                              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                                {currentTrackingNumber && (
+                                  <div className="text-left sm:text-right">
+                                    <span className="text-[8px] text-slate-300 block uppercase font-extrabold">TRACKING NUMBER</span>
+                                    <span className="font-mono font-black text-sm tracking-wider text-white select-all">{currentTrackingNumber}</span>
+                                  </div>
+                                )}
+                                {currentTrackingNumber && (
+                                  <a
+                                    href={`https://www.royalmail.com/track-your-item#/tracking-results/${encodeURIComponent(currentTrackingNumber)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 shrink-0"
+                                  >
+                                    <span>Track on RoyalMail.com</span>
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Courier Content Area */}
+                            <div className="p-5 sm:p-6 space-y-6">
+                              {liveTrackingLoading && (
+                                <div className="flex items-center justify-center gap-2 py-2 text-xs text-rose-700 font-bold bg-rose-50 rounded-xl">
+                                  <RefreshCw className="h-4 w-4 animate-spin" />
+                                  <span>Syncing latest scan events with Royal Mail Network...</span>
+                                </div>
+                              )}
+
+                              {/* Status Quick Look */}
+                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200">
+                                <div>
+                                  <span className="text-[9px] text-slate-400 uppercase font-extrabold block">Current Status</span>
+                                  <span className={`text-sm font-black uppercase tracking-wide flex items-center gap-1.5 mt-0.5 ${
+                                    trackedOrder.fulfillmentStatus === 'Delivered' ? 'text-emerald-600' :
+                                    (trackedOrder.fulfillmentStatus === 'Fulfilled' || trackedOrder.fulfillmentStatus === 'Shipped') ? 'text-rose-600 animate-pulse' : 'text-[#dfa047]'
+                                  }`}>
+                                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-current" />
+                                    {displayStatus}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] text-slate-400 uppercase font-extrabold block">Last Scanned Depot</span>
+                                  <span className="text-xs font-bold text-slate-800 mt-0.5 block">
+                                    {lastDepot}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] text-slate-400 uppercase font-extrabold block">Estimated Arrival</span>
+                                  <span className="text-xs font-black text-slate-900 mt-0.5 block">
+                                    {estimatedArrival}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Courier Progress Timeline */}
+                              <div className="relative pt-2 pb-4">
+                                <div className="absolute top-[2.1rem] left-8 right-8 h-1 bg-slate-200" />
+                                <div className="absolute top-[2.1rem] left-8 h-1 bg-[#e1192e] transition-all duration-500" style={{
+                                  width: trackedOrder.fulfillmentStatus === 'Delivered' ? 'calc(100% - 64px)' :
+                                         (trackedOrder.fulfillmentStatus === 'Fulfilled' || trackedOrder.fulfillmentStatus === 'Shipped') ? '50%' : '0%'
+                                }} />
+
+                                <div className="flex justify-between items-start text-center relative z-10">
+                                  {[
+                                    { id: 'placed', label: 'Accepted', desc: 'Package registered', status: 'completed' },
+                                    { id: 'transit', label: 'In Transit', desc: 'Outward MC hub', status: trackedOrder.fulfillmentStatus !== 'Unfulfilled' ? 'completed' : 'pending' },
+                                    { id: 'delivered', label: 'Delivered', desc: 'At destination', status: trackedOrder.fulfillmentStatus === 'Delivered' ? 'completed' : 'pending' }
+                                  ].map((pt, idx) => (
+                                    <div key={idx} className="flex flex-col items-center flex-1">
+                                      <div className={`w-10 h-10 rounded-full border-4 flex items-center justify-center transition-all ${
+                                        pt.status === 'completed' 
+                                          ? 'bg-[#e1192e] border-[#ffd6d9] text-white shadow-xs' 
+                                          : 'bg-white border-slate-200 text-slate-400'
+                                      }`}>
+                                        {pt.status === 'completed' ? <Check className="h-4.5 w-4.5 font-bold" /> : <Clock className="h-4.5 w-4.5" />}
+                                      </div>
+                                      <div className="mt-2.5">
+                                        <span className={`text-[10.5px] font-black uppercase block tracking-wider ${pt.status === 'completed' ? 'text-[#e1192e]' : 'text-slate-400'}`}>{pt.label}</span>
+                                        <span className="text-[8.5px] text-slate-400 block mt-0.5">{pt.desc}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Detailed Checkpoints */}
+                              <div className="space-y-3 bg-white p-4 sm:p-5 rounded-2xl border border-red-50 text-xs">
+                                <div className="flex justify-between items-center border-b border-red-100 pb-2">
+                                  <span className="font-extrabold text-slate-800 uppercase text-[10px] tracking-wider">Courier Routing History</span>
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase">Live Updates via Royal Mail API</span>
+                                </div>
+                                
+                                <div className="space-y-4 pt-1">
+                                  {events && events.length > 0 ? (
+                                    events.map((hist: any, idx: number) => (
+                                      <div key={idx} className="flex gap-4 items-start relative">
+                                        {idx < events.length - 1 && (
+                                          <div className="absolute left-2.5 top-6 bottom-[-16px] w-0.5 bg-red-100" />
+                                        )}
+                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 ${
+                                          idx === 0 ? 'bg-[#e1192e] text-white ring-4 ring-red-100 animate-pulse' : 'bg-red-50 text-[#e1192e]'
+                                        }`}>
+                                          <div className="w-1.5 h-1.5 rounded-full bg-current" />
+                                        </div>
+                                        <div className="space-y-0.5 flex-1">
+                                          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
+                                            <span className="font-black text-slate-800 text-[11px] uppercase tracking-wide">{hist.status}</span>
+                                            <span className="text-[9px] font-mono text-slate-400 font-bold">{hist.date}</span>
+                                          </div>
+                                          <p className="text-[10px] text-slate-500 font-bold flex items-center gap-1 mt-0.5">
+                                            <MapPin className="h-3.5 w-3.5 text-red-400" /> {hist.location}
+                                          </p>
+                                          <p className="text-[10.5px] text-slate-600 leading-normal mt-1">{hist.description}</p>
+                                        </div>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <div className="text-center py-4 text-slate-400 text-xs font-semibold">
+                                      Royal Mail shipment registered. Awaiting initial sorting depot scan.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      )
+                        );
+                      })()
                     ) : (
                       <p className="text-xs text-slate-400 text-center py-4">Search for an order ID above to preview your custom shipping timelines.</p>
                     )}
@@ -2100,7 +2175,12 @@ export default function CustomerAccount({
                                   Invoice
                                 </button>
                                 <button 
-                                  onClick={() => { setTrackerInput(order.id); setTrackedOrder(order); }}
+                                  onClick={() => {
+                                    const target = order.trackingNumber || order.trackingId || order.id;
+                                    setTrackerInput(target);
+                                    handleTrackOrder(undefined, target);
+                                    setActiveTab('orders');
+                                  }}
                                   className="text-[10px] font-bold text-white bg-[#071d37] py-1 px-2.5 rounded-lg cursor-pointer hover:bg-[#dfa047] transition-all"
                                 >
                                   Track
@@ -3469,6 +3549,45 @@ export default function CustomerAccount({
                     <p className="text-[10px] text-indigo-700">Reason: {selectedOrderDetails.returnRequest.reason}</p>
                   </div>
                 )}
+
+                {(() => {
+                  const modalTracking = selectedOrderDetails.trackingNumber || selectedOrderDetails.trackingId || selectedOrderDetails.data?.royalMail?.trackingNumber;
+                  if (!modalTracking) return null;
+                  return (
+                    <div className="bg-rose-50/80 border border-rose-200/90 rounded-2xl p-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white px-2 py-0.5 rounded">Royal Mail</span>
+                          <span className="text-[10px] font-bold text-rose-900">Tracked Delivery</span>
+                        </div>
+                        <span className="font-mono text-xs font-black text-rose-950 select-all">{modalTracking}</span>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <a
+                          href={`https://www.royalmail.com/track-your-item#/tracking-results/${encodeURIComponent(modalTracking)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 text-center py-1.5 px-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] rounded-lg transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                        >
+                          <span>Track on RoyalMail.com</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedOrderDetails(null);
+                            setTrackerInput(modalTracking);
+                            handleTrackOrder(undefined, modalTracking);
+                            setActiveTab('orders');
+                          }}
+                          className="flex-1 text-center py-1.5 px-2.5 bg-white hover:bg-rose-50 border border-rose-200 text-rose-900 font-bold text-[11px] rounded-lg transition-colors cursor-pointer"
+                        >
+                          <span>View Live Portal Scan</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="flex justify-between text-slate-500 pt-2">
                   <span>Shipping Delivery ({selectedOrderDetails.deliveryMethod})</span>

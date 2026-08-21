@@ -273,6 +273,21 @@ async function saveVerifiedOrder(
   // Clear pending memory store
   pendingCheckoutsMap.delete(orderId);
 
+  // Auto-create Royal Mail Click & Drop shipment if enabled
+  try {
+    const { getRoyalMailSettings, createRoyalMailShipment } = await import('../services/royalMailService');
+    const rmSettings = await getRoyalMailSettings();
+    if (rmSettings.enabled && (rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY)) {
+      console.log(`[Worldpay Order] Auto-registering Click & Drop shipment with Royal Mail for order #${orderId}`);
+      createRoyalMailShipment(orderId, {
+        serviceCode: rmSettings.defaultServiceCode || 'TPS24',
+        weightGrams: rmSettings.defaultWeightGrams || 350
+      }).catch(err => {
+        console.warn(`[Worldpay Order] Background Royal Mail shipment creation note for #${orderId}:`, err?.message);
+      });
+    }
+  } catch (_rmErr) {}
+
   return savedOrder;
 }
 

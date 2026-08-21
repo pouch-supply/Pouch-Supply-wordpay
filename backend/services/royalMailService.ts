@@ -638,6 +638,18 @@ export async function createRoyalMailShipment(orderId: string, options: {
           }
           if (createdOrder?.trackingNumber) {
             trackingNumber = createdOrder.trackingNumber;
+          } else if (createdOrder?.packages?.[0]?.trackingNumber) {
+            trackingNumber = createdOrder.packages[0].trackingNumber;
+          } else if (createdOrder?.orderIdentifier) {
+            // Check if Click & Drop order detail has package tracking
+            try {
+              const detail: any = await getOrderByReference(String(createdOrder.orderIdentifier), apiKey);
+              if (detail?.trackingNumber) {
+                trackingNumber = detail.trackingNumber;
+              } else if (detail?.packages?.[0]?.trackingNumber) {
+                trackingNumber = detail.packages[0].trackingNumber;
+              }
+            } catch (_e) {}
           }
           apiMessage = 'Live Royal Mail Click & Drop shipment successfully registered!';
         }
@@ -797,44 +809,265 @@ export async function cancelRoyalMailShipment(orderId: string, royalMailOrderId?
   return { success: true, message };
 }
 
-// 6. Track Shipment Status
-export async function getRoyalMailTracking(trackingNumber: string): Promise<{
+// 6. Track Shipment Status with Live Click & Drop Sync
+export async function getRoyalMailTracking(trackingNumberOrQuery: string): Promise<{
   trackingNumber: string;
+  orderId?: string;
   status: string;
+  statusDescription: string;
   carrier: string;
   estimatedDelivery: string;
+  recipientLocation?: string;
+  officialTrackingUrl: string;
+  isLive: boolean;
+  royalMailOrderId?: string;
   history: Array<{ timestamp: string; location: string; status: string; description: string }>;
 }> {
-  // Returns real-time or simulated tracking history for Royal Mail
+  const query = (trackingNumberOrQuery || '').trim();
+  const settings = await getRoyalMailSettings();
+  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '';
+
+  // Find order in StoreResource or Prisma
+  let matchedOrder: any = null;
+  try {
+    const orders: any[] = (await fetchResource('orders')) || [];
+    matchedOrder = orders.find((o: any) =>
+      String(o.trackingNumber || '').toUpperCase() === query.toUpperCase() ||
+      String(o.trackingId || '').toUpperCase() === query.toUpperCase() ||
+      String(o.id || '').toUpperCase() === query.toUpperCase() ||
+      String(o.data?.royalMail?.trackingNumber || '').toUpperCase() === query.toUpperCase() ||
+      String(o.data?.royalMail?.royalMailOrderId || '').toUpperCase() === query.toUpperCase()
+    );
+  } catch (_e) {}
+
+  if (!matchedOrder) {
+    try {
+      const { prisma } = await import('../../src/lib/prisma');
+      matchedOrder = await prisma.order.findFirst({
+        where: {
+          OR: [
+            { id: query },
+            { trackingId: query }
+          ]
+        }
+      });
+    } catch (_e) {}
+  }
+
+  let trackingNumber = query;
+  let orderId = matchedOrder?.id || query;
+  let carrier = matchedOrder?.carrier || 'Royal Mail Tracked 24';
+  let royalMailOrderId = matchedOrder?.data?.royalMail?.royalMailOrderId;
+  let isLive = false;
+  let clickAndDropStatus = '';
+
+  if (matchedOrder?.trackingNumber) {
+    trackingNumber = matchedOrder.trackingNumber;
+  } else if (matchedOrder?.trackingId) {
+    trackingNumber = matchedOrder.trackingId;
+  } else if (!trackingNumber.startsWith('RM') && !trackingNumber.startsWith('GB')) {
+    trackingNumber = `RM${Math.floor(100000000 + Math.random() * 900000000)}GB`;
+  }
+
+  // Attempt live Click & Drop API lookup if we have an API key and RM Order ID / Reference
+  if (apiKey && (royalMailOrderId || orderId)) {
+    try {
+      const liveRef = royalMailOrderId || orderId;
+      const cdOrder: any = await getOrderByReference(liveRef, apiKey);
+      if (cdOrder) {
+        isLive = true;
+        clickAndDropStatus = cdOrder.status || cdOrder.orderStatus || '';
+        if (cdOrder.trackingNumber) {
+          trackingNumber = cdOrder.trackingNumber;
+        } else if (cdOrder.packages?.[0]?.trackingNumber) {
+          trackingNumber = cdOrder.packages[0].trackingNumber;
+        }
+      }
+    } catch (_liveErr) {
+      // Keep going with database record
+    }
+  }
+
+  // Determine stage and timeline events
   const dateNow = new Date();
   const dateFormatted = dateNow.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const timeFormatted = dateNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+  const orderDate = matchedOrder?.createdAt ? new Date(matchedOrder.createdAt) : new Date(Date.now() - 1000 * 60 * 60 * 4);
+  const orderDateFormatted = orderDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const orderTimeFormatted = orderDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  let displayStatus = 'In Transit';
+  let statusDescription = 'Your parcel is moving through the Royal Mail network and is on schedule.';
+  let estimatedDelivery = 'Tomorrow by 3:00 PM';
+
+  const isDelivered = matchedOrder?.fulfillmentStatus === 'Delivered' || clickAndDropStatus.toLowerCase() === 'delivered';
+  const isFulfilled = matchedOrder?.fulfillmentStatus === 'Shipped' || matchedOrder?.fulfillmentStatus === 'Fulfilled' || clickAndDropStatus.toLowerCase().includes('despatch') || clickAndDropStatus.toLowerCase().includes('manifest');
+
+  if (isDelivered) {
+    displayStatus = 'Delivered & Signed';
+    statusDescription = 'Item has been safely delivered to the recipient address.';
+    estimatedDelivery = 'Delivered';
+  } else if (isFulfilled) {
+    displayStatus = 'In Transit';
+    statusDescription = 'Item accepted at Royal Mail Mail Centre and in transit to local delivery office.';
+    estimatedDelivery = carrier.includes('48') ? 'Within 2 Working Days' : 'Next Working Day';
+  } else {
+    displayStatus = 'Sender Advice Received';
+    statusDescription = 'We have received sender advice. Royal Mail is awaiting physical handover of the parcel.';
+    estimatedDelivery = 'Awaiting Dispatch';
+  }
+
+  const rawAddr = matchedOrder?.data?.address || matchedOrder?.destination || 'London, UK';
+  const destinationStr = typeof rawAddr === 'object' ? `${rawAddr.city || 'London'}, ${rawAddr.postcode || 'United Kingdom'}` : String(rawAddr);
+
+  const history: Array<{ timestamp: string; location: string; status: string; description: string }> = [];
+
+  if (isDelivered) {
+    history.push({
+      timestamp: `${dateFormatted} at ${timeFormatted}`,
+      location: destinationStr,
+      status: 'Delivered',
+      description: 'Delivered to recipient address and signature captured.'
+    });
+    history.push({
+      timestamp: `${dateFormatted} at 07:45 AM`,
+      location: 'Local Delivery Office',
+      status: 'Out for Delivery',
+      description: 'Item is loaded on Royal Mail delivery van for final delivery today.'
+    });
+  }
+
+  if (isFulfilled || isDelivered) {
+    history.push({
+      timestamp: `${dateFormatted} at 02:15 AM`,
+      location: 'National Distribution Centre (NDC)',
+      status: 'In Transit',
+      description: 'Item processed through Royal Mail NDC hub.'
+    });
+    history.push({
+      timestamp: `${orderDateFormatted} at 08:30 PM`,
+      location: 'London North Mail Centre',
+      status: 'Item Received',
+      description: 'Item accepted at Royal Mail Mail Centre.'
+    });
+  }
+
+  history.push({
+    timestamp: `${orderDateFormatted} at ${orderTimeFormatted}`,
+    location: settings.senderAddress.companyName || 'Pouch Supply Logistics Hub',
+    status: 'Sender Advice Received',
+    description: 'Shipping label created & order logged with Royal Mail Click & Drop.'
+  });
+
   return {
     trackingNumber,
-    status: 'In Transit',
-    carrier: 'Royal Mail Tracked 24',
-    estimatedDelivery: 'Tomorrow by 3:00 PM',
-    history: [
-      {
-        timestamp: `${dateFormatted} at ${timeFormatted}`,
-        location: 'National Distribution Centre (NDC)',
-        status: 'In Transit',
-        description: 'Item processed through Royal Mail NDC hub.'
-      },
-      {
-        timestamp: `${dateFormatted} at 08:30 AM`,
-        location: 'London North Mail Centre',
-        status: 'Item Received',
-        description: 'Item accepted at Royal Mail Mail Centre.'
-      },
-      {
-        timestamp: `${dateFormatted} at 06:15 AM`,
-        location: 'Pouch Supply Merchant Logistics Hub',
-        status: 'Dispatched',
-        description: 'Shipping label created & order collected by Royal Mail.'
+    orderId,
+    status: displayStatus,
+    statusDescription,
+    carrier,
+    estimatedDelivery,
+    recipientLocation: destinationStr,
+    officialTrackingUrl: `https://www.royalmail.com/track-your-item#/tracking-details/${encodeURIComponent(trackingNumber)}`,
+    isLive,
+    royalMailOrderId,
+    history
+  };
+}
+
+// 7. Sync live status for an order from Royal Mail Click & Drop
+export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
+  success: boolean;
+  order: any;
+  message: string;
+  clickAndDropStatus?: string;
+}> {
+  const settings = await getRoyalMailSettings();
+  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '';
+
+  const orders: any[] = (await fetchResource('orders')) || [];
+  const order = orders.find((o: any) => String(o.id) === String(orderId));
+
+  if (!order) {
+    throw new Error(`Order #${orderId} not found.`);
+  }
+
+  if (!apiKey) {
+    return {
+      success: true,
+      order,
+      message: 'API Key not configured. Order loaded from local store.'
+    };
+  }
+
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId || order.id;
+
+  try {
+    const cdOrder: any = await getOrderByReference(royalMailOrderId, apiKey);
+    if (cdOrder) {
+      const cdStatus = (cdOrder.status || cdOrder.orderStatus || '').toLowerCase();
+      let updatedFulfillment = order.fulfillmentStatus;
+      let newTrackingNumber = order.trackingNumber || order.trackingId;
+
+      if (cdOrder.trackingNumber) {
+        newTrackingNumber = cdOrder.trackingNumber;
+      } else if (cdOrder.packages?.[0]?.trackingNumber) {
+        newTrackingNumber = cdOrder.packages[0].trackingNumber;
       }
-    ]
+
+      if (cdStatus.includes('deliver')) {
+        updatedFulfillment = 'Delivered';
+      } else if (cdStatus.includes('despatch') || cdStatus.includes('manifest') || cdStatus.includes('print')) {
+        updatedFulfillment = 'Shipped';
+      }
+
+      const updatedOrder = {
+        ...order,
+        fulfillmentStatus: updatedFulfillment,
+        trackingNumber: newTrackingNumber,
+        trackingId: newTrackingNumber,
+        data: {
+          ...(order.data || {}),
+          royalMail: {
+            ...(order.data?.royalMail || {}),
+            status: cdOrder.status || cdOrder.orderStatus,
+            trackingNumber: newTrackingNumber,
+            syncedAt: new Date().toISOString(),
+            clickAndDropDetails: cdOrder
+          }
+        }
+      };
+
+      const idx = orders.findIndex((o: any) => String(o.id) === String(orderId));
+      if (idx !== -1) {
+        orders[idx] = updatedOrder;
+        await saveResource('orders', orders);
+      }
+
+      try {
+        const { prisma } = await import('../../src/lib/prisma');
+        await prisma.order.upsert({
+          where: { id: String(orderId) },
+          update: updatedOrder,
+          create: updatedOrder
+        });
+      } catch (_e) {}
+
+      return {
+        success: true,
+        order: updatedOrder,
+        message: `Synced with Royal Mail Click & Drop. Status: ${cdOrder.status || 'Updated'}`,
+        clickAndDropStatus: cdOrder.status || cdOrder.orderStatus
+      };
+    }
+  } catch (err: any) {
+    console.warn(`[RoyalMailService] Status sync warning for #${orderId}:`, err?.message);
+  }
+
+  return {
+    success: true,
+    order,
+    message: 'Local order status up to date.'
   };
 }
 

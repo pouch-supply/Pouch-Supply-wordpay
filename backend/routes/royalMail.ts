@@ -7,6 +7,7 @@ import {
   createRoyalMailShipment,
   cancelRoyalMailShipment,
   getRoyalMailTracking,
+  syncRoyalMailOrderStatus,
   createReturnLabel as createRoyalMailReturnLabel,
   generateShippingLabelHtml,
   generateRoyalMailTrackingNumber
@@ -307,6 +308,17 @@ router.get("/track/:trackingNumber", async (req: Request, res: Response) => {
     res.json(trackingInfo);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Tracking lookup failed" });
+  }
+});
+
+// POST /api/royalmail/sync-status/:orderId - Sync live status from Royal Mail Click & Drop
+router.post("/sync-status/:orderId", async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const result = await syncRoyalMailOrderStatus(orderId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to sync order status" });
   }
 });
 

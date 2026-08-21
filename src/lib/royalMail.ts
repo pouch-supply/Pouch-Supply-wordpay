@@ -55,7 +55,11 @@ async function royalMailRequest<T>(
   let data: unknown;
 
   if (contentType.includes("application/json")) {
-    data = await response.json();
+    try {
+      data = await response.json();
+    } catch {
+      data = await response.text();
+    }
   } else {
     data = await response.text();
   }
@@ -71,6 +75,8 @@ async function royalMailRequest<T>(
         obj.failedOrders.forEach((f: any) => {
           if (Array.isArray(f.errors)) {
             f.errors.forEach((e: any) => failedErrs.push(e.message || e.code || JSON.stringify(e)));
+          } else if (f.errors) {
+            failedErrs.push(JSON.stringify(f.errors));
           }
         });
         if (failedErrs.length > 0) errMsg = failedErrs.join(' | ');
