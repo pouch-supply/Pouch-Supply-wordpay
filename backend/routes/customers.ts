@@ -4,6 +4,7 @@ import { fetchResource, saveResource, getDb } from "../../serverDb";
 import { Customer } from "../../src/types";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, sendLoginNotificationEmail } from "../services/emailService";
 import { trackCustomerSignup, trackEmailVerified } from "../services/klaviyoService";
+import { verifyRecaptchaToken } from "../services/recaptchaService";
 
 const router = Router();
 
@@ -54,7 +55,13 @@ router.post("/", async (req, res) => {
 // POST: Customer Signup
 router.post("/signup", async (req, res) => {
   try {
-    const { name, email, password, phone, location = "United Kingdom", referredByCode = null } = req.body;
+    const { name, email, password, phone, location = "United Kingdom", referredByCode = null, recaptchaToken, token } = req.body;
+
+    // Verify Google reCAPTCHA v3
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, 'customer_signup');
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || 'reCAPTCHA verification failed. Please try again.' });
+    }
 
     if (!name || !email || !password || !phone) {
       return res.status(400).json({ error: "Name, email, mobile phone number, and password are required for registration." });
@@ -149,7 +156,13 @@ router.post("/signup", async (req, res) => {
 // POST: Request Password Reset Email
 router.post("/forgot-password", async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, recaptchaToken, token } = req.body;
+
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, 'customer_forgot_password');
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || 'reCAPTCHA verification failed. Please try again.' });
+    }
+
     if (!email) {
       return res.status(400).json({ error: "Email address is required." });
     }
@@ -188,8 +201,13 @@ router.post("/forgot-password", async (req, res) => {
 // POST: Perform Password Reset
 router.post("/reset-password", async (req, res) => {
   try {
-    const { token, code, email, newPassword } = req.body;
+    const { token, code, email, newPassword, recaptchaToken } = req.body;
     const suppliedCodeOrToken = (code || token || '').toString().trim();
+
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken, 'customer_reset_password');
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || 'reCAPTCHA verification failed. Please try again.' });
+    }
 
     if (!email || !newPassword || !suppliedCodeOrToken) {
       return res.status(400).json({ error: "Email, new password, and reset code or token are required." });
@@ -318,7 +336,12 @@ router.post("/verify-email", async (req, res) => {
 // POST: Customer Login
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, recaptchaToken } = req.body;
+
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken, 'customer_login');
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || 'reCAPTCHA verification failed. Please try again.' });
+    }
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required." });

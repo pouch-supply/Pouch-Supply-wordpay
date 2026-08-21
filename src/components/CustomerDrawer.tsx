@@ -10,6 +10,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import SubscriptionIcon from './SubscriptionIcon';
 import { signInWithGoogle } from '../lib/auth';
+import { useRecaptcha } from '../hooks/useRecaptcha';
 
 interface CustomerDrawerProps {
   isOpen: boolean;
@@ -52,6 +53,8 @@ export default function CustomerDrawer({
 
   const [emailsList, setEmailsList] = useState<any[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
+
+  const { executeRecaptcha } = useRecaptcha();
 
   const loadEmails = async () => {
     try {
@@ -141,10 +144,11 @@ export default function CustomerDrawer({
       }
       setIsSubmitting(true);
       try {
+        const recaptchaToken = await executeRecaptcha('customer_forgot_password');
         const response = await fetch('/api/customers/forgot-password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: emailInput.toLowerCase().trim() })
+          body: JSON.stringify({ email: emailInput.toLowerCase().trim(), recaptchaToken })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Failed to send reset link.');
@@ -169,13 +173,15 @@ export default function CustomerDrawer({
       }
       setIsSubmitting(true);
       try {
+        const recaptchaToken = await executeRecaptcha('customer_reset_password');
         const response = await fetch('/api/customers/reset-password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             token: resetTokenInput.trim(),
             email: emailInput.toLowerCase().trim(),
-            newPassword: passwordInput
+            newPassword: passwordInput,
+            recaptchaToken
           })
         });
         const data = await response.json();
@@ -254,10 +260,11 @@ export default function CustomerDrawer({
     try {
       const email = emailInput.toLowerCase().trim();
       if (authMode === 'signup') {
+        const recaptchaToken = await executeRecaptcha('customer_signup');
         const response = await fetch('/api/customers/signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: nameInput.trim(), email, phone: phoneInput.trim(), password: passwordInput })
+          body: JSON.stringify({ name: nameInput.trim(), email, phone: phoneInput.trim(), password: passwordInput, recaptchaToken })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Registration failed.');
@@ -272,10 +279,11 @@ export default function CustomerDrawer({
         setSuccessMsg(`Account created! A 6-digit verification code has been sent to ${email}.`);
         setAuthMode('verify');
       } else {
+        const recaptchaToken = await executeRecaptcha('customer_login');
         const response = await fetch('/api/customers/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password: passwordInput })
+          body: JSON.stringify({ email, password: passwordInput, recaptchaToken })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Authentication failed.');
@@ -316,10 +324,11 @@ export default function CustomerDrawer({
     setErrorMsg('');
 
     try {
+      const recaptchaToken = await executeRecaptcha('customer_login');
       const response = await fetch('/api/customers/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cust.email, password: 'password123' })
+        body: JSON.stringify({ email: cust.email, password: 'password123', recaptchaToken })
       });
 
       const data = await response.json();

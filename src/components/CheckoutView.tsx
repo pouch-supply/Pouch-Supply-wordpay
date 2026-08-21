@@ -285,8 +285,18 @@ export default function CheckoutView({
       return;
     }
 
+    // Check if age is verified
+    let currentAgeVerified = isAgeApproved;
+    if (typeof window !== 'undefined') {
+      const stored = window.localStorage.getItem('agechecked-approved');
+      if (stored === 'true') {
+        currentAgeVerified = true;
+        setIsAgeApproved(true);
+      }
+    }
+
     // Enforce AgeChecked verification gate for live payments (unless bypassed for testing)
-    if (!skipAgeCheck && !isAgeApproved) {
+    if (!skipAgeCheck && !currentAgeVerified) {
       setPaymentError('Age verification (18+) is required before live checkout can continue.');
       if (ageGateRef.current) {
         const approved = await ageGateRef.current.openPortal();
@@ -820,7 +830,15 @@ export default function CheckoutView({
                     ref={ageGateRef}
                     onApprovedChange={(approved) => {
                       setIsAgeApproved(approved);
-                      if (approved) setPaymentError(null);
+                      if (approved) {
+                        setPaymentError(null);
+                        // Auto-proceed with checkout upon successful AgeChecked verification if fields are filled
+                        if (fullName && email && addressLine && !isProcessing) {
+                          setTimeout(() => {
+                            executePaymentProcess(true);
+                          }, 300);
+                        }
+                      }
                     }}
                     customerData={{
                       name: fullName,
@@ -860,27 +878,6 @@ export default function CheckoutView({
                   </button>
                 ) : (
                   <div className="space-y-3.5">
-                    {hasSubscription && (
-                      <div className="bg-indigo-950 text-white border-2 border-indigo-500 rounded-2xl p-4 flex items-center justify-between gap-3 shadow-lg animate-pulse-subtle">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2.5 bg-indigo-600 text-white rounded-xl shrink-0 shadow-md">
-                            <Repeat className="h-5 w-5" />
-                          </div>
-                          <div>
-                            <p className="text-xs font-black uppercase tracking-wider text-amber-300 flex items-center gap-2">
-                              <span>Worldpay Subscription Payment</span>
-                            </p>
-                            <p className="text-[11px] text-indigo-200 mt-0.5">
-                              Automatic recurring billing via Worldpay Access (Live)
-                            </p>
-                          </div>
-                        </div>
-                        <span className="bg-amber-400 text-slate-950 font-black text-[9.5px] px-3 py-1 rounded-full uppercase tracking-widest shrink-0 shadow-md border border-amber-300">
-                          RECURRING
-                        </span>
-                      </div>
-                    )}
-
                     {/* Worldpay Live Payment Action */}
                     <div className="p-5 border-2 border-slate-900 bg-white rounded-2xl space-y-4 shadow-sm">
                       <div className="flex justify-between items-center text-xs font-black text-slate-900 uppercase">

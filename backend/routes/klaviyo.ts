@@ -3,6 +3,7 @@ import {
   getKlaviyoSettings,
   saveKlaviyoSettings,
   getKlaviyoLogs,
+  getKlaviyoLists,
   trackKlaviyoEvent,
   trackCustomerSignup,
   trackNewsletterSignup,
@@ -16,6 +17,17 @@ import {
 import { saveResource } from '../../serverDb';
 
 const router = Router();
+
+// GET /api/klaviyo/lists - Fetch all email lists from Klaviyo account
+router.get('/lists', async (req: Request, res: Response) => {
+  try {
+    const apiKey = req.query.apiKey as string | undefined;
+    const lists = await getKlaviyoLists(apiKey);
+    res.json({ success: true, lists });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to fetch Klaviyo lists' });
+  }
+});
 
 // GET /api/klaviyo/settings
 router.get('/settings', async (_req: Request, res: Response) => {

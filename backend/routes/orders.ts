@@ -155,8 +155,8 @@ export async function saveSingleOrder(orderData: any) {
     const isNewOrder = !existingOrder;
     const paymentStatusJustPaid = (existingOrder?.paymentStatus !== 'Paid') && (formattedOrder.paymentStatus === 'Paid');
     
-    // 1. Order Payment Succeeded
-    if (formattedOrder.paymentStatus === 'Paid' && (isNewOrder || paymentStatusJustPaid)) {
+    // 1. Order Payment Succeeded or New Order Placed
+    if ((formattedOrder.paymentStatus === 'Paid' || isNewOrder) && (isNewOrder || paymentStatusJustPaid)) {
       console.log(`[Orders Trigger] Dispatching Order Confirmation & Klaviyo Purchase for ${id}`);
       sendOrderConfirmationEmail(formattedOrder).catch(e => console.warn('Order confirmation email fail:', e));
       trackPurchaseCompleted(formattedOrder).catch(e => console.warn('Klaviyo purchase track fail:', e));

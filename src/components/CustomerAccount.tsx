@@ -5,6 +5,7 @@ import { parseOrderTime } from '../utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
 import SubscriptionIcon from './SubscriptionIcon';
+import { useRecaptcha } from '../hooks/useRecaptcha';
 import { 
   User, LogIn, Heart, PlusCircle, Trash2, MapPin, Package, ShoppingBag, 
   Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
@@ -126,6 +127,8 @@ export default function CustomerAccount({
   const [supportSubmitting, setSupportSubmitting] = useState(false);
   const [supportStatus, setSupportStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const { executeRecaptcha } = useRecaptcha();
+
   const handleSupportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loggedInCustomer) return;
@@ -134,6 +137,7 @@ export default function CustomerAccount({
     setSupportSubmitting(true);
     setSupportStatus(null);
     try {
+      const recaptchaToken = await executeRecaptcha('contact_form_submit');
       const res = await fetch('/api/email/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -142,7 +146,8 @@ export default function CustomerAccount({
           email: loggedInCustomer.email,
           phone: loggedInCustomer.phone || '',
           subject: supportSubject.trim() || 'Help & Support Request from Customer Portal',
-          message: supportMessage.trim()
+          message: supportMessage.trim(),
+          recaptchaToken
         })
       });
 

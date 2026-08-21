@@ -64,15 +64,7 @@ export async function getKlaviyoSettings(): Promise<KlaviyoSettings> {
     if (stored && typeof stored === 'object') {
       const item = Array.isArray(stored) ? stored[0] : stored;
       return {
-        ...DEFAULT_KLAVIYO_SETTINGS,
-        ...item,
-        apiKey: item.apiKey || apiKeyVal,
-        siteId: siteIdVal,
-        publicKey: siteIdVal,
-        trackEvents: {
-          ...DEFAULT_KLAVIYO_SETTINGS.trackEvents,
-          ...(item.trackEvents || {})
-        }
+        ...DEFAULT_SETTINGS_MERGED(item, apiKeyVal, siteIdVal)
       };
     } else if (layoutStored) {
       return {
@@ -84,6 +76,21 @@ export async function getKlaviyoSettings(): Promise<KlaviyoSettings> {
     }
   } catch (err) {}
   return DEFAULT_KLAVIYO_SETTINGS;
+}
+
+function DEFAULT_SETTINGS_MERGED(item: any, apiKeyVal: string, siteIdVal: string): KlaviyoSettings {
+  return {
+    ...DEFAULT_KLAVIYO_SETTINGS,
+    ...item,
+    apiKey: item.apiKey || apiKeyVal,
+    siteId: siteIdVal,
+    publicKey: siteIdVal,
+    listId: item.listId || '',
+    trackEvents: {
+      ...DEFAULT_KLAVIYO_SETTINGS.trackEvents,
+      ...(item.trackEvents || {})
+    }
+  };
 }
 
 export async function saveKlaviyoSettings(settings: Partial<KlaviyoSettings>): Promise<KlaviyoSettings> {
@@ -145,6 +152,148 @@ async function logKlaviyoEvent(entry: Omit<KlaviyoEventLog, 'id' | 'timestamp'>)
   return newLog;
 }
 
+// Fetch all lists from Klaviyo API v3
+export async function getKlaviyoLists(apiKeyOverride?: string): Promise<{ id: string; name: string }[]> {
+  const settings = await getKlaviyoSettings();
+  let apiKey = (apiKeyOverride || settings.apiKey || process.env.KLAVIYO_API_KEY || '').trim();
+  if (apiKey.toLowerCase().startsWith('klaviyo-api-key ')) {
+    apiKey = apiKey.substring(16).trim();
+  }
+
+  if (!apiKey) return [];
+
+  try {
+    const response = await fetch('https://a.klaviyo.com/api/lists/', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Klaviyo-API-Key ${apiKey}`,
+        'accept': 'application/json',
+        'revision': '2024-02-15'
+      }
+    });
+
+    if (!response.ok) return [];
+    const json = await response.json();
+    if (json.data && Array.isArray(json.data)) {
+      return json.data.map((l: any) => ({
+        id: l.id,
+        name: l.attributes?.name || l.id
+      }));
+    }
+  } catch (err) {
+    console.warn('[Klaviyo Lists Error]:', err);
+  }
+  return [];
+}
+
+// Auto-sync profile and subscribe to email marketing consent so Klaviyo flows trigger emails
+export async function syncKlaviyoProfileWithConsent(
+  email: string,
+  firstName?: string,
+  lastName?: string,
+  listIdOverride?: string
+): Promise<boolean> {
+  const settings = await getKlaviyoSettings();
+  let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || '').trim();
+  if (apiKey.toLowerCase().startsWith('klaviyo-api-key ')) {
+    apiKey = apiKey.substring(16).trim();
+  }
+  const cleanEmail = email.toLowerCase().trim();
+  const listId = listIdOverride || settings.listId;
+
+  if (!apiKey || !cleanEmail) return false;
+
+  try {
+    // 1. Create/Update Profile with explicit subscription consent
+    const profilePayload = {
+      data: {
+        type: 'profile',
+        attributes: {
+          email: cleanEmail,
+          first_name: firstName || undefined,
+          last_name: lastName || undefined,
+          subscriptions: {
+            email: {
+              marketing: {
+                can_receive_email_marketing: true,
+                consent: 'SUBSCRIBED',
+                consented_at: new Date().toISOString()
+              }
+            }
+          }
+        }
+      }
+    };
+
+    const profRes = await fetch('https://a.klaviyo.com/api/profiles/', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Klaviyo-API-Key ${apiKey}`,
+        'Content-Type': 'application/json',
+        'accept': 'application/json',
+        'revision': '2024-02-15'
+      },
+      body: JSON.stringify(profilePayload)
+    });
+
+    // 2. If listId is configured, subscribe profile to the list so list-triggered flows send
+    if (listId) {
+      const subPayload = {
+        data: {
+          type: 'profile-subscription-bulk-create-job',
+          attributes: {
+            custom_source: 'Storefront Purchase / Checkout',
+            profiles: {
+              data: [
+                {
+                  type: 'profile',
+                  attributes: {
+                    email: cleanEmail,
+                    subscriptions: {
+                      email: {
+                        marketing: {
+                          can_receive_email_marketing: true,
+                          consent: 'SUBSCRIBED',
+                          consented_at: new Date().toISOString()
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          relationships: {
+            list: {
+              data: {
+                type: 'list',
+                id: listId
+              }
+            }
+          }
+        }
+      };
+
+      await fetch('https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Klaviyo-API-Key ${apiKey}`,
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'revision': '2024-02-15'
+        },
+        body: JSON.stringify(subPayload)
+      }).catch(() => {});
+    }
+
+    return profRes.ok || profRes.status === 202 || profRes.status === 409;
+  } catch (err) {
+    console.warn('[Klaviyo Profile Sync Error]:', err);
+    return false;
+  }
+}
+
+// Master Track Klaviyo Event Function
 export async function trackKlaviyoEvent(
   eventName: string,
   customerEmail: string,
@@ -202,6 +351,9 @@ export async function trackKlaviyoEvent(
   if (Object.keys(customProfileProps).length > 0) {
     profileAttributes.properties = customProfileProps;
   }
+
+  // Ensure consent is synced in background so Klaviyo flows allow sending
+  syncKlaviyoProfileWithConsent(cleanEmail, profileAttributes.first_name, profileAttributes.last_name).catch(() => {});
 
   // 2. Extract numeric value
   let numValue: number | undefined = undefined;
@@ -300,7 +452,7 @@ export async function trackKlaviyoEvent(
       }
     }
 
-    // Secondary Channel / Resilient Fallback: Klaviyo Client Events API v3
+    // Secondary Channel: Client Events API v3
     if (!sentSuccessfully && siteId) {
       try {
         console.log(`[Klaviyo] Dispatching event '${eventName}' via Client Events API (Company ID: ${siteId}) for ${profileAttributes.email}...`);
@@ -363,7 +515,10 @@ export async function trackKlaviyoEvent(
   }
 }
 
-// Convenience event methods
+// ----------------------------------------------------
+// Standard E-Commerce Flows & Event Dispatches
+// ----------------------------------------------------
+
 export async function trackCustomerSignup(customer: { email: string; name?: string }) {
   const settings = await getKlaviyoSettings();
   if (!settings.trackEvents.customerSignup) return;
@@ -441,7 +596,10 @@ export async function trackPurchaseCompleted(order: any) {
 
   const itemNames = formattedItems.map((i: any) => i.ProductName);
   const totalVal = typeof order.total === 'number' ? order.total : parseFloat(order.total) || 0;
-  const orderIdStr = String(order.id || `PS${Math.floor(Math.random() * 90000 + 10000)}`);
+  const orderIdStr = String(order.id || order.orderId || `PS${Math.floor(Math.random() * 90000 + 10000)}`);
+
+  // Ensure consent is granted so Klaviyo flows dispatch emails immediately
+  await syncKlaviyoProfileWithConsent(email, firstName, lastName);
 
   // 1. Send standard Klaviyo "Placed Order" event
   const placedOrderRes = await trackKlaviyoEvent('Placed Order', email, {
@@ -475,7 +633,7 @@ export async function trackPurchaseCompleted(order: any) {
     last_name: lastName
   });
 
-  // 2. Track "Ordered Product" for each line item (standard Klaviyo e-commerce flow metric)
+  // 2. Track "Ordered Product" for each line item (standard Klaviyo metric)
   for (const item of formattedItems) {
     try {
       await trackKlaviyoEvent('Ordered Product', email, {
@@ -505,9 +663,9 @@ export async function trackOrderRefunded(order: any, refundAmount?: number) {
   if (!settings.trackEvents.refunded) return;
   const email = order.customerEmail || 'customer@pouch-supply.com';
   return trackKlaviyoEvent('Refunded Order', email, {
-    $event_id: String(order.id),
+    $event_id: String(order.id || order.orderId),
     $value: refundAmount !== undefined ? refundAmount : order.total,
-    OrderId: String(order.id)
+    OrderId: String(order.id || order.orderId)
   });
 }
 
@@ -524,8 +682,8 @@ export async function trackWishlistAdded(email: string, item: any) {
 export async function trackOrderShipped(order: any, trackingNumber?: string, carrier?: string) {
   const email = order.customerEmail || 'customer@pouch-supply.com';
   return trackKlaviyoEvent('Order Shipped', email, {
-    $event_id: String(order.id),
-    OrderId: String(order.id),
+    $event_id: String(order.id || order.orderId),
+    OrderId: String(order.id || order.orderId),
     Carrier: carrier || order.carrier || 'Royal Mail Tracked 24',
     TrackingNumber: trackingNumber || order.trackingNumber || order.trackingId,
     TrackingUrl: `https://www.royalmail.com/track-your-item#/tracking-results/${trackingNumber || order.trackingNumber || order.trackingId}`,

@@ -1,13 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Mail, Send, CheckCircle, CheckCircle2, AlertCircle, Eye, Settings, RefreshCw, 
+  Mail, Send, CheckCircle2, AlertCircle, Eye, Settings, RefreshCw, 
   Trash2, ShieldCheck, Zap, Lock, Filter, Smartphone, Monitor, Code, 
-  ExternalLink, Layers, Sparkles, Check, Play, User, ShoppingBag, DollarSign, RotateCcw
+  ExternalLink, Layers, Sparkles, Check, Play, User, ShoppingBag, DollarSign, RotateCcw,
+  HelpCircle, Globe, Server, CheckCheck, Info
 } from 'lucide-react';
+
+export type EmailProvider = 'gmail' | 'smtp' | 'resend' | 'auto';
 
 export interface EmailSettings {
   enabled: boolean;
-  resendApiKey: string;
+  provider: EmailProvider;
+  gmailUser: string;
+  gmailAppPassword?: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPassword?: string;
+  resendApiKey?: string;
+  fromName: string;
   fromEmail: string;
   adminNotificationEmail: string;
   templates: Record<string, {
@@ -31,6 +43,8 @@ export interface EmailLogEntry {
   recipient: string;
   subject: string;
   status: 'sent' | 'failed' | 'disabled';
+  provider?: string;
+  messageId?: string;
   resendId?: string;
   error?: string;
   timestamp: string;
@@ -55,25 +69,15 @@ const TEMPLATE_OPTIONS = [
   { id: 'order_delivered', label: 'Order Delivered', category: 'Fulfillment' },
   { id: 'order_cancelled', label: 'Order Cancelled', category: 'Transactional' },
   { id: 'order_refunded', label: 'Order Refunded', category: 'Transactional' },
+  { id: 'order_exchanged', label: 'Product Exchange', category: 'Transactional' },
   { id: 'password_reset', label: 'Password Reset', category: 'Account' },
   { id: 'email_verification', label: 'Email Verification', category: 'Account' },
   { id: 'welcome_email', label: 'Welcome Email', category: 'Marketing' },
-  { id: 'admin_new_order', label: 'Admin New Order Notification', category: 'Admin' },
+  { id: 'admin_new_order', label: 'Admin New Order Alert', category: 'Admin' },
 ];
 
-export interface ContactMessageEntry {
-  id: string;
-  name: string;
-  email: string;
-  phone?: string;
-  subject?: string;
-  message: string;
-  status?: 'Unread' | 'Read' | 'Replied';
-  createdAt: string;
-}
-
 export function EmailSettingsTab() {
-  const [activeSubTab, setActiveSubTab] = useState<'config' | 'templates' | 'preview' | 'test' | 'logs' | 'klaviyo'>('config');
+  const [activeSubTab, setActiveSubTab] = useState<'config' | 'templates' | 'preview' | 'test' | 'klaviyo' | 'logs'>('config');
   
   // Settings state
   const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null);
@@ -82,13 +86,14 @@ export function EmailSettingsTab() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Connection Verification State
+  const [verifyingEmail, setVerifyingEmail] = useState(false);
+  const [emailVerifyResult, setEmailVerifyResult] = useState<{ success: boolean; message: string; provider?: string } | null>(null);
+
   // Logs & Inquiries state
   const [emailLogs, setEmailLogs] = useState<EmailLogEntry[]>([]);
   const [klaviyoLogs, setKlaviyoLogs] = useState<KlaviyoLogEntry[]>([]);
-  const [contactMessages, setContactMessages] = useState<ContactMessageEntry[]>([]);
-  const [storeProducts, setStoreProducts] = useState<any[]>([]);
   const [logFilter, setLogFilter] = useState('all');
-  const [inquirySearch, setInquirySearch] = useState('');
 
   // Preview state
   const [selectedPreviewTemplate, setSelectedPreviewTemplate] = useState('order_confirmation');
@@ -108,18 +113,19 @@ export function EmailSettingsTab() {
   const [testKlaviyoResult, setTestKlaviyoResult] = useState<any>(null);
   const [verifyingKlaviyoKey, setVerifyingKlaviyoKey] = useState(false);
   const [klaviyoVerifyResult, setKlaviyoVerifyResult] = useState<{ success: boolean; message?: string; error?: string; hasEventsWrite?: boolean } | null>(null);
+  const [klaviyoLists, setKlaviyoLists] = useState<{ id: string; name: string }[]>([]);
+  const [fetchingLists, setFetchingLists] = useState(false);
+  const [showAppPasswordGuide, setShowAppPasswordGuide] = useState(false);
 
   // Fetch all configuration and logs on load
   const loadData = async () => {
     setLoading(true);
     try {
-      const [emailRes, klaviyoRes, emailLogsRes, klaviyoLogsRes, contactMsgsRes, productsRes] = await Promise.all([
+      const [emailRes, klaviyoRes, emailLogsRes, klaviyoLogsRes] = await Promise.all([
         fetch('/api/email/settings'),
         fetch('/api/klaviyo/settings'),
         fetch('/api/email/logs'),
-        fetch('/api/klaviyo/logs'),
-        fetch('/api/contact-messages'),
-        fetch('/api/products')
+        fetch('/api/klaviyo/logs')
       ]);
 
       if (emailRes.ok) setEmailSettings(await emailRes.json());
@@ -135,16 +141,6 @@ export function EmailSettingsTab() {
         if (Array.isArray(rawKlav)) {
           setKlaviyoLogs(rawKlav.filter(l => l.status !== 'simulated'));
         }
-      }
-      if (contactMsgsRes.ok) {
-        const msgs = await contactMsgsRes.json();
-        if (Array.isArray(msgs)) {
-          setContactMessages(msgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-        }
-      }
-      if (productsRes.ok) {
-        const prods = await productsRes.json();
-        if (Array.isArray(prods)) setStoreProducts(prods);
       }
     } catch (err: any) {
       console.error('Failed to load email settings data:', err);
@@ -185,6 +181,7 @@ export function EmailSettingsTab() {
     if (!emailSettings) return;
     setSaving(true);
     setMessage(null);
+    setEmailVerifyResult(null);
     try {
       const res = await fetch('/api/email/settings', {
         method: 'POST',
@@ -192,7 +189,9 @@ export function EmailSettingsTab() {
         body: JSON.stringify(emailSettings)
       });
       if (res.ok) {
-        setMessage({ type: 'success', text: 'Resend Email settings saved successfully!' });
+        const data = await res.json();
+        if (data.settings) setEmailSettings(data.settings);
+        setMessage({ type: 'success', text: 'Email delivery settings saved successfully!' });
       } else {
         const err = await res.json();
         setMessage({ type: 'error', text: err.error || 'Failed to save settings' });
@@ -201,6 +200,41 @@ export function EmailSettingsTab() {
       setMessage({ type: 'error', text: err.message || 'Error saving settings' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleVerifyEmailConnection = async () => {
+    if (!emailSettings) return;
+    setVerifyingEmail(true);
+    setEmailVerifyResult(null);
+    try {
+      const res = await fetch('/api/email/verify-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(emailSettings)
+      });
+      const data = await res.json();
+      setEmailVerifyResult(data);
+    } catch (err: any) {
+      setEmailVerifyResult({ success: false, message: err.message || 'Verification failed' });
+    } finally {
+      setVerifyingEmail(false);
+    }
+  };
+
+  const handleFetchKlaviyoLists = async () => {
+    if (!klaviyoSettings?.apiKey) return;
+    setFetchingLists(true);
+    try {
+      const res = await fetch(`/api/klaviyo/lists?apiKey=${encodeURIComponent(klaviyoSettings.apiKey)}`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.lists)) {
+        setKlaviyoLists(data.lists);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch lists:', e);
+    } finally {
+      setFetchingLists(false);
     }
   };
 
@@ -216,6 +250,9 @@ export function EmailSettingsTab() {
       });
       const data = await res.json();
       setKlaviyoVerifyResult(data);
+      if (data.success) {
+        handleFetchKlaviyoLists();
+      }
     } catch (err: any) {
       setKlaviyoVerifyResult({ success: false, error: err.message || 'Failed to verify Klaviyo API key' });
     } finally {
@@ -255,7 +292,11 @@ export function EmailSettingsTab() {
   };
 
   const handleSendTestEmail = async () => {
-    if (!testRecipient) return;
+    if (!testRecipient || !testRecipient.includes('@')) {
+      setMessage({ type: 'error', text: 'Please enter a valid recipient email address' });
+      return;
+    }
+
     setTestSending(true);
     setTestResult(null);
     try {
@@ -264,453 +305,829 @@ export function EmailSettingsTab() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           recipient: testRecipient,
-          type: testTemplate,
-          apiKey: emailSettings?.resendApiKey,
-          fromEmail: emailSettings?.fromEmail
+          type: testTemplate
         })
       });
-      const data = await res.json();
-      setTestResult(data);
-      // Reload logs
-      const logsRes = await fetch('/api/email/logs');
-      if (logsRes.ok) setEmailLogs(await logsRes.json());
+      const result = await res.json();
+      setTestResult(result);
+      if (result.success) {
+        setMessage({ type: 'success', text: `Test email sent to ${testRecipient}!` });
+        loadData();
+      } else {
+        setMessage({ type: 'error', text: result.message || 'Failed to send test email' });
+      }
     } catch (err: any) {
-      setTestResult({ success: false, error: err.message || 'Failed to send test email' });
+      setTestResult({ success: false, message: err.message || 'Failed to dispatch test email' });
+      setMessage({ type: 'error', text: err.message || 'Error sending test email' });
     } finally {
       setTestSending(false);
     }
   };
 
-  const handleSendTestKlaviyoOrderEvent = async () => {
-    if (!testKlaviyoEmail) return;
+  const handleSendKlaviyoTest = async () => {
+    if (!testKlaviyoEmail || !testKlaviyoEmail.includes('@')) {
+      setMessage({ type: 'error', text: 'Please enter a valid email for Klaviyo testing' });
+      return;
+    }
+
     setSendingKlaviyoTest(true);
     setTestKlaviyoResult(null);
     try {
-      const itemsPayload = (storeProducts && storeProducts.length > 0)
-        ? storeProducts.slice(0, 2).map((p: any) => ({
-            productId: p.id || 'prod-sample',
-            productTitle: p.title || p.name || 'Sample Product',
-            price: Number(p.price || 5.99),
-            quantity: 1,
-            image: p.image || p.imageUrl || ''
-          }))
-        : [
-            {
-              productId: 'prod-pouch-sample',
-              productTitle: 'Pouch Supply Co. Sample Pack',
-              price: 14.99,
-              quantity: 1,
-              image: ''
-            }
-          ];
-
       const res = await fetch('/api/klaviyo/track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventType: 'purchase',
-          customerEmail: testKlaviyoEmail.trim().toLowerCase(),
           data: {
-            id: `PS-KLAV-${Math.floor(Math.random() * 90000 + 10000)}`,
-            customerEmail: testKlaviyoEmail.trim().toLowerCase(),
-            customerName: 'Scott Kivlin',
-            total: itemsPayload.reduce((acc: number, item: any) => acc + (item.price * item.quantity), 0),
-            destination: 'United Kingdom',
+            id: `PS-TEST-${Date.now().toString().slice(-5)}`,
+            customerName: 'Scott Kivlin (Test User)',
+            customerEmail: testKlaviyoEmail,
+            total: 39.99,
+            destination: 'London, United Kingdom',
             deliveryMethod: 'Royal Mail Tracked 24',
-            items: itemsPayload
+            items: [
+              {
+                id: 'p1',
+                productId: 'p1',
+                productTitle: 'VELO Freeze Max Strong 17mg Canister',
+                price: 5.99,
+                quantity: 4
+              },
+              {
+                id: 'p2',
+                productId: 'p2',
+                productTitle: 'KILLA Cold Mint Extra Strong 16mg Canister',
+                price: 5.49,
+                quantity: 2
+              }
+            ]
           }
         })
       });
-      const data = await res.json();
-      setTestKlaviyoResult(data);
-      // Reload Klaviyo logs
-      const logsRes = await fetch('/api/klaviyo/logs');
-      if (logsRes.ok) {
-        const rawKlav = await logsRes.json();
-        if (Array.isArray(rawKlav)) setKlaviyoLogs(rawKlav.filter((l: any) => l.status !== 'simulated'));
+
+      const result = await res.json();
+      setTestKlaviyoResult(result);
+      if (result.success) {
+        setMessage({ type: 'success', text: `Test 'Placed Order' event sent to Klaviyo for ${testKlaviyoEmail}!` });
+        loadData();
+      } else {
+        setMessage({ type: 'error', text: result.error || 'Failed to send event to Klaviyo' });
       }
     } catch (err: any) {
-      setTestKlaviyoResult({ success: false, error: err.message || 'Failed to dispatch Klaviyo test event' });
+      setTestKlaviyoResult({ success: false, error: err.message || 'Error triggering Klaviyo test' });
+      setMessage({ type: 'error', text: err.message || 'Error triggering Klaviyo event' });
     } finally {
       setSendingKlaviyoTest(false);
     }
   };
 
-  const handleClearLogs = async () => {
-    if (!confirm('Are you sure you want to clear all email activity logs?')) return;
+  const handleClearEmailLogs = async () => {
+    if (!window.confirm('Are you sure you want to clear all email delivery logs?')) return;
     try {
-      await fetch('/api/email/logs/clear', { method: 'POST' });
-      setEmailLogs([]);
-    } catch (err) {}
+      const res = await fetch('/api/email/logs/clear', { method: 'POST' });
+      if (res.ok) {
+        setEmailLogs([]);
+        setMessage({ type: 'success', text: 'Email logs cleared successfully' });
+      }
+    } catch (e) {}
   };
 
   const handleClearKlaviyoLogs = async () => {
-    if (!confirm('Are you sure you want to clear all Klaviyo activity logs?')) return;
+    if (!window.confirm('Are you sure you want to clear all Klaviyo activity logs?')) return;
     try {
-      await fetch('/api/klaviyo/logs/clear', { method: 'POST' });
-      setKlaviyoLogs([]);
-    } catch (err) {}
-  };
-
-  const handleToggleMessageStatus = async (msgId: string, currentStatus?: string) => {
-    const nextStatus = currentStatus === 'Unread' ? 'Read' : currentStatus === 'Read' ? 'Replied' : 'Unread';
-    const updated = contactMessages.map(m => m.id === msgId ? { ...m, status: nextStatus as any } : m);
-    setContactMessages(updated);
-    try {
-      const target = updated.find(m => m.id === msgId);
-      if (target) {
-        await fetch(`/api/contact-messages/${msgId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(target)
-        });
+      const res = await fetch('/api/klaviyo/logs/clear', { method: 'POST' });
+      if (res.ok) {
+        setKlaviyoLogs([]);
+        setMessage({ type: 'success', text: 'Klaviyo logs cleared successfully' });
       }
-    } catch (err) {}
-  };
-
-  const handleDeleteMessage = async (msgId: string) => {
-    if (!confirm('Are you sure you want to delete this contact submission from the database?')) return;
-    const updated = contactMessages.filter(m => m.id !== msgId);
-    setContactMessages(updated);
-    try {
-      await fetch(`/api/contact-messages/${msgId}`, { method: 'DELETE' });
-    } catch (err) {}
+    } catch (e) {}
   };
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center text-slate-500">
-        <RefreshCw className="h-6 w-6 animate-spin mr-3 text-teal-600" />
-        <span>Loading Email & Marketing System...</span>
+      <div id="email-settings-loading" className="flex items-center justify-center p-12 space-x-3 text-neutral-500">
+        <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
+        <span className="font-medium text-sm">Loading email & telemetry systems...</span>
       </div>
     );
   }
 
-  const filteredLogs = emailLogs.filter(log => {
-    if (logFilter === 'all') return true;
-    return log.status === logFilter || log.type === logFilter;
-  });
-
   return (
-    <div className="space-y-6">
-      {/* Top Banner Header */}
-      <div className="bg-slate-900 text-white rounded-xl p-6 border border-slate-800 shadow-xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
-          <Mail className="h-48 w-48 text-teal-400" />
-        </div>
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
-                <Zap className="h-3 w-3 text-teal-400" /> Production Email Engine
-              </span>
-              <span className="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
-                Resend + React Email + Klaviyo
-              </span>
-            </div>
-            <h2 className="text-2xl font-black text-white tracking-tight">Email & Marketing System</h2>
-            <p className="text-slate-400 text-sm mt-1 max-w-2xl">
-              Manage transactional email dispatch, responsive branding templates, automated triggers, and Klaviyo marketing telemetry.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center gap-2 ${
-              emailSettings?.resendApiKey ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300' : 'bg-amber-950/60 border-amber-500/40 text-amber-300'
-            }`}>
-              <ShieldCheck className="h-4 w-4" />
-              {emailSettings?.resendApiKey ? 'Resend Connected' : 'System Engine Active'}
-            </div>
-
-            <div className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center gap-2 ${
-              klaviyoSettings?.apiKey ? 'bg-indigo-950/60 border-indigo-500/40 text-indigo-300' : 'bg-slate-800 border-slate-700 text-slate-400'
-            }`}>
-              <Sparkles className="h-4 w-4" />
-              {klaviyoSettings?.apiKey ? 'Klaviyo Active' : 'Klaviyo Ready'}
-            </div>
-          </div>
-        </div>
-
-        {/* Sub-Navigation Tabs */}
-        <div className="flex items-center gap-2 mt-6 pt-4 border-t border-slate-800 overflow-x-auto">
+    <div id="email-settings-container" className="space-y-6">
+      {/* Sub-Navigation Tabs */}
+      <div id="email-subnav" className="flex flex-wrap items-center justify-between gap-4 border-b border-neutral-200 pb-4">
+        <div className="flex flex-wrap items-center gap-1.5 bg-neutral-100 p-1 rounded-xl">
           <button
+            id="subtab-config"
             onClick={() => setActiveSubTab('config')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeSubTab === 'config' ? 'bg-teal-500 text-slate-950 shadow-lg' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeSubTab === 'config'
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
             }`}
           >
-            <Settings className="h-3.5 w-3.5" /> API & Configuration
+            <Server className="w-3.5 h-3.5 text-emerald-600" />
+            Email Transport (Gmail / SMTP)
           </button>
 
           <button
+            id="subtab-templates"
             onClick={() => setActiveSubTab('templates')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeSubTab === 'templates' ? 'bg-teal-500 text-slate-950 shadow-lg' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeSubTab === 'templates'
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
             }`}
           >
-            <Mail className="h-3.5 w-3.5" /> Templates & Toggles
+            <Mail className="w-3.5 h-3.5 text-blue-600" />
+            Templates & Triggers
           </button>
 
           <button
+            id="subtab-preview"
             onClick={() => setActiveSubTab('preview')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeSubTab === 'preview' ? 'bg-teal-500 text-slate-950 shadow-lg' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeSubTab === 'preview'
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
             }`}
           >
-            <Eye className="h-3.5 w-3.5" /> Live Template Preview
+            <Eye className="w-3.5 h-3.5 text-purple-600" />
+            Live Preview
           </button>
 
           <button
+            id="subtab-test"
             onClick={() => setActiveSubTab('test')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeSubTab === 'test' ? 'bg-teal-500 text-slate-950 shadow-lg' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeSubTab === 'test'
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
             }`}
           >
-            <Send className="h-3.5 w-3.5" /> Send Test Email
+            <Send className="w-3.5 h-3.5 text-amber-600" />
+            Send Test Email
           </button>
 
           <button
-            onClick={() => setActiveSubTab('logs')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeSubTab === 'logs' ? 'bg-teal-500 text-slate-950 shadow-lg' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            <Layers className="h-3.5 w-3.5" /> Email Activity Logs ({emailLogs.length})
-          </button>
-
-          <button
+            id="subtab-klaviyo"
             onClick={() => setActiveSubTab('klaviyo')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeSubTab === 'klaviyo' ? 'bg-indigo-500 text-white shadow-lg' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeSubTab === 'klaviyo'
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
             }`}
           >
-            <Sparkles className="h-3.5 w-3.5" /> Klaviyo Integration
+            <Zap className="w-3.5 h-3.5 text-emerald-500" />
+            Klaviyo Marketing Flows
+          </button>
+
+          <button
+            id="subtab-logs"
+            onClick={() => setActiveSubTab('logs')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeSubTab === 'logs'
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-indigo-600" />
+            Activity Logs
+            {emailLogs.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-neutral-200 text-neutral-700 rounded-full">
+                {emailLogs.length}
+              </span>
+            )}
           </button>
         </div>
+
+        <button
+          id="btn-refresh-email-data"
+          onClick={loadData}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Refresh
+        </button>
       </div>
 
-      {/* Global Feedback Banner */}
+      {/* Global Status Banner */}
       {message && (
-        <div className={`p-4 rounded-xl border flex items-center justify-between text-sm font-semibold ${
-          message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'
-        }`}>
+        <div
+          id="email-feedback-banner"
+          className={`flex items-center justify-between p-3.5 rounded-xl border text-xs font-medium ${
+            message.type === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : 'bg-rose-50 text-rose-800 border-rose-200'
+          }`}
+        >
           <div className="flex items-center gap-2">
-            {message.type === 'success' ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : <AlertCircle className="h-5 w-5 text-red-600" />}
+            {message.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+            )}
             <span>{message.text}</span>
           </div>
-          <button onClick={() => setMessage(null)} className="text-xs hover:underline">Dismiss</button>
+          <button
+            onClick={() => setMessage(null)}
+            className="text-neutral-400 hover:text-neutral-600 ml-4 font-bold"
+          >
+            &times;
+          </button>
         </div>
       )}
 
-      {/* SUB-TAB 1: API & CONFIGURATION */}
+      {/* SUB-TAB 1: CONFIGURATION (GMAIL / SMTP / RESEND) */}
       {activeSubTab === 'config' && emailSettings && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Resend API & Dispatch Configuration</h3>
-              <p className="text-xs text-slate-500">Configure your Resend API credentials, sender address, and admin notifications.</p>
-            </div>
-            
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={emailSettings.enabled}
-                onChange={(e) => setEmailSettings({ ...emailSettings, enabled: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
-              <span className="ml-3 text-xs font-bold text-slate-700">Global Email System Enabled</span>
-            </label>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Resend API Key</label>
-              <div className="relative">
-                <input
-                  type="password"
-                  value={emailSettings.resendApiKey || ''}
-                  onChange={(e) => setEmailSettings({ ...emailSettings, resendApiKey: e.target.value })}
-                  placeholder="re_123456789_abcdef..."
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-                />
-                <Lock className="absolute right-3 top-3 h-4 w-4 text-slate-400" />
+        <div id="email-config-panel" className="space-y-6">
+          {/* Main Card */}
+          <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-100 pb-5">
+              <div>
+                <h3 className="text-base font-bold text-neutral-900">Email Delivery Engine</h3>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Configure direct Gmail delivery or custom SMTP so order confirmations are sent straight from your inbox to customers without third-party email issues.
+                </p>
               </div>
-              <p className="text-[11px] text-slate-500">Get your API key from <a href="https://resend.com/api-keys" target="_blank" rel="noreferrer" className="text-teal-600 hover:underline">resend.com/api-keys</a>.</p>
+
+              <div className="flex items-center gap-3">
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    id="email-master-toggle"
+                    checked={emailSettings.enabled}
+                    onChange={(e) => setEmailSettings({ ...emailSettings, enabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+                <span className="text-xs font-semibold text-neutral-700">
+                  {emailSettings.enabled ? 'Email System Active' : 'System Disabled'}
+                </span>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">From Email Address</label>
-              <input
-                type="text"
-                value={emailSettings.fromEmail || ''}
-                onChange={(e) => setEmailSettings({ ...emailSettings, fromEmail: e.target.value })}
-                placeholder="Pouch Supply Co. <orders@support.pouch-supply.com>"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
-              <p className="text-[11px] text-slate-500">Verified sender domain in Resend (e.g. <code>Pouch Supply Co. &lt;orders@support.pouch-supply.com&gt;</code>).</p>
+            {/* Provider Selection */}
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider">
+                Select Outgoing Email Provider
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Gmail Option */}
+                <button
+                  type="button"
+                  onClick={() => setEmailSettings({ ...emailSettings, provider: 'gmail' })}
+                  className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                    emailSettings.provider === 'gmail'
+                      ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
+                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center text-rose-600 font-bold text-xs">
+                        G
+                      </div>
+                      <span className="font-bold text-sm text-neutral-900">Gmail / Workspace</span>
+                    </div>
+                    {emailSettings.provider === 'gmail' && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-600 text-white rounded-full">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-2">
+                    Send real order emails directly through your Gmail account with 100% inbox delivery and no third-party restrictions.
+                  </p>
+                </button>
+
+                {/* Custom SMTP Option */}
+                <button
+                  type="button"
+                  onClick={() => setEmailSettings({ ...emailSettings, provider: 'smtp' })}
+                  className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                    emailSettings.provider === 'smtp'
+                      ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
+                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs">
+                        <Server className="w-4 h-4" />
+                      </div>
+                      <span className="font-bold text-sm text-neutral-900">Custom SMTP</span>
+                    </div>
+                    {emailSettings.provider === 'smtp' && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-600 text-white rounded-full">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-2">
+                    Connect any custom mail server or corporate SMTP host (Outlook, SendGrid, Amazon SES SMTP).
+                  </p>
+                </button>
+
+                {/* Resend Option */}
+                <button
+                  type="button"
+                  onClick={() => setEmailSettings({ ...emailSettings, provider: 'resend' })}
+                  className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                    emailSettings.provider === 'resend'
+                      ? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-600/20'
+                      : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-neutral-900 flex items-center justify-center text-white font-bold text-xs">
+                        R
+                      </div>
+                      <span className="font-bold text-sm text-neutral-900">Resend API</span>
+                    </div>
+                    {emailSettings.provider === 'resend' && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-600 text-white rounded-full">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-neutral-500 mt-2">
+                    Developer-focused API requiring DNS domain verification (SPF, DKIM, DMARC).
+                  </p>
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Admin Notification Email</label>
-              <input
-                type="email"
-                value={emailSettings.adminNotificationEmail || ''}
-                onChange={(e) => setEmailSettings({ ...emailSettings, adminNotificationEmail: e.target.value })}
-                placeholder="admin@support.pouch-supply.com"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
-              <p className="text-[11px] text-slate-500">Receives real-time alerts whenever a customer places an order or payment completes.</p>
+            {/* PROVIDER SPECIFIC SETTINGS */}
+
+            {/* 1. Gmail Settings */}
+            {emailSettings.provider === 'gmail' && (
+              <div className="bg-neutral-50 rounded-xl p-5 border border-neutral-200 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                      Gmail SMTP Configuration
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAppPasswordGuide(!showAppPasswordGuide)}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                    How to get a Google App Password
+                  </button>
+                </div>
+
+                {showAppPasswordGuide && (
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 space-y-2">
+                    <p className="font-bold">🔑 How to create a Google 16-character App Password:</p>
+                    <ol className="list-decimal list-inside space-y-1 text-blue-800 pl-1">
+                      <li>Go to your Google Account Security: <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="font-bold underline text-blue-700">myaccount.google.com/apppasswords</a></li>
+                      <li>Ensure <strong>2-Step Verification</strong> is enabled on your Google account.</li>
+                      <li>Type App Name: <strong>Pouch Supply Co.</strong> and click <strong>Create</strong>.</li>
+                      <li>Copy the generated <strong>16-character code</strong> (e.g. <code className="bg-white px-1.5 py-0.5 rounded border border-blue-200 font-mono">abcd efgh ijkl mnop</code>) and paste it below!</li>
+                    </ol>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                      Gmail Email Address
+                    </label>
+                    <input
+                      type="email"
+                      id="gmail-user-input"
+                      value={emailSettings.gmailUser || ''}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, gmailUser: e.target.value })}
+                      placeholder="e.g. scottkivlinpouch@gmail.com"
+                      className="w-full px-3.5 py-2.5 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-medium bg-white"
+                    />
+                    <p className="text-[11px] text-neutral-500 mt-1">
+                      The Gmail account used to dispatch order confirmations.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                      Google App Password (16 characters)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        id="gmail-password-input"
+                        value={emailSettings.gmailAppPassword || ''}
+                        onChange={(e) => setEmailSettings({ ...emailSettings, gmailAppPassword: e.target.value })}
+                        placeholder="•••• •••• •••• ••••"
+                        className="w-full px-3.5 py-2.5 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono bg-white pr-10"
+                      />
+                      <Lock className="w-4 h-4 text-neutral-400 absolute right-3 top-2.5 pointer-events-none" />
+                    </div>
+                    <p className="text-[11px] text-neutral-500 mt-1">
+                      Generated from Google Security &gt; App Passwords.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 2. Custom SMTP Settings */}
+            {emailSettings.provider === 'smtp' && (
+              <div className="bg-neutral-50 rounded-xl p-5 border border-neutral-200 space-y-4">
+                <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                  Custom SMTP Server Details
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                      SMTP Host
+                    </label>
+                    <input
+                      type="text"
+                      id="smtp-host-input"
+                      value={emailSettings.smtpHost || ''}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, smtpHost: e.target.value })}
+                      placeholder="e.g. smtp.gmail.com or mail.pouch-supply.com"
+                      className="w-full px-3.5 py-2 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                      SMTP Port
+                    </label>
+                    <input
+                      type="number"
+                      id="smtp-port-input"
+                      value={emailSettings.smtpPort || 465}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, smtpPort: parseInt(e.target.value) || 465 })}
+                      placeholder="465 or 587"
+                      className="w-full px-3.5 py-2 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                      SMTP Username
+                    </label>
+                    <input
+                      type="text"
+                      id="smtp-user-input"
+                      value={emailSettings.smtpUser || ''}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, smtpUser: e.target.value })}
+                      placeholder="user@example.com"
+                      className="w-full px-3.5 py-2 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                      SMTP Password
+                    </label>
+                    <input
+                      type="password"
+                      id="smtp-password-input"
+                      value={emailSettings.smtpPassword || ''}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, smtpPassword: e.target.value })}
+                      placeholder="••••••••••••"
+                      className="w-full px-3.5 py-2 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. Resend Settings */}
+            {emailSettings.provider === 'resend' && (
+              <div className="bg-neutral-50 rounded-xl p-5 border border-neutral-200 space-y-4">
+                <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                  Resend API Configuration
+                </h4>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                    Resend API Key (re_...)
+                  </label>
+                  <input
+                    type="password"
+                    id="resend-api-key-input"
+                    value={emailSettings.resendApiKey || ''}
+                    onChange={(e) => setEmailSettings({ ...emailSettings, resendApiKey: e.target.value })}
+                    placeholder="re_123456789abcdef"
+                    className="w-full px-3.5 py-2.5 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono bg-white"
+                  />
+                  <p className="text-[11px] text-neutral-500 mt-1">
+                    Get an API key from <a href="https://resend.com/api-keys" target="_blank" rel="noreferrer" className="text-blue-600 underline">resend.com/api-keys</a>. Note: requires domain DNS verification for custom from domains.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Sender & Notification Details */}
+            <div className="space-y-4 pt-2 border-t border-neutral-100">
+              <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                Store Sender Identity & Admin Notifications
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                    Sender Name
+                  </label>
+                  <input
+                    type="text"
+                    id="sender-name-input"
+                    value={emailSettings.fromName || 'Pouch Supply Co.'}
+                    onChange={(e) => setEmailSettings({ ...emailSettings, fromName: e.target.value })}
+                    placeholder="Pouch Supply Co."
+                    className="w-full px-3.5 py-2 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  />
+                  <p className="text-[10px] text-neutral-400 mt-1">Shown in customer inbox</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                    Sender / Reply-To Email
+                  </label>
+                  <input
+                    type="email"
+                    id="sender-email-input"
+                    value={emailSettings.fromEmail || emailSettings.gmailUser || 'scottkivlinpouch@gmail.com'}
+                    onChange={(e) => setEmailSettings({ ...emailSettings, fromEmail: e.target.value })}
+                    placeholder="orders@pouch-supply.com"
+                    className="w-full px-3.5 py-2 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  />
+                  <p className="text-[10px] text-neutral-400 mt-1">Customer replies go here</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                    Admin Notification Email
+                  </label>
+                  <input
+                    type="email"
+                    id="admin-email-input"
+                    value={emailSettings.adminNotificationEmail || 'scottkivlinpouch@gmail.com'}
+                    onChange={(e) => setEmailSettings({ ...emailSettings, adminNotificationEmail: e.target.value })}
+                    placeholder="scottkivlinpouch@gmail.com"
+                    className="w-full px-3.5 py-2 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  />
+                  <p className="text-[10px] text-neutral-400 mt-1">Receives instant alerts on new orders</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Connection Verification Result Banner */}
+            {emailVerifyResult && (
+              <div
+                className={`p-4 rounded-xl border text-xs ${
+                  emailVerifyResult.success
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-bold mb-1">
+                  {emailVerifyResult.success ? (
+                    <CheckCheck className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600" />
+                  )}
+                  <span>
+                    {emailVerifyResult.success
+                      ? `Transporter Connection Successful (${emailVerifyResult.provider || emailSettings.provider})`
+                      : 'Transporter Connection Failed'}
+                  </span>
+                </div>
+                <p>{emailVerifyResult.message}</p>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-neutral-100">
+              <button
+                type="button"
+                id="btn-verify-connection"
+                onClick={handleVerifyEmailConnection}
+                disabled={verifyingEmail}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-colors border border-neutral-200 disabled:opacity-50"
+              >
+                {verifyingEmail ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                    Testing Transporter Connection...
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    Test Transporter Connection
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                id="btn-save-email-settings"
+                onClick={handleSaveEmailSettings}
+                disabled={saving}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-xl transition-colors shadow-sm disabled:opacity-50"
+              >
+                {saving ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Saving Changes...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    Save Email Settings
+                  </>
+                )}
+              </button>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="pt-4 border-t border-slate-100 flex justify-end">
+      {/* SUB-TAB 2: TEMPLATES & TRIGGERS */}
+      {activeSubTab === 'templates' && emailSettings && (
+        <div id="email-templates-panel" className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 space-y-6">
+          <div className="flex items-center justify-between border-b border-neutral-100 pb-4">
+            <div>
+              <h3 className="text-base font-bold text-neutral-900">Email Notification Triggers</h3>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Enable or disable individual transactional email flows and customize their subject lines.
+              </p>
+            </div>
+
             <button
+              type="button"
               onClick={handleSaveEmailSettings}
               disabled={saving}
-              className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-md transition-all flex items-center gap-2"
+              className="px-4 py-2 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-xl transition-colors"
             >
-              {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Save Email Configuration
+              {saving ? 'Saving...' : 'Save Subject Changes'}
             </button>
           </div>
-        </div>
-      )}
 
-      {/* SUB-TAB 2: TEMPLATES & TOGGLES */}
-      {activeSubTab === 'templates' && emailSettings && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-          <div className="border-b border-slate-100 pb-4">
-            <h3 className="text-base font-bold text-slate-900">Transactional Email Templates & Subject Lines</h3>
-            <p className="text-xs text-slate-500">Toggle individual email triggers on or off and customize subject lines.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-3">
             {TEMPLATE_OPTIONS.map((tmpl) => {
               const currentTmpl = emailSettings.templates[tmpl.id] || { enabled: true, subject: tmpl.label };
               return (
-                <div key={tmpl.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3 hover:border-teal-300 transition-all">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-700 uppercase">{tmpl.category}</span>
-                      <h4 className="text-sm font-bold text-slate-900">{tmpl.label}</h4>
-                    </div>
-
-                    <label className="relative inline-flex items-center cursor-pointer">
+                <div
+                  key={tmpl.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-neutral-200 bg-neutral-50/50 hover:bg-white transition-colors"
+                >
+                  <div className="flex items-start gap-3 sm:w-1/3">
+                    <label className="relative inline-flex items-center cursor-pointer mt-0.5">
                       <input
                         type="checkbox"
                         checked={currentTmpl.enabled}
                         onChange={(e) => {
-                          setEmailSettings({
-                            ...emailSettings,
-                            templates: {
-                              ...emailSettings.templates,
-                              [tmpl.id]: {
-                                ...currentTmpl,
-                                enabled: e.target.checked
-                              }
+                          const updated = {
+                            ...emailSettings.templates,
+                            [tmpl.id]: {
+                              ...currentTmpl,
+                              enabled: e.target.checked
                             }
-                          });
+                          };
+                          setEmailSettings({ ...emailSettings, templates: updated });
                         }}
                         className="sr-only peer"
                       />
-                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal-600"></div>
+                      <div className="w-9 h-5 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
                     </label>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-neutral-900">{tmpl.label}</span>
+                        <span className="px-2 py-0.5 text-[10px] font-semibold bg-neutral-200 text-neutral-700 rounded-md">
+                          {tmpl.category}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-neutral-500 font-mono mt-0.5">{tmpl.id}</p>
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-500 uppercase block mb-1">Subject Line</label>
+                  <div className="flex-1 flex items-center gap-2">
+                    <span className="text-xs text-neutral-400 font-medium">Subject:</span>
                     <input
                       type="text"
                       value={currentTmpl.subject || ''}
                       onChange={(e) => {
-                        setEmailSettings({
-                          ...emailSettings,
-                          templates: {
-                            ...emailSettings.templates,
-                            [tmpl.id]: {
-                              ...currentTmpl,
-                              subject: e.target.value
-                            }
+                        const updated = {
+                          ...emailSettings.templates,
+                          [tmpl.id]: {
+                            ...currentTmpl,
+                            subject: e.target.value
                           }
-                        });
+                        };
+                        setEmailSettings({ ...emailSettings, templates: updated });
                       }}
-                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
                     />
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPreviewTemplate(tmpl.id);
+                      setActiveSubTab('preview');
+                    }}
+                    className="px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-neutral-900 bg-neutral-200/60 hover:bg-neutral-200 rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Preview
+                  </button>
                 </div>
               );
             })}
           </div>
-
-          <div className="pt-4 border-t border-slate-100 flex justify-end">
-            <button
-              onClick={handleSaveEmailSettings}
-              disabled={saving}
-              className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-md transition-all flex items-center gap-2"
-            >
-              {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Save Template Changes
-            </button>
-          </div>
         </div>
       )}
 
-      {/* SUB-TAB 3: LIVE TEMPLATE PREVIEW */}
+      {/* SUB-TAB 3: LIVE PREVIEW */}
       {activeSubTab === 'preview' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Responsive Email Template Inspector</h3>
-              <p className="text-xs text-slate-500">Select a template to view the live HTML rendering on desktop and mobile viewports.</p>
-            </div>
-
+        <div id="email-preview-panel" className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-100 pb-4">
             <div className="flex items-center gap-3">
+              <label className="text-xs font-bold text-neutral-700">Template:</label>
               <select
                 value={selectedPreviewTemplate}
                 onChange={(e) => setSelectedPreviewTemplate(e.target.value)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-neutral-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {TEMPLATE_OPTIONS.map(t => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
+                {TEMPLATE_OPTIONS.map((tmpl) => (
+                  <option key={tmpl.id} value={tmpl.id}>
+                    {tmpl.label} ({tmpl.category})
+                  </option>
                 ))}
               </select>
+            </div>
 
-              <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
-                <button
-                  onClick={() => setPreviewDevice('desktop')}
-                  className={`p-1.5 rounded text-xs font-bold flex items-center gap-1 ${
-                    previewDevice === 'desktop' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-                  }`}
-                >
-                  <Monitor className="h-3.5 w-3.5" /> Desktop
-                </button>
-                <button
-                  onClick={() => setPreviewDevice('mobile')}
-                  className={`p-1.5 rounded text-xs font-bold flex items-center gap-1 ${
-                    previewDevice === 'mobile' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
-                  }`}
-                >
-                  <Smartphone className="h-3.5 w-3.5" /> Mobile
-                </button>
-              </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewDevice('desktop')}
+                className={`p-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 ${
+                  previewDevice === 'desktop'
+                    ? 'bg-neutral-900 text-white border-neutral-900'
+                    : 'bg-neutral-100 text-neutral-600 border-neutral-200'
+                }`}
+              >
+                <Monitor className="w-3.5 h-3.5" />
+                Desktop
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPreviewDevice('mobile')}
+                className={`p-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 ${
+                  previewDevice === 'mobile'
+                    ? 'bg-neutral-900 text-white border-neutral-900'
+                    : 'bg-neutral-100 text-neutral-600 border-neutral-200'
+                }`}
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                Mobile
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTestTemplate(selectedPreviewTemplate);
+                  setActiveSubTab('test');
+                }}
+                className="ml-2 px-3 py-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-1.5"
+              >
+                <Send className="w-3.5 h-3.5" />
+                Send as Test Email
+              </button>
             </div>
           </div>
 
-          <div className="bg-slate-100 rounded-xl p-6 flex justify-center items-center min-h-[600px] overflow-auto">
+          <div className="flex justify-center bg-neutral-100 p-6 rounded-xl overflow-hidden min-h-[500px]">
             {previewLoading ? (
-              <div className="flex items-center gap-2 text-slate-500 text-sm">
-                <RefreshCw className="h-5 w-5 animate-spin text-teal-600" />
-                <span>Rendering template...</span>
+              <div className="flex items-center justify-center space-x-2 text-neutral-400">
+                <RefreshCw className="w-5 h-5 animate-spin" />
+                <span className="text-xs">Rendering responsive HTML preview...</span>
               </div>
             ) : (
-              <div className={`transition-all duration-300 shadow-2xl rounded-xl overflow-hidden bg-white ${
-                previewDevice === 'mobile' ? 'w-[375px]' : 'w-full max-w-[650px]'
-              }`}>
+              <div
+                className={`bg-white rounded-xl shadow-lg border border-neutral-300 transition-all duration-300 overflow-hidden ${
+                  previewDevice === 'mobile' ? 'w-[375px] h-[650px]' : 'w-full max-w-[650px] h-[650px]'
+                }`}
+              >
                 <iframe
-                  title="Template Preview"
                   srcDoc={previewHtml}
-                  className="w-full h-[700px] border-none"
+                  title="Email Template Live Preview"
+                  className="w-full h-full border-0"
                 />
               </div>
             )}
@@ -720,534 +1137,424 @@ export function EmailSettingsTab() {
 
       {/* SUB-TAB 4: SEND TEST EMAIL */}
       {activeSubTab === 'test' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-          <div className="border-b border-slate-100 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Send Test Transactional Email</h3>
-              <p className="text-xs text-slate-500">Dispatch a test email to verify your Resend integration or review live inbox formatting.</p>
+        <div id="email-test-panel" className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 space-y-6 max-w-2xl mx-auto">
+          <div className="text-center space-y-1">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-3">
+              <Send className="w-6 h-6" />
             </div>
-
-            <div className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-2 ${
-              emailSettings?.resendApiKey ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'
-            }`}>
-              <ShieldCheck className="h-4 w-4" />
-              {emailSettings?.resendApiKey ? 'Resend Live Mode' : 'Internal Dispatch Mode Active'}
-            </div>
+            <h3 className="text-lg font-bold text-neutral-900">Dispatch Live Test Email</h3>
+            <p className="text-xs text-neutral-500 max-w-md mx-auto">
+              Send a real sample email through your configured transport ({emailSettings?.provider?.toUpperCase() || 'GMAIL'}) to Scott Kivlin or any customer inbox to confirm instantaneous delivery.
+            </p>
           </div>
 
-          {/* Quick Resend API Key setup banner if missing */}
-          {!emailSettings?.resendApiKey && (
-            <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 space-y-3">
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="font-bold text-sm">Resend API Key Required for Real Inbox Delivery</h4>
-                  <p className="text-xs text-amber-800 mt-0.5">
-                    No Resend API Key is currently saved. Test emails will record to <strong>Internal Dispatch Logs</strong> (viewable in admin dashboard and customer portal). Enter your key below to dispatch live external emails.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
-                <input
-                  type="password"
-                  placeholder="Paste Resend API Key (re_12345...)"
-                  value={emailSettings?.resendApiKey || ''}
-                  onChange={(e) => setEmailSettings(prev => prev ? { ...prev, resendApiKey: e.target.value } : null)}
-                  className="flex-1 px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-                <button
-                  onClick={handleSaveEmailSettings}
-                  disabled={saving || !emailSettings?.resendApiKey}
-                  className="bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs px-4 py-2 rounded-lg transition-all shrink-0"
-                >
-                  Save Key
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Info Banner explaining Resend Sandbox Recipient Limitation & How to allow ANY email */}
-          {emailSettings?.resendApiKey && (
-            emailSettings.fromEmail && !emailSettings.fromEmail.includes('resend.dev') ? (
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs space-y-2">
-                <div className="flex items-start gap-2.5">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="font-extrabold text-sm text-emerald-950">Custom Sender Domain Active!</p>
-                    <p className="text-emerald-900 leading-relaxed">
-                      Your sender email is configured to <code className="bg-emerald-100 px-1.5 py-0.5 rounded font-mono font-bold text-emerald-950">{emailSettings.fromEmail}</code>.
-                      Once verified in Resend (<a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer" className="underline font-bold text-emerald-700">resend.com/domains</a>), Resend delivers live customer emails (order confirmations, welcomes, cancellations, refunds, exchanges) directly to ANY customer email address.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="p-4 rounded-xl bg-blue-50/90 border border-blue-200 text-blue-900 text-xs space-y-3">
-                <div className="flex items-start gap-2.5">
-                  <AlertCircle className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-                  <div className="space-y-1.5">
-                    <p className="font-extrabold text-sm text-blue-950">Where are emails delivered & How to send to ANY email address?</p>
-                    
-                    <p className="text-blue-900 leading-relaxed">
-                      <strong>1. Where do test emails go?</strong> They are sent directly to the specified recipient inbox (e.g., <strong>scottkivlinpouch@gmail.com</strong>). Please check your <em>Primary inbox, Spam/Junk folder, and Promotions tab</em> in Gmail.
-                    </p>
-
-                    <p className="text-blue-900 leading-relaxed">
-                      <strong>2. Why did sending to other emails fail?</strong> Resend's free default sender (<code className="bg-blue-100 px-1 py-0.5 rounded font-mono text-[11px]">onboarding@resend.dev</code>) only permits sending to your registered Resend account owner email (<strong className="underline">scottkivlinpouch@gmail.com</strong>) to prevent spam.
-                    </p>
-
-                    <div className="p-3 bg-white/90 rounded-lg border border-blue-200 text-blue-950 space-y-1">
-                      <p className="font-extrabold text-xs text-blue-900 uppercase tracking-wider">You connected your domain in Resend? Follow final Step 3:</p>
-                      <ol className="list-decimal list-inside space-y-1 text-xs text-slate-700 pl-1">
-                        <li>Go to the <strong>Configuration</strong> tab above in this Email Settings menu.</li>
-                        <li>Change <strong>From Email Address</strong> to your domain address (e.g., <code className="bg-slate-100 px-1 rounded font-mono">Pouch Supply Co. &lt;orders@support.pouch-supply.com&gt;</code>).</li>
-                        <li>Click <strong>Save Configuration</strong>.</li>
-                      </ol>
-                      <p className="text-[11px] text-emerald-800 font-bold pt-1">
-                        ✓ Once saved, your app will send emails from your custom domain to ALL customer addresses!
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Recipient Email Address</label>
-                <button
-                  type="button"
-                  onClick={() => setTestRecipient('scottkivlinpouch@gmail.com')}
-                  className="text-[11px] font-bold text-teal-700 hover:text-teal-900 underline cursor-pointer"
-                >
-                  Use scottkivlinpouch@gmail.com
-                </button>
-              </div>
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                Recipient Email Address
+              </label>
               <input
                 type="email"
+                id="test-recipient-input"
                 value={testRecipient}
                 onChange={(e) => setTestRecipient(e.target.value)}
                 placeholder="scottkivlinpouch@gmail.com"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                className="w-full px-4 py-2.5 text-xs rounded-xl border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
               />
-              <p className="text-[11px] text-slate-500">
-                Send to <strong>scottkivlinpouch@gmail.com</strong> for testing while on <code className="bg-slate-100 px-1 rounded font-mono">onboarding@resend.dev</code>.
-              </p>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Select Email Template</label>
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                Select Template to Test
+              </label>
               <select
                 value={testTemplate}
                 onChange={(e) => setTestTemplate(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                className="w-full px-4 py-2.5 text-xs rounded-xl border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold bg-white"
               >
-                {TEMPLATE_OPTIONS.map(t => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
+                {TEMPLATE_OPTIONS.map((tmpl) => (
+                  <option key={tmpl.id} value={tmpl.id}>
+                    {tmpl.label} ({tmpl.category})
+                  </option>
                 ))}
               </select>
             </div>
-          </div>
 
-          <div className="pt-2 flex justify-start">
+            {testResult && (
+              <div
+                className={`p-4 rounded-xl border text-xs ${
+                  testResult.success
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-bold mb-1">
+                  {testResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600" />
+                  )}
+                  <span>{testResult.success ? 'Email Dispatched Successfully!' : 'Email Dispatch Failed'}</span>
+                </div>
+                <p>{testResult.message || (testResult.error && String(testResult.error)) || JSON.stringify(testResult)}</p>
+                {testResult.log?.messageId && (
+                  <p className="mt-1 font-mono text-[10px] text-neutral-600">Message ID: {testResult.log.messageId}</p>
+                )}
+              </div>
+            )}
+
             <button
+              type="button"
+              id="btn-send-test-email"
               onClick={handleSendTestEmail}
-              disabled={testSending || !testRecipient}
-              className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-md transition-all flex items-center gap-2"
+              disabled={testSending}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 transition-all shadow-sm disabled:opacity-50"
             >
-              {testSending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Send Test Email
+              {testSending ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Dispatching to {testRecipient}...
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4" />
+                  Send Test Email Now
+                </>
+              )}
             </button>
           </div>
-
-          {testResult && (
-            <div className={`p-4 rounded-xl border text-xs space-y-2 ${
-              testResult.success
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                : testResult.mode === 'simulated'
-                ? 'bg-amber-50 border-amber-200 text-amber-900'
-                : 'bg-red-50 border-red-200 text-red-900'
-            }`}>
-              <div className="font-bold text-sm flex items-center gap-2">
-                {testResult.success ? (
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-                ) : testResult.mode === 'simulated' ? (
-                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
-                ) : (
-                  <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
-                )}
-
-                <span>
-                  {testResult.success
-                    ? 'Test Email Successfully Delivered via Resend!'
-                    : testResult.mode === 'simulated'
-                    ? 'Resend API Key Required: Key Not Configured'
-                    : 'Resend Email Dispatch Failed'}
-                </span>
-              </div>
-
-              <p className="text-xs">
-                {testResult.message || (testResult.error ? String(testResult.error) : 'Check details below.')}
-              </p>
-
-              {testResult.success && testResult.mode === 'live' && (
-                <div className="p-3 bg-white/90 rounded-lg border border-emerald-300 text-emerald-950 text-xs space-y-1 mt-2">
-                  <p className="font-bold">📬 Delivered to: <span className="underline">{testRecipient}</span></p>
-                  <p className="text-[11px] text-emerald-900 leading-relaxed">
-                    Check your Gmail account at <strong>{testRecipient}</strong>. If you do not see it in your primary inbox, please check your <strong>Spam / Junk</strong> folder or <strong>Promotions</strong> tab.
-                  </p>
-                </div>
-              )}
-
-              {testResult.log?.resendId && (
-                <div className="p-2.5 bg-white/80 rounded border border-emerald-200 font-mono text-[11px] text-emerald-900 font-bold">
-                  Resend Message Reference ID: {testResult.log.resendId}
-                </div>
-              )}
-
-              <details className="mt-2 pt-2 border-t border-slate-200/60">
-                <summary className="cursor-pointer text-[11px] font-bold text-slate-600 hover:underline">
-                  View Raw API Payload Response
-                </summary>
-                <pre className="mt-2 p-2 bg-white/90 rounded border border-slate-200 font-mono text-[11px] overflow-x-auto text-slate-800">
-                  {JSON.stringify(testResult, null, 2)}
-                </pre>
-              </details>
-            </div>
-          )}
         </div>
       )}
 
-      {/* SUB-TAB 5: EMAIL ACTIVITY LOGS */}
-      {activeSubTab === 'logs' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Email Telemetry & Audit Logs</h3>
-              <p className="text-xs text-slate-500">Live audit feed of all transactional emails dispatched by system services.</p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <select
-                value={logFilter}
-                onChange={(e) => setLogFilter(e.target.value)}
-                className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700"
-              >
-                <option value="all">All Logs ({emailLogs.length})</option>
-                <option value="sent">Status: Sent</option>
-                <option value="failed">Status: Failed</option>
-                <option value="disabled">Status: Disabled</option>
-              </select>
-
-              <button
-                onClick={handleClearLogs}
-                className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-lg text-xs font-bold flex items-center gap-1"
-              >
-                <Trash2 className="h-3.5 w-3.5" /> Clear Logs
-              </button>
-            </div>
-          </div>
-
-          {filteredLogs.length === 0 ? (
-            <div className="p-12 text-center text-slate-400">
-              <Mail className="h-12 w-12 mx-auto mb-2 opacity-30" />
-              <p className="text-sm font-semibold">No email logs recorded yet.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
-                    <th className="p-3">Timestamp</th>
-                    <th className="p-3">Template</th>
-                    <th className="p-3">Recipient</th>
-                    <th className="p-3">Subject</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Resend Ref / Error</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium">
-                  {filteredLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 whitespace-nowrap text-slate-400 font-mono text-[11px]">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </td>
-                      <td className="p-3 font-bold text-slate-900">
-                        {log.type}
-                      </td>
-                      <td className="p-3 text-slate-700 font-mono">
-                        {log.recipient}
-                      </td>
-                      <td className="p-3 text-slate-600 max-w-xs truncate">
-                        {log.subject}
-                      </td>
-                      <td className="p-3 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          log.status === 'sent' ? 'bg-emerald-100 text-emerald-800' :
-                          log.status === 'disabled' ? 'bg-slate-100 text-slate-600' :
-                          'bg-red-100 text-red-800'
-                        }`}>
-                          {log.status}
-                        </span>
-                      </td>
-                      <td className="p-3 text-slate-500 font-mono text-[11px] max-w-xs truncate">
-                        {log.resendId ? `ID: ${log.resendId}` : log.error || '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* SUB-TAB 6: KLAVIYO INTEGRATION */}
+      {/* SUB-TAB 5: KLAVIYO MARKETING FLOWS */}
       {activeSubTab === 'klaviyo' && klaviyoSettings && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <div id="klaviyo-panel" className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-100 pb-5">
             <div>
-              <h3 className="text-base font-bold text-slate-900">Klaviyo Marketing Automation</h3>
-              <p className="text-xs text-slate-500">Automatically sync customer profiles, e-commerce transactions, cart activity, and wishlist events to Klaviyo.</p>
+              <div className="flex items-center gap-2">
+                <Zap className="w-5 h-5 text-emerald-600" />
+                <h3 className="text-base font-bold text-neutral-900">Klaviyo E-Commerce Integration</h3>
+              </div>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Automatically synchronizes subscriber consent and dispatches rich e-commerce events (Placed Order, Ordered Product, Checkout Started) to trigger your Klaviyo flows.
+              </p>
             </div>
 
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={klaviyoSettings.enabled}
-                onChange={(e) => setKlaviyoSettings({ ...klaviyoSettings, enabled: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-              <span className="ml-3 text-xs font-bold text-slate-700">Klaviyo Tracking Enabled</span>
-            </label>
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="klaviyo-master-toggle"
+                  checked={klaviyoSettings.enabled}
+                  onChange={(e) => setKlaviyoSettings({ ...klaviyoSettings, enabled: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
+              <span className="text-xs font-semibold text-neutral-700">
+                {klaviyoSettings.enabled ? 'Klaviyo Active' : 'Klaviyo Disabled'}
+              </span>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Klaviyo Private API Key</label>
-              <div className="flex gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                Klaviyo Private API Key (pk_...)
+              </label>
+              <div className="relative">
                 <input
                   type="password"
+                  id="klaviyo-api-key-input"
                   value={klaviyoSettings.apiKey || ''}
                   onChange={(e) => setKlaviyoSettings({ ...klaviyoSettings, apiKey: e.target.value })}
-                  placeholder="pk_123456789_abcdef..."
-                  className="flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="pk_123456789abcdef..."
+                  className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono bg-white pr-10"
                 />
-                <button
-                  type="button"
-                  onClick={handleVerifyKlaviyoKey}
-                  disabled={verifyingKlaviyoKey || !klaviyoSettings.apiKey}
-                  className="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-lg shadow-sm transition-all flex items-center gap-1.5 shrink-0"
-                >
-                  {verifyingKlaviyoKey ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                  Test Key
-                </button>
+                <Lock className="w-4 h-4 text-neutral-400 absolute right-3 top-2.5 pointer-events-none" />
               </div>
-              <p className="text-[11px] text-slate-500">Private API Key with Events & Profiles permissions from <a href="https://www.klaviyo.com/settings/account/api-keys" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">klaviyo.com/settings/account/api-keys</a>.</p>
-              
-              {klaviyoVerifyResult && (
-                <div className={`mt-2 p-3 rounded-lg text-xs border ${
-                  klaviyoVerifyResult.success 
-                    ? klaviyoVerifyResult.hasEventsWrite === false 
-                      ? 'bg-amber-50 border-amber-200 text-amber-900' 
-                      : 'bg-emerald-50 border-emerald-200 text-emerald-800' 
-                    : 'bg-rose-50 border-rose-200 text-rose-800'
-                }`}>
-                  {klaviyoVerifyResult.success ? (
-                    <div className="space-y-1">
-                      <p className="font-semibold flex items-center gap-1.5">
-                        {klaviyoVerifyResult.hasEventsWrite === false ? (
-                          <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-                        ) : (
-                          <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
-                        )}
-                        {klaviyoVerifyResult.message}
-                      </p>
-                      {klaviyoVerifyResult.hasEventsWrite === false && (
-                        <p className="text-[11px] text-amber-800 pl-5">
-                          💡 <strong>Fix:</strong> In Klaviyo, go to <em>Settings &gt; API Keys &gt; Create Private API Key</em> &rarr; select <strong>"Full Access Key"</strong>, copy it, and paste it here.
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="font-semibold flex items-center gap-1.5">
-                      <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
-                      {klaviyoVerifyResult.error || 'Key verification failed.'}
-                    </p>
-                  )}
-                </div>
-              )}
+              <p className="text-[11px] text-neutral-500 mt-1">
+                Found in Klaviyo Settings &gt; API Keys &gt; Create Private API Key (choose Full Access).
+              </p>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Klaviyo Company ID / Public Key</label>
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                Public API Key / Site ID (6 characters)
+              </label>
               <input
                 type="text"
-                value={klaviyoSettings.siteId || klaviyoSettings.publicKey || ''}
+                id="klaviyo-site-id-input"
+                value={klaviyoSettings.siteId || klaviyoSettings.publicKey || 'VPbY66'}
                 onChange={(e) => setKlaviyoSettings({ ...klaviyoSettings, siteId: e.target.value, publicKey: e.target.value })}
-                placeholder="e.g. ABC123XYZ or NEXT_PUBLIC_KLAVIYO_COMPANY_ID"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="e.g. VPbY66"
+                className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono bg-white"
               />
-              <p className="text-[11px] text-slate-500">Public Company ID / Public API Key (NEXT_PUBLIC_KLAVIYO_COMPANY_ID or NEXT_PUBLIC_KLAVIYO_PUBLIC_KEY).</p>
+              <p className="text-[11px] text-neutral-500 mt-1">
+                Your 6-character Klaviyo Account / Company ID for client tracking.
+              </p>
             </div>
           </div>
 
-          <div className="pt-4 border-t border-slate-100">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Klaviyo Event Toggles</h4>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                { id: 'customerSignup', label: 'Customer Signup' },
-                { id: 'newsletterSignup', label: 'Newsletter Signup' },
-                { id: 'emailVerified', label: 'Email Verified' },
-                { id: 'addToCart', label: 'Added to Cart' },
-                { id: 'checkoutStarted', label: 'Checkout Started' },
-                { id: 'purchase', label: 'Placed Order / Purchase' },
-                { id: 'refunded', label: 'Order Refunded' },
-                { id: 'wishlist', label: 'Added to Wishlist' },
-              ].map(evt => (
-                <label key={evt.id} className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 bg-slate-50/50 hover:bg-white cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(klaviyoSettings.trackEvents[evt.id])}
-                    onChange={(e) => {
-                      setKlaviyoSettings({
-                        ...klaviyoSettings,
-                        trackEvents: {
-                          ...klaviyoSettings.trackEvents,
-                          [evt.id]: e.target.checked
-                        }
-                      });
-                    }}
-                    className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
-                  />
-                  <span className="text-xs font-bold text-slate-800">{evt.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="pt-4 border-t border-slate-100 flex justify-end">
-            <button
-              onClick={handleSaveKlaviyoSettings}
-              disabled={saving}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-md transition-all flex items-center gap-2"
-            >
-              {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Save Klaviyo Settings
-            </button>
-          </div>
-
-          {/* Test Klaviyo Event Dispatcher */}
-          <div className="pt-6 border-t border-slate-100 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100 space-y-3">
+          {/* List Subscription Settings */}
+          <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-200 space-y-3">
             <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                Default Klaviyo Subscriber List (Auto-Consent)
+              </h4>
+              <button
+                type="button"
+                onClick={handleFetchKlaviyoLists}
+                disabled={fetchingLists || !klaviyoSettings.apiKey}
+                className="text-xs font-semibold text-emerald-600 hover:text-emerald-800 flex items-center gap-1 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${fetchingLists ? 'animate-spin' : ''}`} />
+                {fetchingLists ? 'Fetching Lists...' : 'Fetch Lists from Klaviyo'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <h4 className="text-xs font-extrabold text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles className="h-4 w-4 text-indigo-600" />
-                  Test Klaviyo Order Confirmation Event Flow
-                </h4>
-                <p className="text-[11px] text-indigo-700">
-                  Trigger an immediate <code className="font-mono bg-indigo-100 px-1 py-0.5 rounded text-indigo-900 font-bold">Placed Order</code> event to your Klaviyo account for testing order confirmation emails.
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Select List
+                </label>
+                {klaviyoLists.length > 0 ? (
+                  <select
+                    value={klaviyoSettings.listId || ''}
+                    onChange={(e) => setKlaviyoSettings({ ...klaviyoSettings, listId: e.target.value })}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-neutral-300 bg-white font-medium focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="">-- No specific list (General consent only) --</option>
+                    {klaviyoLists.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name} ({l.id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={klaviyoSettings.listId || ''}
+                    onChange={(e) => setKlaviyoSettings({ ...klaviyoSettings, listId: e.target.value })}
+                    placeholder="e.g. Yg4xJk or Newsletter"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-neutral-300 bg-white font-mono"
+                  />
+                )}
+              </div>
+
+              <div className="flex items-center pt-4">
+                <p className="text-[11px] text-neutral-500">
+                  Customers who purchase are automatically granted email marketing consent (<code className="bg-neutral-200 px-1 rounded font-mono">SUBSCRIBED</code>) so your automated Klaviyo flows trigger immediately.
                 </p>
               </div>
             </div>
+          </div>
 
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          {/* Verification Status */}
+          {klaviyoVerifyResult && (
+            <div
+              className={`p-4 rounded-xl border text-xs ${
+                klaviyoVerifyResult.success
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-rose-50 border-rose-200 text-rose-900'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold mb-1">
+                {klaviyoVerifyResult.success ? (
+                  <CheckCheck className="w-4 h-4 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600" />
+                )}
+                <span>{klaviyoVerifyResult.success ? 'Klaviyo API Key Valid' : 'Klaviyo API Verification Failed'}</span>
+              </div>
+              <p>{klaviyoVerifyResult.message || klaviyoVerifyResult.error}</p>
+            </div>
+          )}
+
+          {/* Actions & Live Event Tester */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-neutral-100">
+            <button
+              type="button"
+              id="btn-verify-klaviyo-key"
+              onClick={handleVerifyKlaviyoKey}
+              disabled={verifyingKlaviyoKey || !klaviyoSettings.apiKey}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-colors border border-neutral-200 disabled:opacity-50"
+            >
+              {verifyingKlaviyoKey ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                  Verifying API Key...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  Verify Klaviyo Key
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              id="btn-save-klaviyo-settings"
+              onClick={handleSaveKlaviyoSettings}
+              disabled={saving}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-xl transition-colors shadow-sm disabled:opacity-50"
+            >
+              {saving ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  Save Klaviyo Settings
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Klaviyo Test Event Trigger Box */}
+          <div className="mt-6 pt-6 border-t border-neutral-200">
+            <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wider mb-2">
+              🧪 Trigger Real Klaviyo "Placed Order" Event
+            </h4>
+            <p className="text-xs text-neutral-500 mb-4">
+              Dispatches a test e-commerce order payload to your Klaviyo account to verify your flows and metric aggregations.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-3">
               <input
                 type="email"
                 value={testKlaviyoEmail}
                 onChange={(e) => setTestKlaviyoEmail(e.target.value)}
                 placeholder="scottkivlinpouch@gmail.com"
-                className="flex-1 px-3 py-2 bg-white border border-indigo-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="flex-1 px-3.5 py-2 text-xs rounded-xl border border-neutral-300 focus:ring-2 focus:ring-emerald-500 bg-white"
               />
               <button
-                onClick={handleSendTestKlaviyoOrderEvent}
-                disabled={sendingKlaviyoTest || !testKlaviyoEmail}
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 shrink-0"
+                type="button"
+                id="btn-send-klaviyo-test"
+                onClick={handleSendKlaviyoTest}
+                disabled={sendingKlaviyoTest}
+                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
               >
                 {sendingKlaviyoTest ? (
                   <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    Sending Event...
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Triggering Event...
                   </>
                 ) : (
                   <>
-                    <Send className="h-3.5 w-3.5" />
-                    Send 'Placed Order' Event
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    Trigger Placed Order Event
                   </>
                 )}
               </button>
             </div>
 
             {testKlaviyoResult && (
-              <div className={`p-3 rounded-lg text-xs border ${
-                testKlaviyoResult.success
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
-                {testKlaviyoResult.success ? (
-                  <p className="font-semibold flex items-center gap-1.5">
-                    <CheckCircle className="h-4 w-4 text-emerald-600" />
-                    Event successfully dispatched to Klaviyo for <strong>{testKlaviyoEmail}</strong>! Check your Klaviyo flows and Gmail inbox.
-                  </p>
-                ) : (
-                  <p className="font-semibold flex items-center gap-1.5">
-                    <AlertCircle className="h-4 w-4 text-rose-600" />
-                    {testKlaviyoResult.error || testKlaviyoResult.log?.error || 'Klaviyo event dispatch failed.'}
-                  </p>
-                )}
+              <div
+                className={`mt-3 p-3.5 rounded-xl border text-xs ${
+                  testKlaviyoResult.success
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                }`}
+              >
+                <p className="font-bold">
+                  {testKlaviyoResult.success
+                    ? 'Event successfully received by Klaviyo!'
+                    : `Klaviyo Error: ${testKlaviyoResult.error || 'Failed'}`}
+                </p>
               </div>
             )}
           </div>
+        </div>
+      )}
 
-          {/* Klaviyo Logs Section */}
-          <div className="pt-6 border-t border-slate-100">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-bold text-slate-900">Klaviyo Event Stream ({klaviyoLogs.length})</h4>
-              {klaviyoLogs.length > 0 && (
-                <button
-                  onClick={handleClearKlaviyoLogs}
-                  className="px-3 py-1 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-lg text-xs font-bold flex items-center gap-1"
-                >
-                  <Trash2 className="h-3 w-3" /> Clear Klaviyo Logs
-                </button>
-              )}
+      {/* SUB-TAB 6: ACTIVITY LOGS */}
+      {activeSubTab === 'logs' && (
+        <div id="email-logs-panel" className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-100 pb-4">
+            <div>
+              <h3 className="text-base font-bold text-neutral-900">Email & Telemetry Activity Logs</h3>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Audit history of transactional emails and Klaviyo events dispatched by the application.
+              </p>
             </div>
-            {klaviyoLogs.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">No Klaviyo events recorded yet.</p>
-            ) : (
-              <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-60">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-500 font-bold uppercase">
-                      <th className="p-2">Timestamp</th>
-                      <th className="p-2">Event</th>
-                      <th className="p-2">Customer</th>
-                      <th className="p-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {klaviyoLogs.map(l => (
-                      <tr key={l.id} className="hover:bg-slate-50">
-                        <td className="p-2 text-slate-400 font-mono text-[10px]">{new Date(l.timestamp).toLocaleString()}</td>
-                        <td className="p-2 font-bold text-slate-900">{l.eventName}</td>
-                        <td className="p-2 text-slate-700 font-mono">{l.customerEmail}</td>
-                        <td className="p-2">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            l.status === 'sent' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
-                          }`}>
-                            {l.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleClearEmailLogs}
+                className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear Email Logs
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearKlaviyoLogs}
+                className="px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-100 border border-neutral-200 rounded-lg transition-colors flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear Klaviyo Logs
+              </button>
+            </div>
+          </div>
+
+          {/* Log List */}
+          <div className="space-y-3">
+            {emailLogs.length === 0 ? (
+              <div className="text-center py-12 text-neutral-400">
+                <Mail className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                <p className="text-xs font-medium">No email activity logs recorded yet.</p>
+                <p className="text-[11px] text-neutral-400 mt-1">Send a test email or place an order to see real-time delivery logs.</p>
               </div>
+            ) : (
+              emailLogs.map((log) => (
+                <div
+                  key={log.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/60 hover:bg-white transition-colors"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded-md uppercase ${
+                          log.status === 'sent'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : log.status === 'disabled'
+                            ? 'bg-neutral-200 text-neutral-700'
+                            : 'bg-rose-100 text-rose-800'
+                        }`}
+                      >
+                        {log.status}
+                      </span>
+                      <span className="text-xs font-bold text-neutral-900">{log.subject}</span>
+                      {log.provider && (
+                        <span className="px-1.5 py-0.2 text-[10px] font-mono bg-blue-50 text-blue-700 rounded border border-blue-200">
+                          {log.provider.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px] text-neutral-500">
+                      <span>To: <strong>{log.recipient}</strong></span>
+                      <span>&bull;</span>
+                      <span>Type: <code className="font-mono">{log.type}</code></span>
+                      {log.error && (
+                        <>
+                          <span>&bull;</span>
+                          <span className="text-rose-600 font-medium">Error: {log.error}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="text-right text-[11px] text-neutral-400 font-mono flex-shrink-0">
+                    {new Date(log.timestamp).toLocaleString('en-GB')}
+                  </div>
+                </div>
+              ))
             )}
           </div>
         </div>
