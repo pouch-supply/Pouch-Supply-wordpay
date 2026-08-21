@@ -402,8 +402,9 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => {
-                  setCustomTrackingInput(trackingNumber || '');
-                  setCustomCarrierInput(order.carrier || 'Royal Mail Tracked 24');
+                  // Only prefill if it is a real tracking number; leave blank for simulated test codes
+                  setCustomTrackingInput(isSimulated ? '' : (trackingNumber || ''));
+                  setCustomCarrierInput(order.carrier || 'Royal Mail Tracked 24®');
                   setShowEditTrackingModal(true);
                 }}
                 className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
@@ -481,17 +482,31 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
               </div>
 
               <div>
-                <label className="block font-black text-slate-700 uppercase tracking-wider text-[10px] mb-1">
-                  Royal Mail Tracking Reference
-                </label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block font-black text-slate-700 uppercase tracking-wider text-[10px]">
+                    Royal Mail Tracking Reference
+                  </label>
+                  {customTrackingInput && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomTrackingInput('')}
+                      className="text-[10px] text-rose-600 hover:text-rose-700 font-bold cursor-pointer"
+                    >
+                      Clear field
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={customTrackingInput}
                   onChange={(e) => setCustomTrackingInput(e.target.value.toUpperCase())}
-                  placeholder="e.g. JG123456789GB"
-                  className="w-full border border-slate-200 p-2.5 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono text-xs font-bold text-slate-900 uppercase"
+                  placeholder="e.g. JG123456789GB (Type or paste real barcode)"
+                  className="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono text-xs font-bold text-slate-900 uppercase"
                   autoFocus
                 />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Enter your physical 13-character Royal Mail code or Click & Drop tracking number.
+                </p>
               </div>
 
               <div>
