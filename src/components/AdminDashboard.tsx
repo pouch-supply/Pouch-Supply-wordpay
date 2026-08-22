@@ -31,6 +31,7 @@ import PagesTab from './admin/PagesTab';
 import DevelopmentTab from './admin/DevelopmentTab';
 import { DiagnosticsTab } from './admin/DiagnosticsTab';
 import { EmailSettingsTab } from './admin/EmailSettingsTab';
+import { RoyalMailSettingsCard } from './admin/RoyalMailSettingsCard';
 import { Activity } from 'lucide-react';
 
 export const AVAILABLE_SECTION_TEMPLATES = [
@@ -574,7 +575,7 @@ function HowItWorksSectionAdmin({ sec }: HowItWorksSectionAdminProps) {
   );
 }
 
-type SidebarTab = 'analytics' | 'orders' | 'collections' | 'products' | 'pages' | 'blogs' | 'files' | 'customers' | 'discounts' | 'email' | 'layout' | 'development' | 'diagnostics';
+type SidebarTab = 'analytics' | 'orders' | 'collections' | 'products' | 'pages' | 'blogs' | 'files' | 'customers' | 'discounts' | 'shipping' | 'email' | 'layout' | 'development' | 'diagnostics';
 
 export default function AdminDashboard({
   products: parentProducts,
@@ -613,6 +614,7 @@ export default function AdminDashboard({
     files: 'files',
     customers: 'customers',
     discounts: 'discounts',
+    shipping: 'shipping',
     email: 'email',
     layout: 'layout',
     development: 'development',
@@ -632,6 +634,10 @@ export default function AdminDashboard({
     media: 'files',
     customers: 'customers',
     discounts: 'discounts',
+    shipping: 'shipping',
+    'royal-mail': 'shipping',
+    royalmail: 'shipping',
+    postage: 'shipping',
     email: 'email',
     'email-settings': 'email',
     klaviyo: 'email',
@@ -3164,6 +3170,7 @@ export default function AdminDashboard({
                 { id: 'files', label: 'Files Manager', icon: HardDrive },
                 { id: 'customers', label: 'Customers', icon: Users },
                 { id: 'discounts', label: 'Discounts', icon: Percent },
+                { id: 'shipping', label: 'Royal Mail Shipping', icon: Truck },
                 { id: 'email', label: 'Email & Marketing', icon: Mail },
                 { id: 'layout', label: 'Header & Footer', icon: Settings },
                 { id: 'development', label: 'Development Mode', icon: Terminal },
@@ -3573,6 +3580,7 @@ export default function AdminDashboard({
             showConfirmDeleteModal={(title, message, onConfirm) => {
               if (confirm(`${title}\n\n${message}`)) onConfirm();
             }}
+            onNavigateToShipping={() => setActiveTab('shipping')}
           />
         )}
 
@@ -3755,7 +3763,12 @@ export default function AdminDashboard({
           />
         )}
 
-        {/* 10. EMAIL & MARKETING BLOCK */}
+        {/* 10. ROYAL MAIL SHIPPING & CLICK & DROP API SETTINGS BLOCK */}
+        {activeTab === 'shipping' && (
+          <RoyalMailSettingsCard />
+        )}
+
+        {/* 11. EMAIL & MARKETING BLOCK */}
         {activeTab === 'email' && (
           <EmailSettingsTab />
         )}
