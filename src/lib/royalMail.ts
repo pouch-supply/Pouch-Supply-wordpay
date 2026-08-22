@@ -99,8 +99,9 @@ async function royalMailRequest<T>(
  * This does NOT create a shipment.
  */
 export async function checkRoyalMailConnection(apiKey?: string) {
+  // Check authorization against Click & Drop /orders endpoint
   return royalMailRequest<unknown>(
-    "/orders?pageSize=1",
+    "/orders",
     {
       method: "GET",
     },

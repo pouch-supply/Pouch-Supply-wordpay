@@ -117,6 +117,8 @@ export const RoyalMailSettingsCard: React.FC = () => {
       if (res.ok) {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
+        // Automatically re-check live Royal Mail connection with the newly saved key
+        checkLiveConnection();
       }
     } catch (err) {
       alert('Failed to save Royal Mail settings');

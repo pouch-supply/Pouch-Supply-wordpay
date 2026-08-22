@@ -32,12 +32,12 @@ const router = Router();
 router.get("/connection", async (_req: Request, res: Response) => {
   try {
     const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey || apiKey.trim().length === 0) {
+    const apiKey = (settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "").trim();
+    if (!apiKey) {
       return res.status(200).json({
         success: false,
         connected: false,
-        message: "ROYAL_MAIL_API_KEY is not configured.",
+        message: "No Click & Drop API Authorization key saved yet. Please paste your key below and click 'Save Settings'.",
         environment: "LIVE"
       });
     }
@@ -47,16 +47,24 @@ router.get("/connection", async (_req: Request, res: Response) => {
     return res.json({
       success: true,
       connected: true,
-      message: "Royal Mail Click & Drop API is connected.",
+      message: "Royal Mail Click & Drop API is connected and authorized.",
       environment: "LIVE",
     });
   } catch (error: any) {
     console.error("[Royal Mail] Connection check error:", error);
+    let msg = error?.message || "Unable to connect to Royal Mail.";
     if (error instanceof RoyalMailError) {
-      return res.status(error.status >= 400 && error.status < 600 ? error.status : 200).json({
+      if (error.status === 401) {
+        msg = "Invalid or unauthorized API key (401 Unauthorized). Please ensure you generated an API Authorization key in Click & Drop (Settings > Integrations > Click & Drop API).";
+      } else if (error.status === 403) {
+        msg = "Access Forbidden (403). Please ensure your Click & Drop account has API access enabled.";
+      } else if (error.status === 404) {
+        msg = "Endpoint not found (404).";
+      }
+      return res.status(200).json({
         success: false,
         connected: false,
-        message: error.message || "Royal Mail API error",
+        message: msg,
         status: error.status,
         details: error.details,
       });
@@ -64,7 +72,7 @@ router.get("/connection", async (_req: Request, res: Response) => {
     return res.status(200).json({
       success: false,
       connected: false,
-      message: error?.message || "Unable to connect to Royal Mail.",
+      message: msg,
     });
   }
 });
