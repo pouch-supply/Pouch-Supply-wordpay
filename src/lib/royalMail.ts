@@ -1,8 +1,16 @@
-const ROYAL_MAIL_API_URL =
-  process.env.ROYAL_MAIL_API_URL ||
-  process.env.RM_API_BASE_URL ||
-  process.env.ROYAL_MAIL_BASE_URL ||
-  "https://api.parcel.royalmail.com/api/v1";
+function getRoyalMailApiUrl(): string {
+  let base =
+    process.env.ROYAL_MAIL_API_URL ||
+    process.env.RM_API_BASE_URL ||
+    process.env.ROYAL_MAIL_BASE_URL ||
+    "https://api.parcel.royalmail.com/api/v1";
+
+  base = base.trim().replace(/\/+$/, "");
+  if (!base.includes("/api/v1") && !base.includes("/v1")) {
+    base = `${base}/api/v1`;
+  }
+  return base;
+}
 
 export class RoyalMailError extends Error {
   status: number;
@@ -39,7 +47,11 @@ async function royalMailRequest<T>(
 
   const authHeader = getAuthHeader(key);
 
-  const response = await fetch(`${ROYAL_MAIL_API_URL}${path}`, {
+  const baseUrl = getRoyalMailApiUrl();
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const fullUrl = `${baseUrl}${normalizedPath}`;
+
+  const response = await fetch(fullUrl, {
     ...options,
     headers: {
       Authorization: authHeader,
