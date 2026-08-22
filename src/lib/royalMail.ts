@@ -391,9 +391,10 @@ export async function getRoyalMailLabel(
   }
 
   const authHeader = getAuthHeader(key);
+  const baseUrl = getRoyalMailApiUrl();
 
   const response = await fetch(
-    `${ROYAL_MAIL_API_URL}/orders/${encoded}/label?${params}`,
+    `${baseUrl}/orders/${encoded}/label?${params}`,
     {
       method: "GET",
       headers: {
