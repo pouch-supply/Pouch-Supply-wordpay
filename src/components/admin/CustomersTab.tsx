@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Download, Upload, Plus, Eye, User, Mail, MapPin, Package, ShoppingBag, X, Check, ArrowRight, RefreshCw } from 'lucide-react';
+import { Search, Download, Upload, Plus, Eye, User, Mail, MapPin, Package, ShoppingBag, X, Check, ArrowRight, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Order } from '../../types';
 
 interface CustomerItem {
@@ -7,7 +7,7 @@ interface CustomerItem {
   name: string;
   email: string;
   location: string;
-  subscriptionStatus: 'Subscribed' | 'Not subscribed' | 'Unsubscribed';
+  subscriptionStatus: 'Subscribed' | 'Not subscribed' | 'Unsubscribed' | 'Cancelled' | 'Subscription Cancelled';
   ordersCount: number;
   amountSpent: number;
 }
@@ -116,9 +116,24 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
     };
   };
 
+  // Check if customer's subscription was cancelled
+  const isCustomerSubCancelled = (cust: CustomerItem) => {
+    if (!cust) return false;
+    if (cust.subscriptionStatus === 'Cancelled' || cust.subscriptionStatus === 'Subscription Cancelled') return true;
+    const emailLower = (cust.email || '').toLowerCase();
+    const nameLower = (cust.name || '').toLowerCase();
+    const cOrders = orders.filter(o => 
+      (o.customerEmail && o.customerEmail.toLowerCase() === emailLower) || 
+      (o.customerName && o.customerName.toLowerCase() === nameLower)
+    );
+    const subOrders = cOrders.filter(isSubOrder);
+    return subOrders.length > 0 && subOrders.every(o => o.subscriptionCancelled || (Array.isArray(o.tags) && o.tags.some((t: any) => typeof t === 'string' && t.toLowerCase().includes('subscription cancelled'))));
+  };
+
   // Check if customer is subscribed from customer record or placed subscription orders
   const isCustomerSubscribed = (cust: CustomerItem) => {
     if (!cust) return false;
+    if (isCustomerSubCancelled(cust)) return false;
     if (cust.subscriptionStatus === 'Subscribed') return true;
     const emailLower = (cust.email || '').toLowerCase();
     const nameLower = (cust.name || '').toLowerCase();
@@ -126,7 +141,7 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
       (o.customerEmail && o.customerEmail.toLowerCase() === emailLower) || 
       (o.customerName && o.customerName.toLowerCase() === nameLower)
     );
-    return cOrders.some(isSubOrder);
+    return cOrders.some(o => isSubOrder(o) && !o.subscriptionCancelled && (!Array.isArray(o.tags) || !o.tags.some((t: any) => typeof t === 'string' && t.toLowerCase().includes('subscription cancelled'))));
   };
 
   // Get matching orders for selected customer
@@ -138,6 +153,7 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
     : [];
 
   const isSelectedSubscribed = selectedCustomer ? isCustomerSubscribed(selectedCustomer) : false;
+  const isSelectedSubCancelled = selectedCustomer ? isCustomerSubCancelled(selectedCustomer) : false;
   const selectedCustomerSubOrders = customerOrders.filter(isSubOrder);
   const latestSubOrder = selectedCustomerSubOrders[0] || null;
 
@@ -228,6 +244,10 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
                         <span className="inline-flex items-center gap-1 py-1 px-2.5 rounded-full font-black text-[9.5px] uppercase tracking-wider bg-indigo-600 text-white shadow-2xs">
                           <RefreshCw className="w-2.5 h-2.5" /> Subscribed
                         </span>
+                      ) : isCustomerSubCancelled(cust) ? (
+                        <span className="inline-flex items-center gap-1 py-1 px-2.5 rounded-full font-black text-[9.5px] uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs">
+                          <AlertTriangle className="w-2.5 h-2.5 text-rose-600" /> Plan Cancelled
+                        </span>
                       ) : (
                         <span className="inline-block py-0.5 px-2 rounded-full font-bold text-[9px] uppercase tracking-wider bg-slate-100 text-slate-400">
                           Not Subscribed
@@ -299,6 +319,10 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
                     <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase py-0.5 px-2 rounded-full bg-emerald-100 text-emerald-800">
                       <RefreshCw className="w-2.5 h-2.5" /> Subscribed
                     </span>
+                  ) : isSelectedSubCancelled ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase py-0.5 px-2 rounded-full bg-rose-100 text-rose-800 border border-rose-300">
+                      <AlertTriangle className="w-2.5 h-2.5 text-rose-600" /> Cancelled
+                    </span>
                   ) : (
                     <span className="inline-block text-[9px] font-black uppercase py-0.5 px-2 rounded-full bg-slate-200 text-slate-600">
                       Not Subscribed
@@ -310,6 +334,20 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
                   <strong className="text-slate-800 text-xs font-bold block truncate">{selectedCustomer.location || 'UK'}</strong>
                 </div>
               </div>
+
+              {/* CANCELLED SUBSCRIPTION DETAILS PANEL */}
+              {isSelectedSubCancelled && (
+                <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl space-y-2 text-left">
+                  <div className="flex items-center gap-2 text-rose-800">
+                    <AlertTriangle className="h-4.5 w-4.5 text-rose-600 shrink-0" />
+                    <span className="font-black text-xs uppercase tracking-wide">Subscription Plan Cancelled</span>
+                    <span className="ml-auto text-[9px] bg-rose-600 text-white font-black px-2 py-0.5 rounded uppercase">Cancelled</span>
+                  </div>
+                  <p className="text-[11px] text-rose-700 font-medium">
+                    This customer previously held a recurring subscription box plan and has since cancelled their renewals via the customer portal.
+                  </p>
+                </div>
+              )}
 
               {/* ACTIVE SUBSCRIPTION DETAILS PANEL FOR SUBSCRIBED CUSTOMER */}
               {isSelectedSubscribed && (

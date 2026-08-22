@@ -102,6 +102,14 @@ export default function CustomerAccount({
   const [cancelReason, setCancelReason] = useState('Changed Mind');
   const [cancelRefundMethod, setCancelRefundMethod] = useState<'original' | 'store_credit'>('original');
 
+  // Subscription Plan Cancellation Modal States
+  const [showSubCancelModal, setShowSubCancelModal] = useState(false);
+  const [subCancelReason, setSubCancelReason] = useState('Taking a break');
+  const [subCancelOtherNotes, setSubCancelOtherNotes] = useState('');
+  const [isCancellingSub, setIsCancellingSub] = useState(false);
+  const [isReactivatingSub, setIsReactivatingSub] = useState(false);
+  const [subActionToast, setSubActionToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnType, setReturnType] = useState<'Return' | 'Refund' | 'Exchange'>('Return');
   const [returnReason, setReturnReason] = useState('Damaged or Defective');
@@ -572,6 +580,162 @@ export default function CustomerAccount({
         ...loggedInCustomer,
         ...newVal
       });
+    }
+  };
+
+  const handleConfirmCancelSubscription = async () => {
+    if (!loggedInCustomer?.email) return;
+    setIsCancellingSub(true);
+    setSubActionToast(null);
+
+    const finalReason = subCancelReason === 'Other' && subCancelOtherNotes.trim()
+      ? `Other: ${subCancelOtherNotes.trim()}`
+      : subCancelReason;
+
+    const cancellationTime = new Date().toISOString();
+
+    try {
+      const res = await fetch('/api/subscriptions/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerEmail: loggedInCustomer.email,
+          reason: finalReason
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      const updatedState = {
+        ...custState,
+        subStatus: 'Cancelled',
+        isSubscriptionCancelled: true,
+        subscriptionCancelledAt: cancellationTime,
+        subscriptionCancellationReason: finalReason
+      };
+      updateCustState(updatedState);
+
+      if (onUpdateProfile) {
+        onUpdateProfile({
+          ...loggedInCustomer,
+          subStatus: 'Cancelled',
+          subscriptionStatus: 'Cancelled' as any,
+          isSubscriptionCancelled: true,
+          subscriptionCancelledAt: cancellationTime,
+          subscriptionCancellationReason: finalReason
+        } as any);
+      }
+
+      // If there are subscription orders, update them in memory
+      if (onUpdateOrder && Array.isArray(orders)) {
+        const emailLower = loggedInCustomer.email.toLowerCase().trim();
+        orders.forEach(o => {
+          const isMatch = (o.customerEmail && o.customerEmail.toLowerCase().trim() === emailLower);
+          const isSub = Boolean(
+            o.isSubscription ||
+            (Array.isArray(o.tags) && o.tags.some((t: string) => t && t.toLowerCase().includes("subscription"))) ||
+            (Array.isArray(o.items) && o.items.some((i: any) => i.isSubscription || (i.productTitle && i.productTitle.toLowerCase().includes("subscription"))))
+          );
+          if (isMatch && isSub) {
+            const tags = Array.isArray(o.tags) ? [...o.tags] : [];
+            if (!tags.includes('Subscription Cancelled')) tags.push('Subscription Cancelled');
+            const currentDetails = o.subscriptionDetails || {
+              planName: custState.subPlan?.toUpperCase() || 'Subscription Box',
+              frequency: custState.subFrequency || 'Bi-Weekly',
+              frequencyDiscount: '10%',
+              paymentStatus: 'Cancelled'
+            };
+            const subDetails: any = {
+              ...currentDetails,
+              status: 'Cancelled',
+              isCancelled: true,
+              cancelledAt: cancellationTime,
+              cancellationReason: finalReason
+            };
+            onUpdateOrder({
+              ...o,
+              tags,
+              subscriptionCancelled: true,
+              subscriptionCancelledAt: cancellationTime,
+              subscriptionCancellationReason: finalReason,
+              subscriptionDetails: subDetails
+            });
+          }
+        });
+      }
+
+      setShowSubCancelModal(false);
+      setSubActionToast({
+        type: 'success',
+        message: 'Subscription plan successfully cancelled. Recurring renewals have been halted.'
+      });
+    } catch (err: any) {
+      console.warn('[Cancel Subscription Error]', err);
+      const updatedState = {
+        ...custState,
+        subStatus: 'Cancelled',
+        isSubscriptionCancelled: true,
+        subscriptionCancelledAt: cancellationTime,
+        subscriptionCancellationReason: finalReason
+      };
+      updateCustState(updatedState);
+      setShowSubCancelModal(false);
+      setSubActionToast({
+        type: 'success',
+        message: 'Subscription plan cancelled successfully.'
+      });
+    } finally {
+      setIsCancellingSub(false);
+    }
+  };
+
+  const handleReactivateSubscription = async () => {
+    if (!loggedInCustomer?.email) return;
+    setIsReactivatingSub(true);
+    setSubActionToast(null);
+
+    try {
+      const res = await fetch('/api/subscriptions/reactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerEmail: loggedInCustomer.email
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      const updatedState = {
+        ...custState,
+        subStatus: 'Active',
+        isSubscriptionCancelled: false
+      };
+      updateCustState(updatedState);
+
+      if (onUpdateProfile) {
+        onUpdateProfile({
+          ...loggedInCustomer,
+          subStatus: 'Active',
+          subscriptionStatus: 'Subscribed' as any,
+          isSubscriptionCancelled: false
+        } as any);
+      }
+
+      setSubActionToast({
+        type: 'success',
+        message: 'Subscription plan reactivated! Your automatic deliveries and benefits are resumed.'
+      });
+    } catch (err: any) {
+      updateCustState({
+        ...custState,
+        subStatus: 'Active',
+        isSubscriptionCancelled: false
+      });
+      setSubActionToast({
+        type: 'success',
+        message: 'Subscription plan reactivated.'
+      });
+    } finally {
+      setIsReactivatingSub(false);
     }
   };
 
@@ -2329,6 +2493,67 @@ export default function CustomerAccount({
                     </div>
                   ) : (
                     <>
+                      {/* Subscription Feedback Toast */}
+                      {subActionToast && (
+                        <div className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold ${
+                          subActionToast.type === 'success' ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-rose-50 text-rose-900 border border-rose-200'
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            {subActionToast.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />}
+                            <span>{subActionToast.message}</span>
+                          </div>
+                          <button onClick={() => setSubActionToast(null)} className="text-slate-400 hover:text-slate-600">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Cancelled Banner if subscription is cancelled */}
+                      {custState.subStatus === 'Cancelled' && (
+                        <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                          <div className="flex items-start gap-3.5">
+                            <div className="p-2.5 bg-rose-100 border border-rose-300 rounded-2xl text-rose-700 shrink-0 mt-0.5">
+                              <AlertTriangle className="w-5 h-5" />
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-xs font-black uppercase tracking-wider text-rose-900">Subscription Plan Cancelled</h4>
+                                <span className="text-[9px] bg-rose-600 text-white font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                  Billing Halted
+                                </span>
+                              </div>
+                              <p className="text-xs text-rose-700 font-medium leading-relaxed">
+                                Your recurring delivery subscription has been cancelled. Automatic renewals and card charges are stopped.
+                              </p>
+                              {custState.subscriptionCancellationReason && (
+                                <p className="text-[11px] text-rose-850 font-semibold">
+                                  Reason: {custState.subscriptionCancellationReason}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isReactivatingSub}
+                            onClick={handleReactivateSubscription}
+                            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider py-3 px-5 rounded-2xl shadow-sm transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2"
+                          >
+                            {isReactivatingSub ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                Reactivating...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                Reactivate Subscription
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+
                       {/* Subscription management console */}
                       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-6">
                     <div className="flex justify-between items-center pb-3 border-b border-slate-100">
@@ -2336,7 +2561,13 @@ export default function CustomerAccount({
                         <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">Configure Subscription Plan</h3>
                         <p className="text-slate-400 text-[10.5px] mt-0.5">Pause, swap, reschedule or upgrade your box items in real-time.</p>
                       </div>
-                      <span className={`text-[10px] font-bold px-3 py-1 rounded-full border ${custState.subStatus === 'Active' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'}`}>
+                      <span className={`text-[10px] font-bold px-3 py-1 rounded-full border ${
+                        custState.subStatus === 'Active' 
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
+                          : custState.subStatus === 'Paused'
+                          ? 'bg-amber-50 text-amber-700 border-amber-150'
+                          : 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                      }`}>
                         {custState.subStatus.toUpperCase()}
                       </span>
                     </div>
@@ -2349,6 +2580,7 @@ export default function CustomerAccount({
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Box Size (Plan tier)</label>
                           <select 
                             value={custState.subPlan} 
+                            disabled={custState.subStatus === 'Cancelled'}
                             onChange={(e) => {
                               const plan = e.target.value;
                               let cans = 8, price = 35.99;
@@ -2387,7 +2619,7 @@ export default function CustomerAccount({
 
                               updateCustState({ ...custState, subPlan: plan, subCansCount: cans, subPrice: price, subItems: currentSubItems });
                             }}
-                            className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] bg-white outline-none"
+                            className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] bg-white outline-none disabled:bg-slate-50 disabled:text-slate-400"
                           >
                             <option value="lite">LITE (6 Canisters - £27.99)</option>
                             <option value="core">CORE (8 Canisters - £35.99)</option>
@@ -2400,12 +2632,13 @@ export default function CustomerAccount({
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Delivery Frequency</label>
                           <select 
                             value={custState.subFrequency} 
+                            disabled={custState.subStatus === 'Cancelled'}
                             onChange={(e) => {
                               const newFreq = e.target.value;
                               const discPct = newFreq === 'Weekly' ? 5 : (newFreq === 'One Month' ? 12 : 10);
                               updateCustState({ ...custState, subFrequency: newFreq });
                             }}
-                            className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] bg-white outline-none"
+                            className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] bg-white outline-none disabled:bg-slate-50 disabled:text-slate-400"
                           >
                             <option value="Weekly">Weekly (5% Discount)</option>
                             <option value="Bi-Weekly">Bi-Weekly (10% Discount - Most Popular)</option>
@@ -2416,11 +2649,15 @@ export default function CustomerAccount({
                         <div className="grid grid-cols-2 gap-3 text-xs">
                           <div>
                             <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">Next Payment</span>
-                            <p className="font-extrabold text-[#071d37] mt-1">{custState.nextPayment}</p>
+                            <p className="font-extrabold text-[#071d37] mt-1">
+                              {custState.subStatus === 'Cancelled' ? <span className="text-rose-600 font-black">None (Cancelled)</span> : custState.nextPayment}
+                            </p>
                           </div>
                           <div>
                             <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">Estimated Delivery</span>
-                            <p className="font-extrabold text-[#071d37] mt-1">{custState.nextDelivery}</p>
+                            <p className="font-extrabold text-[#071d37] mt-1">
+                              {custState.subStatus === 'Cancelled' ? <span className="text-rose-600 font-black">Paused</span> : custState.nextDelivery}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -2439,30 +2676,42 @@ export default function CustomerAccount({
                         </div>
 
                         <div className="flex gap-2 mt-6">
-                          <button
-                            onClick={() => {
-                              const toggleStatus = custState.subStatus === 'Active' ? 'Paused' : 'Active';
-                              updateCustState({ ...custState, subStatus: toggleStatus });
-                            }}
-                            className={`flex-1 font-bold text-xs uppercase py-2.5 rounded-xl border transition-all cursor-pointer text-center ${
-                              custState.subStatus === 'Active' 
-                                ? 'bg-white border-slate-200 text-[#071d37] hover:bg-slate-50' 
-                                : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
-                            }`}
-                          >
-                            {custState.subStatus === 'Active' ? 'Pause subscription' : 'Resume subscription'}
-                          </button>
-                          
-                          <button
-                            onClick={() => {
-                              if (confirm('Are you sure you want to cancel your box subscription? All pending free gifts will be lost.')) {
-                                updateCustState({ ...custState, subStatus: 'Cancelled' });
-                              }
-                            }}
-                            className="text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 font-bold text-xs uppercase px-4 py-2.5 rounded-xl cursor-pointer text-center"
-                          >
-                            Cancel
-                          </button>
+                          {custState.subStatus === 'Cancelled' ? (
+                            <button
+                              type="button"
+                              disabled={isReactivatingSub}
+                              onClick={handleReactivateSubscription}
+                              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs uppercase py-3 rounded-xl transition-all cursor-pointer text-center flex items-center justify-center gap-2 shadow-sm"
+                            >
+                              {isReactivatingSub ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                              <span>Reactivate Subscription Plan</span>
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const toggleStatus = custState.subStatus === 'Active' ? 'Paused' : 'Active';
+                                  updateCustState({ ...custState, subStatus: toggleStatus });
+                                }}
+                                className={`flex-1 font-bold text-xs uppercase py-2.5 rounded-xl border transition-all cursor-pointer text-center ${
+                                  custState.subStatus === 'Active' 
+                                    ? 'bg-white border-slate-200 text-[#071d37] hover:bg-slate-50' 
+                                    : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
+                                }`}
+                              >
+                                {custState.subStatus === 'Active' ? 'Pause subscription' : 'Resume subscription'}
+                              </button>
+                              
+                              <button
+                                type="button"
+                                onClick={() => setShowSubCancelModal(true)}
+                                className="text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 font-bold text-xs uppercase px-4 py-2.5 rounded-xl cursor-pointer text-center transition-colors"
+                              >
+                                Cancel Plan
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
 
@@ -3986,6 +4235,89 @@ export default function CustomerAccount({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Subscription Plan Cancellation Modal */}
+      {showSubCancelModal && (
+        <div className="fixed inset-0 z-50 bg-[#071d37]/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-scaleUp text-left space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="font-black text-[#071d37] text-sm uppercase tracking-wide flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-rose-600" />
+                <span>Cancel Subscription Plan</span>
+              </h3>
+              <button 
+                onClick={() => setShowSubCancelModal(false)} 
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 space-y-1 text-xs text-rose-900">
+              <p className="font-bold">Are you sure you want to cancel your recurring subscription?</p>
+              <p className="text-rose-700 text-[11px]">
+                Your recurring boxes and member discounts will be halted immediately. You can reactivate anytime from your account dashboard.
+              </p>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-600 font-bold mb-1.5">Please let us know why you're cancelling:</label>
+                <select
+                  value={subCancelReason}
+                  onChange={(e) => setSubCancelReason(e.target.value)}
+                  className="w-full p-2.5 border border-slate-200 rounded-xl bg-slate-50 font-medium focus:ring-2 focus:ring-[#071d37] text-xs outline-none"
+                >
+                  <option value="Taking a break">Taking a temporary break</option>
+                  <option value="Too many cans remaining">Too many pouches/cans remaining</option>
+                  <option value="Switching flavor/brand preference">Switching flavor or nicotine strength</option>
+                  <option value="Financial or budget reasons">Financial / Budget reasons</option>
+                  <option value="Found alternative supplier">Found alternative supplier</option>
+                  <option value="Other">Other reason</option>
+                </select>
+              </div>
+
+              {subCancelReason === 'Other' && (
+                <div>
+                  <label className="block text-slate-600 font-bold mb-1">Additional details (optional):</label>
+                  <textarea
+                    rows={2}
+                    value={subCancelOtherNotes}
+                    onChange={(e) => setSubCancelOtherNotes(e.target.value)}
+                    placeholder="Tell us what we could do better..."
+                    className="w-full p-2.5 border border-slate-200 rounded-xl bg-slate-50 font-medium focus:ring-2 focus:ring-[#071d37] text-xs outline-none"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowSubCancelModal(false)}
+                className="flex-1 py-2.5 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-xs transition cursor-pointer"
+              >
+                Keep Subscription
+              </button>
+              <button
+                type="button"
+                disabled={isCancellingSub}
+                onClick={handleConfirmCancelSubscription}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl font-black text-xs transition cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
+              >
+                {isCancellingSub ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Cancelling...</span>
+                  </>
+                ) : (
+                  <span>Confirm Cancellation</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

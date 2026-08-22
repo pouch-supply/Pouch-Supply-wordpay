@@ -62,7 +62,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
 }) => {
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [recentlyDeletedOrders, setRecentlyDeletedOrders] = useState<Order[]>([]);
-  const [orderTypeFilter, setOrderTypeFilter] = useState<'All' | 'Standard' | 'Subscription'>('All');
+  const [orderTypeFilter, setOrderTypeFilter] = useState<'All' | 'Standard' | 'Subscription' | 'Cancelled Subscription'>('All');
 
   // Refund Dialog & Execution State
   const [showRefundModal, setShowRefundModal] = useState(false);
@@ -74,7 +74,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   // Helper to detect if an order is a subscription order
   const isSubOrder = (order: Order) => {
     if (order.isSubscription) return true;
-    if (Array.isArray(order.tags) && order.tags.some(t => t.toLowerCase().includes('subscription'))) return true;
+    if (Array.isArray(order.tags) && order.tags.some(t => typeof t === 'string' && t.toLowerCase().includes('subscription'))) return true;
     if (Array.isArray(order.items) && order.items.some((i: any) => 
       i.isSubscription || 
       i.vendor === 'Subscription Pack' || 
@@ -83,67 +83,87 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     return false;
   };
 
+  // Helper to detect if a subscription plan was cancelled by the customer
+  const isSubscriptionCancelled = (order: Order) => {
+    if (order.subscriptionCancelled) return true;
+    if (order.subscriptionDetails?.status === 'Cancelled' || order.subscriptionDetails?.isCancelled) return true;
+    if (Array.isArray(order.tags) && order.tags.some(t => typeof t === 'string' && t.toLowerCase().includes('subscription cancelled'))) return true;
+    return false;
+  };
+
   // Helper to extract subscription metadata for detailed display
   const getSubscriptionDetails = (order: Order) => {
-    if (order.subscriptionDetails) return order.subscriptionDetails;
+    const isCancelled = isSubscriptionCancelled(order);
+    let details: any = order.subscriptionDetails ? { ...order.subscriptionDetails } : null;
 
-    const subItem = order.items?.find((i: any) => 
-      i.isSubscription || 
-      i.vendor === 'Subscription Pack' || 
-      (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('pack')))
-    ) as any;
+    if (!details) {
+      const subItem = order.items?.find((i: any) => 
+        i.isSubscription || 
+        i.vendor === 'Subscription Pack' || 
+        (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('pack')))
+      ) as any;
 
-    let planName = subItem?.subscriptionPlan || 'LITE Plan';
-    let frequency = subItem?.subscriptionFrequency || '';
-    let frequencyDiscount = subItem?.frequencyDiscount || '';
+      let planName = subItem?.subscriptionPlan || 'LITE Plan';
+      let frequency = subItem?.subscriptionFrequency || '';
+      let frequencyDiscount = subItem?.frequencyDiscount || '';
 
-    const title = (subItem?.productTitle || '').toLowerCase();
-    if (title.includes('core')) planName = 'CORE Plan';
-    else if (title.includes('pro')) planName = 'PRO Plan';
-    else if (title.includes('ultimate')) planName = 'ULTIMATE Plan';
-    else if (title.includes('lite')) planName = 'LITE Plan';
+      const title = (subItem?.productTitle || '').toLowerCase();
+      if (title.includes('core')) planName = 'CORE Plan';
+      else if (title.includes('pro')) planName = 'PRO Plan';
+      else if (title.includes('ultimate')) planName = 'ULTIMATE Plan';
+      else if (title.includes('lite')) planName = 'LITE Plan';
 
-    if (!frequency) {
-      if (title.includes('next day') || title.includes('1 day')) {
-        frequency = 'Next Day (Test)';
-      } else if (title.includes('weekly') && !title.includes('bi')) {
-        frequency = 'Weekly';
-      } else if (title.includes('bi-weekly') || title.includes('by weekly') || title.includes('2 week')) {
-        frequency = 'Bi-Weekly';
-      } else if (title.includes('month') || title.includes('one month')) {
-        frequency = 'One Month';
-      } else {
-        frequency = 'Bi-Weekly';
+      if (!frequency) {
+        if (title.includes('next day') || title.includes('1 day')) {
+          frequency = 'Next Day (Test)';
+        } else if (title.includes('weekly') && !title.includes('bi')) {
+          frequency = 'Weekly';
+        } else if (title.includes('bi-weekly') || title.includes('by weekly') || title.includes('2 week')) {
+          frequency = 'Bi-Weekly';
+        } else if (title.includes('month') || title.includes('one month')) {
+          frequency = 'One Month';
+        } else {
+          frequency = 'Bi-Weekly';
+        }
       }
+
+      if (!frequencyDiscount) {
+        if (frequency.includes('Next Day')) frequencyDiscount = '10%';
+        else if (frequency === 'Weekly') frequencyDiscount = '5%';
+        else if (frequency === 'One Month') frequencyDiscount = '12%';
+        else frequencyDiscount = '10%';
+      }
+
+      const baseDate = order.createdAt ? new Date(order.createdAt) : new Date();
+      const nextDate = new Date(baseDate);
+      if (frequency.includes('Next Day')) {
+        nextDate.setDate(baseDate.getDate() + 1);
+      } else if (frequency === 'Weekly') {
+        nextDate.setDate(baseDate.getDate() + 7);
+      } else if (frequency === 'Bi-Weekly') {
+        nextDate.setDate(baseDate.getDate() + 14);
+      } else {
+        nextDate.setDate(baseDate.getDate() + 30);
+      }
+
+      details = {
+        planName,
+        frequency,
+        frequencyDiscount,
+        paymentStatus: order.paymentStatus || 'Paid',
+        lastPaymentDate: baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        nextPaymentDate: nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      };
     }
 
-    if (!frequencyDiscount) {
-      if (frequency.includes('Next Day')) frequencyDiscount = '10%';
-      else if (frequency === 'Weekly') frequencyDiscount = '5%';
-      else if (frequency === 'One Month') frequencyDiscount = '12%';
-      else frequencyDiscount = '10%';
+    if (isCancelled) {
+      details.status = 'Cancelled';
+      details.isCancelled = true;
+      details.cancelledAt = order.subscriptionCancelledAt || details.cancelledAt;
+      details.cancellationReason = order.subscriptionCancellationReason || details.cancellationReason || 'Customer cancelled via account portal';
     }
 
-    const baseDate = order.createdAt ? new Date(order.createdAt) : new Date();
-    const nextDate = new Date(baseDate);
-    if (frequency.includes('Next Day')) {
-      nextDate.setDate(baseDate.getDate() + 1);
-    } else if (frequency === 'Weekly') {
-      nextDate.setDate(baseDate.getDate() + 7);
-    } else if (frequency === 'Bi-Weekly') {
-      nextDate.setDate(baseDate.getDate() + 14);
-    } else {
-      nextDate.setDate(baseDate.getDate() + 30);
-    }
-
-    return {
-      planName,
-      frequency,
-      frequencyDiscount,
-      paymentStatus: order.paymentStatus || 'Paid',
-      lastPaymentDate: baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      nextPaymentDate: nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-    };
+    return details;
   };
 
   const handleExecuteRefund = async () => {
@@ -218,7 +238,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const sortedFilteredOrders = useMemo(() => {
     let list = [...filteredOrders];
     if (orderTypeFilter === 'Subscription') {
-      list = list.filter(isSubOrder);
+      list = list.filter(o => isSubOrder(o) && !isSubscriptionCancelled(o));
+    } else if (orderTypeFilter === 'Cancelled Subscription') {
+      list = list.filter(isSubscriptionCancelled);
     } else if (orderTypeFilter === 'Standard') {
       list = list.filter(o => !isSubOrder(o));
     }
@@ -396,7 +418,20 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
               }`}
             >
               <RefreshCw className="w-3 h-3" />
-              Subscriptions ({orders.filter(isSubOrder).length})
+              Subscriptions ({orders.filter(o => isSubOrder(o) && !isSubscriptionCancelled(o)).length})
+            </button>
+            <button
+              onClick={() => setOrderTypeFilter('Cancelled Subscription')}
+              className={`py-1 px-3 rounded-lg font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                orderTypeFilter === 'Cancelled Subscription'
+                  ? 'bg-rose-600 text-white shadow-2xs'
+                  : orders.filter(isSubscriptionCancelled).length > 0
+                  ? 'bg-rose-100 text-rose-800 hover:bg-rose-200 font-black'
+                  : 'text-rose-700 hover:bg-rose-50 font-medium'
+              }`}
+            >
+              <AlertTriangle className="w-3 h-3 text-rose-500" />
+              Cancelled Subscriptions ({orders.filter(isSubscriptionCancelled).length})
             </button>
           </div>
         </div>
@@ -495,12 +530,17 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       <td className="p-4 font-extrabold text-slate-900">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span>#{order.id}</span>
-                          {isSubOrder(order) && (
+                          {isSubscriptionCancelled(order) ? (
+                            <span className="inline-flex items-center gap-1 text-[8.5px] bg-rose-600 text-white font-black px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              Sub Cancelled ({getSubscriptionDetails(order).planName})
+                            </span>
+                          ) : isSubOrder(order) ? (
                             <span className="inline-flex items-center gap-1 text-[8.5px] bg-indigo-600 text-white font-black px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
                               <RefreshCw className="w-2.5 h-2.5" />
                               Subscription ({getSubscriptionDetails(order).planName})
                             </span>
-                          )}
+                          ) : null}
                         </div>
                         {Array.isArray(order.tags) && order.tags.includes('Withdrawal Requested') && (
                           <span className="inline-block text-[8.5px] bg-rose-50 text-rose-700 border border-rose-150 uppercase font-black px-1.5 py-0.5 rounded mt-1 animate-pulse select-none">
@@ -512,11 +552,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       <td className="p-4">
                         <p className="font-bold text-slate-850">{order.customerName}</p>
                         <p className="text-[10px] text-slate-400">{order.customerEmail}</p>
-                        {isSubOrder(order) && (
+                        {isSubscriptionCancelled(order) ? (
+                          <div className="mt-1 text-[10px] font-extrabold text-rose-800 bg-rose-100 border border-rose-300 rounded-md px-1.5 py-0.5 inline-block">
+                            ⚠️ Subscription Plan Cancelled by Customer {order.subscriptionCancellationReason ? `• ${order.subscriptionCancellationReason}` : ''}
+                          </div>
+                        ) : isSubOrder(order) ? (
                           <div className="mt-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-md px-1.5 py-0.5 inline-block">
                             🔄 {getSubscriptionDetails(order).frequency} ({getSubscriptionDetails(order).frequencyDiscount} OFF)
                           </div>
-                        )}
+                        ) : null}
                       </td>
                       <td className="p-4 text-center">
                         <span className={`inline-block text-[10px] uppercase font-bold py-0.5 px-2 rounded-full tracking-wider ${
@@ -671,24 +715,73 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             {/* Left Column */}
             <div className="lg:col-span-2 space-y-6">
 
+              {/* SUBSCRIPTION CANCELLATION HIGHLIGHT BANNER FOR ADMINS */}
+              {isSubscriptionCancelled(selectedOrder) && (
+                <div className="bg-rose-50 border-2 border-rose-500/80 p-4 rounded-2xl space-y-2 text-left shadow-md animate-fadeIn">
+                  <div className="flex items-center gap-2 text-rose-800">
+                    <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0" />
+                    <span className="font-black text-sm uppercase tracking-wide">Subscription Plan Cancelled by Customer</span>
+                    <span className="ml-auto text-[10px] bg-rose-600 text-white font-black px-2 py-0.5 rounded uppercase">Cancelled</span>
+                  </div>
+                  <p className="text-xs text-rose-800 leading-relaxed font-medium">
+                    The customer cancelled their recurring subscription plan via their account portal. Recurring renewals and automatic charges for this subscription have been discontinued.
+                  </p>
+                  <div className="flex flex-wrap gap-4 text-xs font-semibold text-rose-900 pt-1 border-t border-rose-200">
+                    <div>
+                      <span className="text-slate-500 font-normal">Reason: </span>
+                      <span className="font-bold">{selectedOrder.subscriptionCancellationReason || getSubscriptionDetails(selectedOrder).cancellationReason || 'Customer requested cancellation'}</span>
+                    </div>
+                    {selectedOrder.subscriptionCancelledAt && (
+                      <div>
+                        <span className="text-slate-500 font-normal">Cancelled On: </span>
+                        <span className="font-bold">{new Date(selectedOrder.subscriptionCancelledAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* SUBSCRIPTION CUSTOMER ORDER DETAILS PANEL */}
               {isSubOrder(selectedOrder) && (() => {
                 const subDetails = getSubscriptionDetails(selectedOrder);
+                const isCancelled = isSubscriptionCancelled(selectedOrder);
                 return (
-                  <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-lg border border-slate-800 space-y-4">
+                  <div className={`text-white p-5 rounded-2xl shadow-lg border space-y-4 ${
+                    isCancelled 
+                      ? 'bg-slate-900 border-rose-500/50' 
+                      : 'bg-slate-900 border-slate-800'
+                  }`}>
                     <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                       <div className="flex items-center gap-3">
-                        <div className="p-2.5 bg-indigo-500/20 rounded-xl border border-indigo-400/30 text-indigo-400">
-                          <RefreshCw className="w-5 h-5 animate-spin-slow" />
+                        <div className={`p-2.5 rounded-xl border ${
+                          isCancelled 
+                            ? 'bg-rose-500/20 border-rose-400/30 text-rose-400' 
+                            : 'bg-indigo-500/20 border-indigo-400/30 text-indigo-400'
+                        }`}>
+                          {isCancelled ? (
+                            <AlertTriangle className="w-5 h-5" />
+                          ) : (
+                            <RefreshCw className="w-5 h-5 animate-spin-slow" />
+                          )}
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
                             <h3 className="font-black text-sm tracking-tight text-white uppercase">Subscription Customer Order</h3>
-                            <span className="text-[9.5px] bg-emerald-500 text-slate-950 font-black px-2.5 py-0.5 rounded-md uppercase tracking-wider">
-                              {subDetails.paymentStatus === 'Paid' ? 'PAID & ACTIVE' : subDetails.paymentStatus.toUpperCase()}
-                            </span>
+                            {isCancelled ? (
+                              <span className="text-[9.5px] bg-rose-600 text-white font-black px-2.5 py-0.5 rounded-md uppercase tracking-wider">
+                                CANCELLED BY CUSTOMER
+                              </span>
+                            ) : (
+                              <span className="text-[9.5px] bg-emerald-500 text-slate-950 font-black px-2.5 py-0.5 rounded-md uppercase tracking-wider">
+                                {subDetails.paymentStatus === 'Paid' ? 'PAID & ACTIVE' : subDetails.paymentStatus.toUpperCase()}
+                              </span>
+                            )}
                           </div>
-                          <p className="text-xs text-slate-400 font-medium">Recurring Subscription Delivery & Automatic Billing</p>
+                          <p className="text-xs text-slate-400 font-medium">
+                            {isCancelled 
+                              ? 'Recurring subscription cancelled — no further automatic renewals' 
+                              : 'Recurring Subscription Delivery & Automatic Billing'}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -706,17 +799,32 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       </div>
 
                       <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 block mb-1">Payment Status</span>
-                        <span className="font-black text-sm text-emerald-400 flex items-center gap-1">
-                          <CheckSquare className="w-3.5 h-3.5" /> Paid
-                        </span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 block mb-1">Subscription Status</span>
+                        {isCancelled ? (
+                          <span className="font-black text-sm text-rose-400 flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5" /> Cancelled
+                          </span>
+                        ) : (
+                          <span className="font-black text-sm text-emerald-400 flex items-center gap-1">
+                            <CheckSquare className="w-3.5 h-3.5" /> Active (Paid)
+                          </span>
+                        )}
                         <span className="text-[10px] text-slate-400 block mt-0.5">£{(Number(selectedOrder.total) || 0).toFixed(2)} / cycle</span>
                       </div>
 
                       <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 block mb-1">Next Payment Date</span>
-                        <span className="font-black text-sm text-amber-300">{subDetails.nextPaymentDate}</span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Auto-renewal scheduled</span>
+                        {isCancelled ? (
+                          <>
+                            <span className="font-black text-sm text-rose-400">Cancelled</span>
+                            <span className="text-[10px] text-slate-400 block mt-0.5">Billing suspended</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-black text-sm text-amber-300">{subDetails.nextPaymentDate}</span>
+                            <span className="text-[10px] text-slate-400 block mt-0.5">Auto-renewal scheduled</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

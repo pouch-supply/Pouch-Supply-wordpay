@@ -341,42 +341,230 @@ router.post(
   "/cancel",
   async (req: Request, res: Response) => {
     try {
-      const { subscriptionId } = req.body;
+      const { subscriptionId, customerEmail, reason } = req.body;
 
-      if (!subscriptionId) {
+      if (!subscriptionId && !customerEmail) {
         return res.status(400).json({
           success: false,
-          message: "subscriptionId is required",
+          message: "subscriptionId or customerEmail is required",
         });
       }
 
+      const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+      const cancellationTime = new Date().toISOString();
+      const cancelReason = reason || "Customer cancelled subscription plan via Account portal";
+
       let subscription: any = null;
 
-      try {
-        subscription = await prisma.subscription.update({
-          where: { id: subscriptionId },
-          data: { status: "cancelled" },
-        });
-      } catch (_e) {}
+      // 1. Update in Prisma if subscriptionId is provided
+      if (subscriptionId) {
+        try {
+          subscription = await prisma.subscription.update({
+            where: { id: subscriptionId },
+            data: { status: "cancelled" },
+          });
+        } catch (_e) {}
+      }
 
+      // 2. Update in StoreResource('subscriptions')
       try {
         const stored: any[] = (await fetchResource("subscriptions")) || [];
-        const idx = stored.findIndex((s: any) => String(s.id) === String(subscriptionId));
-        if (idx !== -1) {
-          stored[idx].status = "cancelled";
-          await saveResource("subscriptions", stored);
-          subscription = stored[idx];
+        let modified = false;
+        const updatedList = stored.map((s: any) => {
+          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
+          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+          if (matchId || matchEmail) {
+            modified = true;
+            return {
+              ...s,
+              status: "cancelled",
+              cancelledAt: cancellationTime,
+              cancellationReason: cancelReason
+            };
+          }
+          return s;
+        });
+
+        if (modified) {
+          await saveResource("subscriptions", updatedList);
+          subscription = updatedList.find((s: any) => 
+            (subscriptionId && String(s.id) === String(subscriptionId)) ||
+            (emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
+          ) || subscription;
         }
       } catch (_e) {}
 
+      // 3. Update Customer Record in StoreResource('customers')
+      let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);
+      if (matchedEmail) {
+        try {
+          const customers: any[] = (await fetchResource("customers")) || [];
+          let custModified = false;
+          const updatedCustomers = customers.map((c: any) => {
+            if (String(c.email || "").toLowerCase().trim() === matchedEmail) {
+              custModified = true;
+              return {
+                ...c,
+                subscriptionStatus: "Cancelled",
+                subStatus: "Cancelled",
+                isSubscriptionCancelled: true,
+                subscriptionCancelledAt: cancellationTime,
+                subscriptionCancellationReason: cancelReason
+              };
+            }
+            return c;
+          });
+
+          if (custModified) {
+            await saveResource("customers", updatedCustomers);
+          }
+        } catch (custErr) {
+          console.warn("[Subscription Cancel] Failed to update customer:", custErr);
+        }
+
+        // 4. Update Matching Orders in StoreResource('orders') so Admin Dashboard Orders Tab immediately highlights the cancellation!
+        try {
+          const orders: any[] = (await fetchResource("orders")) || [];
+          let ordersModified = false;
+          const updatedOrders = orders.map((o: any) => {
+            const isCustOrder = String(o.customerEmail || "").toLowerCase().trim() === matchedEmail;
+            const isSub = Boolean(
+              o.isSubscription ||
+              (Array.isArray(o.tags) && o.tags.some((t: string) => t && t.toLowerCase().includes("subscription"))) ||
+              (Array.isArray(o.items) && o.items.some((i: any) => i.isSubscription || (i.productTitle && i.productTitle.toLowerCase().includes("subscription"))))
+            );
+
+            if (isCustOrder && isSub) {
+              ordersModified = true;
+              const tags = Array.isArray(o.tags) ? [...o.tags] : ["Storefront", "Online Order"];
+              if (!tags.includes("Subscription Cancelled")) {
+                tags.push("Subscription Cancelled");
+              }
+
+              const subDetails = o.subscriptionDetails ? { ...o.subscriptionDetails } : {};
+              subDetails.status = "Cancelled";
+              subDetails.isCancelled = true;
+              subDetails.cancelledAt = cancellationTime;
+              subDetails.cancellationReason = cancelReason;
+
+              return {
+                ...o,
+                tags,
+                subscriptionCancelled: true,
+                subscriptionCancelledAt: cancellationTime,
+                subscriptionCancellationReason: cancelReason,
+                subscriptionDetails: subDetails
+              };
+            }
+            return o;
+          });
+
+          if (ordersModified) {
+            await saveResource("orders", updatedOrders);
+            console.log(`[Subscription Cancel] Updated matching orders for customer: ${matchedEmail}`);
+          }
+        } catch (orderErr) {
+          console.warn("[Subscription Cancel] Failed to update orders:", orderErr);
+        }
+      }
+
       return res.json({
         success: true,
-        subscription,
+        message: "Subscription successfully cancelled.",
+        subscription: subscription || { status: "cancelled", cancelledAt: cancellationTime, cancellationReason: cancelReason }
+      });
+    } catch (error: any) {
+      console.error("[Subscription Cancel Error]", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to cancel subscription",
+      });
+    }
+  }
+);
+
+/**
+ * Reactivate subscription.
+ */
+router.post(
+  "/reactivate",
+  async (req: Request, res: Response) => {
+    try {
+      const { subscriptionId, customerEmail } = req.body;
+
+      if (!subscriptionId && !customerEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "subscriptionId or customerEmail is required",
+        });
+      }
+
+      const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+      let subscription: any = null;
+
+      if (subscriptionId) {
+        try {
+          subscription = await prisma.subscription.update({
+            where: { id: subscriptionId },
+            data: { status: "active" },
+          });
+        } catch (_e) {}
+      }
+
+      try {
+        const stored: any[] = (await fetchResource("subscriptions")) || [];
+        let modified = false;
+        const updatedList = stored.map((s: any) => {
+          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
+          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+          if (matchId || matchEmail) {
+            modified = true;
+            return {
+              ...s,
+              status: "active",
+              reactivatedAt: new Date().toISOString()
+            };
+          }
+          return s;
+        });
+
+        if (modified) {
+          await saveResource("subscriptions", updatedList);
+          subscription = updatedList.find((s: any) => 
+            (subscriptionId && String(s.id) === String(subscriptionId)) ||
+            (emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
+          ) || subscription;
+        }
+      } catch (_e) {}
+
+      let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);
+      if (matchedEmail) {
+        try {
+          const customers: any[] = (await fetchResource("customers")) || [];
+          const updatedCustomers = customers.map((c: any) => {
+            if (String(c.email || "").toLowerCase().trim() === matchedEmail) {
+              return {
+                ...c,
+                subscriptionStatus: "Subscribed",
+                subStatus: "Active",
+                isSubscriptionCancelled: false,
+              };
+            }
+            return c;
+          });
+          await saveResource("customers", updatedCustomers);
+        } catch (_e) {}
+      }
+
+      return res.json({
+        success: true,
+        message: "Subscription plan reactivated successfully.",
+        subscription: subscription || { status: "active" }
       });
     } catch (error: any) {
       return res.status(500).json({
         success: false,
-        message: error.message || "Failed to cancel subscription",
+        message: error.message || "Failed to reactivate subscription",
       });
     }
   }

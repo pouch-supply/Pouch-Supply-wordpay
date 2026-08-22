@@ -68,6 +68,9 @@ export interface Order {
   customerEmail: string;
   tags: string[];
   isSubscription?: boolean;
+  subscriptionCancelled?: boolean;
+  subscriptionCancelledAt?: string;
+  subscriptionCancellationReason?: string;
   subscriptionDetails?: {
     planName: string;
     frequency: string;
