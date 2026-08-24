@@ -288,6 +288,13 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (typeof window === "undefined") return;
 
     const handleMessage = (event: MessageEvent) => {
+      // Close popup window reference if one exists
+      if (popupRef.current && !popupRef.current.closed) {
+        try {
+          popupRef.current.close();
+        } catch (_e) {}
+      }
+
       let payload = event.data;
       if (typeof payload === "string") {
         try {
@@ -303,6 +310,11 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
             lowerStr === "success" ||
             lowerStr === "continue"
           ) {
+            if (popupRef.current && !popupRef.current.closed) {
+              try {
+                popupRef.current.close();
+              } catch (_e) {}
+            }
             markApproved();
             setShowIframeModal(false);
             setIsChecking(false);
@@ -331,6 +343,14 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           eventName === "redirect"
         ) {
           console.log("[AgeChecked ID Scan] Application completed successfully:", payload.data);
+          
+          // Close popup window if opened
+          if (popupRef.current && !popupRef.current.closed) {
+            try {
+              popupRef.current.close();
+            } catch (_e) {}
+          }
+
           const resolvedId = payload.data?.id || payload.data?.profileId || payload.data?.agecheckid || agecheckId || undefined;
           markApproved({
             avstatus: {
@@ -350,6 +370,13 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }
         if (eventName === "fail" || eventName === "error") {
           console.warn("[AgeChecked ID Scan] Application data capture incomplete or failed:", payload.error);
+          
+          if (popupRef.current && !popupRef.current.closed) {
+            try {
+              popupRef.current.close();
+            } catch (_e) {}
+          }
+
           setStatusMessage("Age verification capture was not completed. Please try again.");
           setShowIframeModal(false);
           setIsChecking(false);
@@ -388,6 +415,11 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         ));
 
       if (isApproved) {
+        if (popupRef.current && !popupRef.current.closed) {
+          try {
+            popupRef.current.close();
+          } catch (_e) {}
+        }
         const resolvedId = payload.agecheckid || payload.avstatus?.agecheckid || payload.data?.id || agecheckId || undefined;
         markApproved(payload as AgeCheckedResponse);
         setShowIframeModal(false);
