@@ -247,12 +247,12 @@ router.get("/demo-portal", (req: Request, res: Response) => {
           p { font-size: 13.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 24px; }
           .btn { background: #10b981; color: #022c22; font-weight: 800; font-size: 14px; border: none; padding: 14px 20px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
           .btn:hover { background: #34d399; transform: translateY(-1px); }
-          .btn-continue { background: #22c55e; color: #052e16; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; margin-top: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(34,197,94,0.4); }
-          .btn-continue:hover { background: #4ade80; transform: translateY(-1px); }
+          .btn-continue { background: #0284c7; color: #ffffff; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; margin-top: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(2,132,199,0.4); }
+          .btn-continue:hover { background: #0369a1; transform: translateY(-1px); }
           .btn-decline { background: #334155; color: #cbd5e1; font-weight: 600; font-size: 13px; margin-bottom: 0; }
           .btn-decline:hover { background: #475569; }
           .ref { font-family: monospace; font-size: 11px; color: #64748b; margin-top: 20px; }
-          .success-icon { width: 56px; height: 56px; background: rgba(34,197,94,0.15); border: 2px solid #22c55e; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; color: #22c55e; font-size: 28px; }
+          .success-icon { width: 56px; height: 56px; background: rgba(2,132,199,0.15); border: 2px solid #0284c7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; color: #38bdf8; font-size: 28px; }
           .hidden { display: none; }
         </style>
       </head>
@@ -268,13 +268,13 @@ router.get("/demo-portal", (req: Request, res: Response) => {
             <div class="ref">Ref: ${reference} | ID: ${agecheckid}</div>
           </div>
 
-          <!-- Step 2: "All Set, Continue" Confirmation Screen -->
+          <!-- Step 2: "Continue" Confirmation Screen with blue button -->
           <div id="step-confirmed" class="hidden">
             <div class="success-icon">✓</div>
-            <div class="badge" style="background: #22c55e; color: #052e16;">Verified 18+</div>
+            <div class="badge" style="background: #0284c7; color: #ffffff;">Verified 18+</div>
             <h1>Verification Successful</h1>
-            <p>Your age documents have been verified successfully with AgeChecked. You are ready to proceed with your checkout and payment.</p>
-            <button class="btn-continue" onclick="finishAndClose()">All Set, Continue →</button>
+            <p>Your age documents have been verified successfully. Click Continue below to proceed with your payment.</p>
+            <button class="btn-continue" onclick="finishAndClose()">Continue →</button>
             <div class="ref">AgeChecked ID: ${agecheckid}</div>
           </div>
         </div>
@@ -319,7 +319,7 @@ router.get("/demo-portal", (req: Request, res: Response) => {
               } catch(e) {}
             }
 
-            // Show "All Set, Continue" screen inside the popup
+            // Show "Continue" screen inside the popup
             document.getElementById('step-verify').classList.add('hidden');
             document.getElementById('step-confirmed').classList.remove('hidden');
           }
@@ -336,10 +336,15 @@ router.get("/demo-portal", (req: Request, res: Response) => {
                 }, '*');
                 window.opener.postMessage('agechecked-approved', '*');
               } catch(e) {}
-              window.close();
-            } else {
-              window.location.href = '/pages/checkout?agechecked=approved&status=approved&agecheckid=${agecheckid}';
             }
+            try {
+              window.close();
+            } catch(e) {}
+            setTimeout(function() {
+              if (!window.closed) {
+                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:16px;">✓</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">You may now close this popup and complete your payment on the checkout page.</p></div></div>';
+              }
+            }, 300);
           }
 
           function decline() {
@@ -406,8 +411,8 @@ const handleCallback = (req: Request, res: Response) => {
           .badge { display: inline-flex; align-items: center; gap: 6px; background: ${approved ? '#22c55e' : '#f43f5e'}; color: ${approved ? '#052e16' : '#ffffff'}; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
           h1 { font-size: 22px; margin: 0 0 10px 0; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
           p { font-size: 13.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 24px; }
-          .btn-continue { background: #22c55e; color: #052e16; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(34,197,94,0.4); }
-          .btn-continue:hover { background: #4ade80; transform: translateY(-1px); }
+          .btn-continue { background: #0284c7; color: #ffffff; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(2,132,199,0.4); }
+          .btn-continue:hover { background: #0369a1; transform: translateY(-1px); }
           .btn-retry { background: #334155; color: #cbd5e1; font-weight: 700; font-size: 14px; border: none; padding: 14px 20px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; }
           .btn-retry:hover { background: #475569; }
           .ref { font-family: monospace; font-size: 11px; color: #64748b; margin-top: 20px; }
@@ -418,11 +423,11 @@ const handleCallback = (req: Request, res: Response) => {
           <div class="icon">${approved ? '✓' : '⚠️'}</div>
           <div class="badge">${approved ? 'Verified 18+' : 'Incomplete'}</div>
           <h1>${approved ? 'Verification Successful' : 'Verification Incomplete'}</h1>
-          <p>${approved ? 'Your age documents have been verified successfully with AgeChecked. You are ready to proceed with your checkout and payment.' : 'Verification could not be confirmed. Please return to checkout and try again.'}</p>
+          <p>${approved ? 'Your age documents have been verified successfully. Click Continue below to return to your checkout and complete payment.' : 'Verification could not be confirmed. Please return to checkout and try again.'}</p>
           ${approved ? `
-            <button class="btn-continue" onclick="returnToCheckout()">All Set, Continue →</button>
+            <button class="btn-continue" onclick="finishAndClose()">Continue →</button>
           ` : `
-            <button class="btn-retry" onclick="returnToCheckout()">Return to Checkout</button>
+            <button class="btn-retry" onclick="finishAndClose()">Return to Checkout</button>
           `}
           <div class="ref">AgeChecked ID: ${agecheckid}</div>
         </div>
@@ -448,23 +453,8 @@ const handleCallback = (req: Request, res: Response) => {
             }
           } catch(e) {}
 
-          // Pre-notify opener so the checkout page immediately switches from Pending to Verified in the background
-          if (window.opener && !window.opener.closed) {
-            try {
-              window.opener.postMessage({ 
-                type: ${approved ? "'agechecked-approved'" : "'agechecked-declined'"}, 
-                status: '${approved ? "approved" : "declined"}',
-                agecheckid: '${agecheckid}',
-                approved: ${approved},
-                avstatus: { status: '${approved ? "6" : "0"}', statustext: '${approved ? "Approved" : "Declined"}' }
-              }, '*');
-              if (${approved}) {
-                window.opener.postMessage('agechecked-approved', '*');
-              }
-            } catch(e) {}
-          }
-
-          function returnToCheckout() {
+          // Immediately notify opener so parent window unlocks payment in the background
+          function notifyOpener() {
             if (window.opener && !window.opener.closed) {
               try {
                 window.opener.postMessage({ 
@@ -478,10 +468,23 @@ const handleCallback = (req: Request, res: Response) => {
                   window.opener.postMessage('agechecked-approved', '*');
                 }
               } catch(e) {}
-              window.close();
-            } else {
-              window.location.href = '${returnUrl}${returnUrl.includes('?') ? '&' : '?'}agechecked=${approved ? "approved" : "declined"}&status=${approved ? "approved" : "declined"}&agecheckid=${agecheckid}';
             }
+          }
+
+          notifyOpener();
+
+          function finishAndClose() {
+            notifyOpener();
+            try {
+              window.close();
+            } catch(e) {}
+            
+            // If browser prevented window.close(), show feedback
+            setTimeout(function() {
+              if (!window.closed) {
+                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:16px;">✓</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">You may now close this tab/window and return to your checkout screen to pay.</p></div></div>';
+              }
+            }, 300);
           }
         </script>
       </body>
