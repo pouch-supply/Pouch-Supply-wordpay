@@ -389,7 +389,7 @@ const handleCallback = (req: Request, res: Response) => {
   const email = String(query.email || query.userfield2 || body.email || body.userfield2 || "");
   const returnUrl = String(query.returnUrl || query.redirectUrl || query.return || body.returnUrl || body.redirectUrl || "/pages/checkout");
 
-  const approved = isApprovedStatus(status) || isApprovedStatus(statusText) || query.approved === "true" || query.agechecked === "approved" || body.approved === true || statusText.toLowerCase() === "approved";
+  const approved = isApprovedStatus(status) || isApprovedStatus(statusText) || query.approved === "true" || query.agechecked === "approved" || body.approved === true || statusText.toLowerCase() === "approved" || req.path.includes("pass") || req.path.includes("success") || req.path.includes("complete");
 
   if (approved) {
     recordSessionApproval([reference, agecheckid, query.userfield1, query.userfield2, body.userfield1, body.userfield2], agecheckid, email);
@@ -434,7 +434,7 @@ const handleCallback = (req: Request, res: Response) => {
           <div class="icon">${approved ? '✓' : '⚠️'}</div>
           <div class="badge">${approved ? 'Verified 18+' : 'Incomplete'}</div>
           <h1>${approved ? 'Verification Successful' : 'Verification Incomplete'}</h1>
-          <p>${approved ? 'Your age documents have been verified successfully. Click Continue below to return to your checkout and complete payment.' : 'Verification could not be confirmed. Please return to checkout and try again.'}</p>
+          <p>${approved ? 'Your age documents have been verified successfully. Returning to checkout...' : 'Verification could not be confirmed. Please return to checkout and try again.'}</p>
           ${approved ? `
             <button class="btn-continue" onclick="finishAndClose()">Continue →</button>
           ` : `
@@ -464,38 +464,59 @@ const handleCallback = (req: Request, res: Response) => {
             }
           } catch(e) {}
 
-          // Immediately notify opener so parent window unlocks payment in the background
-          function notifyOpener() {
-            if (window.opener && !window.opener.closed) {
+          // Immediately notify parent / opener window
+          function notifyParent() {
+            const targets = [window.opener, window.parent, window.top].filter(function(t) {
+              return t && t !== window;
+            });
+
+            targets.forEach(function(target) {
               try {
-                window.opener.postMessage({ 
+                // Official AgeChecked GetID event format
+                target.postMessage({
+                  getidEventName: ${approved ? "'complete'" : "'fail'"},
+                  data: {
+                    id: '${agecheckid}',
+                    status: '${approved ? "approved" : "declined"}',
+                    agecheckid: '${agecheckid}'
+                  }
+                }, '*');
+
+                target.postMessage({ 
                   type: ${approved ? "'agechecked-approved'" : "'agechecked-declined'"}, 
                   status: '${approved ? "approved" : "declined"}',
                   agecheckid: '${agecheckid}',
                   approved: ${approved},
                   avstatus: { status: '${approved ? "6" : "0"}', statustext: '${approved ? "Approved" : "Declined"}' }
                 }, '*');
+                
                 if (${approved}) {
-                  window.opener.postMessage('agechecked-approved', '*');
+                  target.postMessage('agechecked-approved', '*');
+                  target.postMessage('complete', '*');
                 }
               } catch(e) {}
-            }
+            });
           }
 
-          notifyOpener();
+          notifyParent();
 
           function finishAndClose() {
-            notifyOpener();
+            notifyParent();
             try {
               window.close();
             } catch(e) {}
             
-            // If browser prevented window.close(), show feedback
+            // If inside iframe or browser prevented window.close(), show brief notice
             setTimeout(function() {
               if (!window.closed) {
-                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:16px;">✓</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">You may now close this tab/window and return to your checkout screen to pay.</p></div></div>';
+                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:16px;color:#22c55e;">✓</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">Verification complete. Returning to your checkout screen...</p></div></div>';
               }
-            }, 300);
+            }, 200);
+          }
+
+          // Auto-trigger completion on load for approved state
+          if (${approved}) {
+            setTimeout(finishAndClose, 500);
           }
         </script>
       </body>
@@ -507,6 +528,10 @@ export { handleCallback };
 
 router.all("/callback", handleCallback);
 router.all("/callback/", handleCallback);
+router.all("/pass", handleCallback);
+router.all("/pass/", handleCallback);
+router.all("/success", handleCallback);
+router.all("/fail", handleCallback);
 
 // Direct support for AgeChecked Production Callback URL: https://www.pouch-supply.com/api/agechecked
 router.all("/", handleCallback);

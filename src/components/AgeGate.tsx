@@ -288,22 +288,28 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (typeof window === "undefined") return;
 
     const handleMessage = (event: MessageEvent) => {
-      // Validate origin if coming from GetID / AgeChecked domains or allow same-origin / sandbox
-      const origin = event.origin || "";
-      const isKnownAgeCheckedOrigin =
-        origin.includes("getid") ||
-        origin.includes("agechecked") ||
-        origin.includes("localhost") ||
-        origin.includes(window.location.hostname);
-
       let payload = event.data;
       if (typeof payload === "string") {
         try {
           payload = JSON.parse(payload);
         } catch {
-          if (payload === "agechecked-approved" || payload === "approved" || payload === "complete") {
+          const lowerStr = payload.toLowerCase().trim();
+          if (
+            lowerStr === "agechecked-approved" ||
+            lowerStr === "approved" ||
+            lowerStr === "complete" ||
+            lowerStr === "finish" ||
+            lowerStr === "exit" ||
+            lowerStr === "success" ||
+            lowerStr === "continue"
+          ) {
             markApproved();
             setShowIframeModal(false);
+            setIsChecking(false);
+            if (activeResolverRef.current) {
+              activeResolverRef.current(true);
+              activeResolverRef.current = null;
+            }
             return;
           }
         }
@@ -312,11 +318,20 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       if (!payload || typeof payload !== "object") return;
 
       // Handle official AgeChecked GetID postMessage event format:
-      // event.data.getidEventName === "complete" or "fail"
+      // event.data.getidEventName === "complete" or "exit" or "close" or "finish" or "continue"
       if ("getidEventName" in payload) {
-        if (payload.getidEventName === "complete" || payload.getidEventName === "COMPLETE") {
+        const eventName = String(payload.getidEventName || "").toLowerCase();
+        if (
+          eventName === "complete" ||
+          eventName === "exit" ||
+          eventName === "close" ||
+          eventName === "finish" ||
+          eventName === "continue" ||
+          eventName === "success" ||
+          eventName === "redirect"
+        ) {
           console.log("[AgeChecked ID Scan] Application completed successfully:", payload.data);
-          const resolvedId = payload.data?.id || payload.data?.profileId || payload.data?.agecheckid;
+          const resolvedId = payload.data?.id || payload.data?.profileId || payload.data?.agecheckid || agecheckId || undefined;
           markApproved({
             avstatus: {
               agecheckid: resolvedId,
@@ -326,12 +341,22 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
             agecheckid: resolvedId
           });
           setShowIframeModal(false);
+          setIsChecking(false);
+          if (activeResolverRef.current) {
+            activeResolverRef.current(true);
+            activeResolverRef.current = null;
+          }
           return;
         }
-        if (payload.getidEventName === "fail" || payload.getidEventName === "FAIL") {
+        if (eventName === "fail" || eventName === "error") {
           console.warn("[AgeChecked ID Scan] Application data capture incomplete or failed:", payload.error);
           setStatusMessage("Age verification capture was not completed. Please try again.");
           setShowIframeModal(false);
+          setIsChecking(false);
+          if (activeResolverRef.current) {
+            activeResolverRef.current(false);
+            activeResolverRef.current = null;
+          }
           return;
         }
       }
@@ -340,13 +365,16 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         payload.type === "agechecked-approved" ||
         payload.type === "agechecked_approved" ||
         payload.type === "AC_APPROVED" ||
+        payload.type === "getid:complete" ||
         payload.event === "agechecked:approved" ||
         payload.event === "agechecked.approved" ||
         payload.event === "agechecked.complete" ||
         payload.event === "agechecked-verified" ||
+        payload.event === "complete" ||
         payload.event === "AC_COMPLETE" ||
         payload.action === "complete" ||
         payload.action === "approved" ||
+        payload.action === "continue" ||
         payload.action === "close" ||
         isApprovedStatus(payload.status) ||
         payload.approved === true ||
@@ -360,14 +388,26 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         ));
 
       if (isApproved) {
+        const resolvedId = payload.agecheckid || payload.avstatus?.agecheckid || payload.data?.id || agecheckId || undefined;
         markApproved(payload as AgeCheckedResponse);
         setShowIframeModal(false);
+        setIsChecking(false);
+        if (activeResolverRef.current) {
+          activeResolverRef.current(true);
+          activeResolverRef.current = null;
+        }
       }
     };
 
     const handleStorage = (e: StorageEvent) => {
       if (e.key === AGE_APPROVED_STORAGE_KEY && e.newValue === "true") {
         markApproved();
+        setShowIframeModal(false);
+        setIsChecking(false);
+        if (activeResolverRef.current) {
+          activeResolverRef.current(true);
+          activeResolverRef.current = null;
+        }
       }
     };
 
@@ -381,6 +421,12 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         bc.onmessage = (ev) => {
           if (ev.data && (ev.data.type === "agechecked-approved" || ev.data.approved === true || ev.data.status === "approved")) {
             markApproved(ev.data);
+            setShowIframeModal(false);
+            setIsChecking(false);
+            if (activeResolverRef.current) {
+              activeResolverRef.current(true);
+              activeResolverRef.current = null;
+            }
           }
         };
       }
@@ -393,7 +439,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         bc.close();
       }
     };
-  }, [markApproved]);
+  }, [markApproved, agecheckId]);
 
   const resetApproval = () => {
     if (typeof window === "undefined") return;
@@ -499,23 +545,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         setShowIframeModal(true);
         setStatusMessage("Please complete age verification in the verification window.");
 
-        // Also open popup as optional fallback/direct method if needed
-        const width = 500;
-        const height = 720;
-        const left = Math.max(0, (window.screen.width - width) / 2);
-        const top = Math.max(0, (window.screen.height - height) / 2);
-        const windowFeatures = `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
-        
-        let popup: Window | null = null;
-        try {
-          // Open popup fallback only if user prefers or if iframe has restriction
-          popup = window.open(finalRedirectUrl, "agechecked_popup", windowFeatures);
-          if (popup) {
-            popupRef.current = popup;
-          }
-        } catch (_e) {}
-
-        // Active polling loop: Checks localStorage AND backend server status every 1.5 seconds
+        // Active background polling loop: Checks localStorage AND backend server status every 750ms
         if (pollingTimerRef.current) {
           window.clearInterval(pollingTimerRef.current);
         }
@@ -529,6 +559,11 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
             }
             markApproved();
             setShowIframeModal(false);
+            setIsChecking(false);
+            if (activeResolverRef.current) {
+              activeResolverRef.current(true);
+              activeResolverRef.current = null;
+            }
             return;
           }
 
@@ -540,22 +575,14 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               pollingTimerRef.current = null;
             }
             setShowIframeModal(false);
+            setIsChecking(false);
+            if (activeResolverRef.current) {
+              activeResolverRef.current(true);
+              activeResolverRef.current = null;
+            }
             return;
           }
-
-          // 3. Popup closed check
-          if (popup && popup.closed) {
-            const isApprovedNow = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true";
-            if (isApprovedNow) {
-              if (pollingTimerRef.current) {
-                window.clearInterval(pollingTimerRef.current);
-                pollingTimerRef.current = null;
-              }
-              markApproved();
-              setShowIframeModal(false);
-            }
-          }
-        }, 1500);
+        }, 750);
 
       } catch (error) {
         setStatusMessage(error instanceof Error ? error.message : "Age verification failed.");
@@ -719,9 +746,14 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               </div>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   setShowIframeModal(false);
                   setIsChecking(false);
+                  if (window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true") {
+                    markApproved();
+                  } else {
+                    pollServerStatus();
+                  }
                 }}
                 className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-sky-900/50 transition cursor-pointer"
                 title="Close Window"
