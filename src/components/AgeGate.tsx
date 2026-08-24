@@ -1,6 +1,6 @@
 // src/components/AgeGate.tsx
 import React, { useEffect, useState, useImperativeHandle, forwardRef } from "react";
-import { ShieldCheck, ShieldAlert, CheckCircle2, Lock, AlertCircle, RefreshCw, ExternalLink } from "lucide-react";
+import { ShieldCheck, ShieldAlert, CheckCircle2, Lock, AlertCircle, RefreshCw, ExternalLink, X } from "lucide-react";
 import { trackAgeVerified } from "../utils/klaviyo";
 
 const AGE_APPROVED_STORAGE_KEY = "agechecked-approved";
@@ -123,6 +123,10 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     return params.get("reference") || null;
   });
   const [serverConfig, setServerConfig] = useState<{ portalUrl?: string; publicKey?: string } | null>(null);
+
+  // Embedded iFrame Modal state for AgeChecked ID Scan & Web flow
+  const [showIframeModal, setShowIframeModal] = useState(false);
+  const [iframeSrc, setIframeSrc] = useState<string>("");
 
   const onApprovedChangeRef = React.useRef(onApprovedChange);
   useEffect(() => {
@@ -284,19 +288,53 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (typeof window === "undefined") return;
 
     const handleMessage = (event: MessageEvent) => {
+      // Validate origin if coming from GetID / AgeChecked domains or allow same-origin / sandbox
+      const origin = event.origin || "";
+      const isKnownAgeCheckedOrigin =
+        origin.includes("getid") ||
+        origin.includes("agechecked") ||
+        origin.includes("localhost") ||
+        origin.includes(window.location.hostname);
+
       let payload = event.data;
       if (typeof payload === "string") {
         try {
           payload = JSON.parse(payload);
         } catch {
-          if (payload === "agechecked-approved" || payload === "approved") {
+          if (payload === "agechecked-approved" || payload === "approved" || payload === "complete") {
             markApproved();
+            setShowIframeModal(false);
             return;
           }
         }
       }
 
       if (!payload || typeof payload !== "object") return;
+
+      // Handle official AgeChecked GetID postMessage event format:
+      // event.data.getidEventName === "complete" or "fail"
+      if ("getidEventName" in payload) {
+        if (payload.getidEventName === "complete" || payload.getidEventName === "COMPLETE") {
+          console.log("[AgeChecked ID Scan] Application completed successfully:", payload.data);
+          const resolvedId = payload.data?.id || payload.data?.profileId || payload.data?.agecheckid;
+          markApproved({
+            avstatus: {
+              agecheckid: resolvedId,
+              status: "6",
+              statustext: "Approved"
+            },
+            agecheckid: resolvedId
+          });
+          setShowIframeModal(false);
+          return;
+        }
+        if (payload.getidEventName === "fail" || payload.getidEventName === "FAIL") {
+          console.warn("[AgeChecked ID Scan] Application data capture incomplete or failed:", payload.error);
+          setStatusMessage("Age verification capture was not completed. Please try again.");
+          setShowIframeModal(false);
+          return;
+        }
+      }
 
       const isApproved =
         payload.type === "agechecked-approved" ||
@@ -323,6 +361,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
       if (isApproved) {
         markApproved(payload as AgeCheckedResponse);
+        setShowIframeModal(false);
       }
     };
 
@@ -450,25 +489,31 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
         const resolvedSessionId = data?.avstatus?.agecheckid ? String(data.avstatus.agecheckid) : `AC-${Date.now()}`;
         setAgecheckId(resolvedSessionId);
-        setStatusMessage("Please complete age verification in the popup window.");
 
-        // Open popup with window.opener intact
+        // Build embedded url as specified in AgeChecked documentation (url + &embedded=true)
+        const embedUrl = finalRedirectUrl.includes("embedded=true")
+          ? finalRedirectUrl
+          : (finalRedirectUrl.includes("?") ? `${finalRedirectUrl}&embedded=true` : `${finalRedirectUrl}?embedded=true`);
+
+        setIframeSrc(embedUrl);
+        setShowIframeModal(true);
+        setStatusMessage("Please complete age verification in the verification window.");
+
+        // Also open popup as optional fallback/direct method if needed
         const width = 500;
         const height = 720;
         const left = Math.max(0, (window.screen.width - width) / 2);
         const top = Math.max(0, (window.screen.height - height) / 2);
         const windowFeatures = `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
         
-        const popup = window.open(finalRedirectUrl, "agechecked_popup", windowFeatures);
-        popupRef.current = popup;
-
-        if (!popup) {
-          setStatusMessage("Popup was blocked by your browser. Please allow popups and click Verify Age again.");
-          setIsChecking(false);
-          activeResolverRef.current = null;
-          resolve(false);
-          return;
-        }
+        let popup: Window | null = null;
+        try {
+          // Open popup fallback only if user prefers or if iframe has restriction
+          popup = window.open(finalRedirectUrl, "agechecked_popup", windowFeatures);
+          if (popup) {
+            popupRef.current = popup;
+          }
+        } catch (_e) {}
 
         // Active polling loop: Checks localStorage AND backend server status every 1.5 seconds
         if (pollingTimerRef.current) {
@@ -483,6 +528,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               pollingTimerRef.current = null;
             }
             markApproved();
+            setShowIframeModal(false);
             return;
           }
 
@@ -493,31 +539,20 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               window.clearInterval(pollingTimerRef.current);
               pollingTimerRef.current = null;
             }
+            setShowIframeModal(false);
             return;
           }
 
           // 3. Popup closed check
-          if (popup.closed) {
-            if (pollingTimerRef.current) {
-              window.clearInterval(pollingTimerRef.current);
-              pollingTimerRef.current = null;
-            }
-            setIsChecking(false);
-
-            // Final status check upon close
+          if (popup && popup.closed) {
             const isApprovedNow = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true";
             if (isApprovedNow) {
-              markApproved();
-            } else {
-              // Try server poll one final time
-              const finalCheck = await pollServerStatus(sessionRef, resolvedSessionId, customerData?.email);
-              if (!finalCheck) {
-                setStatusMessage("Verification window closed. If you have completed verification, click 'Check Verification Status' below.");
-                if (activeResolverRef.current) {
-                  activeResolverRef.current(false);
-                  activeResolverRef.current = null;
-                }
+              if (pollingTimerRef.current) {
+                window.clearInterval(pollingTimerRef.current);
+                pollingTimerRef.current = null;
               }
+              markApproved();
+              setShowIframeModal(false);
             }
           }
         }, 1500);
@@ -525,6 +560,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       } catch (error) {
         setStatusMessage(error instanceof Error ? error.message : "Age verification failed.");
         setIsChecking(false);
+        setShowIframeModal(false);
         if (activeResolverRef.current) {
           activeResolverRef.current(false);
           activeResolverRef.current = null;
@@ -664,6 +700,61 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         <p className="mt-2 text-[10px] font-mono text-slate-400">
           Ref: {agecheckId}
         </p>
+      )}
+
+      {/* AgeChecked Embedded iFrame ID Scan / Verification Modal */}
+      {showIframeModal && iframeSrc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs">
+          <div className="relative w-full max-w-3xl bg-[#071d37] border border-sky-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 bg-[#0d284c] border-b border-sky-900/60 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="p-1.5 rounded-lg bg-sky-500/20 text-sky-400">
+                  <ShieldCheck className="h-4 w-4" />
+                </span>
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">AgeChecked ID Scan & Verification</h4>
+                  <span className="text-[10px] text-sky-300/80">Official 18+ Verification Service</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowIframeModal(false);
+                  setIsChecking(false);
+                }}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-sky-900/50 transition cursor-pointer"
+                title="Close Window"
+              >
+                <X className="h-4.5 w-4.5" />
+              </button>
+            </div>
+
+            {/* Modal Body / Embedded IFrame */}
+            <div className="relative w-full flex-1 min-h-[500px] bg-slate-900">
+              <iframe
+                id="agecheck"
+                src={iframeSrc}
+                title="AgeChecked Verification"
+                frameBorder="0"
+                allow="camera; microphone; autoplay; encrypted-media; geolocation"
+                className="w-full h-[500px] sm:h-[580px] border-0"
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-[#0a1e38] border-t border-sky-900/40 flex items-center justify-between text-xs text-slate-400">
+              <span className="text-[11px]">Upon completing ID scan, this verification window will automatically close.</span>
+              <button
+                type="button"
+                onClick={() => manualConfirmCheck()}
+                className="text-[11px] font-bold text-sky-400 hover:text-sky-300 underline cursor-pointer"
+              >
+                Already verified? Check Status
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

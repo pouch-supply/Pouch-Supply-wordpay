@@ -305,17 +305,28 @@ router.get("/demo-portal", (req: Request, res: Response) => {
               }
             } catch(e) {}
 
-            // Pre-notify parent window in background so checkout status switches to Verified
-            if (window.opener && !window.opener.closed) {
+            // Pre-notify parent window / iframe parent in background
+            const targetWindow = window.opener || (window.parent !== window ? window.parent : null);
+            if (targetWindow && !targetWindow.closed) {
               try {
-                window.opener.postMessage({ 
+                // Official AgeChecked GetID event format
+                targetWindow.postMessage({
+                  getidEventName: 'complete',
+                  data: {
+                    id: '${agecheckid}',
+                    status: 'approved',
+                    agecheckid: '${agecheckid}'
+                  }
+                }, '*');
+
+                targetWindow.postMessage({ 
                   type: 'agechecked-approved', 
                   status: 'approved', 
                   agecheckid: '${agecheckid}', 
                   approved: true,
                   avstatus: { status: '6', statustext: 'Approved' } 
                 }, '*');
-                window.opener.postMessage('agechecked-approved', '*');
+                targetWindow.postMessage('agechecked-approved', '*');
               } catch(e) {}
             }
 
