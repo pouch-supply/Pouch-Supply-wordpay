@@ -81,13 +81,16 @@ export default function CheckoutView({
     if (typeof window === 'undefined') return false;
     const stored = window.localStorage.getItem('agechecked-approved');
     const params = new URLSearchParams(window.location.search);
+    const statusParam = (params.get('status') || '').toLowerCase();
     return (
       stored === 'true' ||
       params.get('agechecked') === 'approved' ||
       params.get('approved') === 'true' ||
-      params.get('status') === '6' ||
-      params.get('status') === '7' ||
-      params.get('status') === 'approved'
+      statusParam === '6' ||
+      statusParam === '7' ||
+      statusParam === 'approved' ||
+      statusParam === 'verified' ||
+      statusParam === 'pass'
     );
   });
 
@@ -99,6 +102,7 @@ export default function CheckoutView({
       const stored = window.localStorage.getItem('agechecked-approved');
       if (stored === 'true') {
         setIsAgeApproved(true);
+        setPaymentError(null);
       }
     };
 
@@ -106,7 +110,11 @@ export default function CheckoutView({
 
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'agechecked-approved') {
-        setIsAgeApproved(e.newValue === 'true');
+        const approved = e.newValue === 'true';
+        setIsAgeApproved(approved);
+        if (approved) {
+          setPaymentError(null);
+        }
       }
     };
 
