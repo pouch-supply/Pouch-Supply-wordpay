@@ -340,15 +340,17 @@ export default function CheckoutView({
 
     // Enforce AgeChecked verification gate for live payments (unless bypassed for testing)
     if (!skipAgeCheck && !currentAgeVerified) {
-      setPaymentError('Age verification (18+) is required before live checkout can continue.');
+      setPaymentError(null);
       if (ageGateRef.current) {
         const approved = await ageGateRef.current.openPortal();
         if (!approved) {
+          setPaymentError('Age verification (18+) is required to complete payment.');
           return;
         }
         currentAgeVerified = true;
         setIsAgeApproved(true);
       } else {
+        setPaymentError('Age verification system is initializing. Please try again.');
         return;
       }
     }

@@ -110,7 +110,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   const [statusMessage, setStatusMessage] = useState(
     approved
       ? "Your age (18+) has been verified successfully."
-      : "Age verification (18+) is required to complete your order."
+      : "Under UK law, 18+ age verification will automatically open when you click Pay."
   );
   const [agecheckId, setAgecheckId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -716,43 +716,40 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         </div>
       </div>
 
-      <div className="mt-3.5 flex flex-wrap items-center gap-3">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         {!approved ? (
-          <>
-            <button
-              type="button"
-              onClick={openPortal}
-              disabled={isChecking}
-              className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-all disabled:opacity-50 shadow-xs cursor-pointer"
-            >
-              {isChecking ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" /> Verifying...
-                </>
-              ) : (
-                <>
-                  <ShieldCheck className="h-4 w-4" /> Verify Age (18+)
-                </>
-              )}
-            </button>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium text-amber-900/80">
+              Click <strong className="font-bold text-amber-950">Pay with Worldpay</strong> below to complete 18+ ID check.
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-emerald-800 text-xs font-semibold">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <span>Identity verified. You are ready to complete payment.</span>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          {!approved ? (
             <button
               type="button"
               onClick={manualConfirmCheck}
               disabled={isChecking}
-              className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-white/90 hover:bg-white text-amber-950 px-3 py-2.5 text-xs font-semibold tracking-wide transition-all shadow-xs cursor-pointer"
+              className="text-[11px] font-bold text-amber-900 hover:text-amber-950 underline flex items-center gap-1 cursor-pointer"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${isChecking ? 'animate-spin' : ''}`} /> Check Status
+              <RefreshCw className={`h-3 w-3 ${isChecking ? 'animate-spin' : ''}`} /> Check Status
             </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={resetApproval}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 cursor-pointer"
-          >
-            Reset Verification
-          </button>
-        )}
+          ) : (
+            <button
+              type="button"
+              onClick={resetApproval}
+              className="rounded-lg border border-emerald-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 transition hover:bg-white cursor-pointer"
+            >
+              Reset
+            </button>
+          )}
+        </div>
       </div>
 
       {agecheckId && (
