@@ -173,13 +173,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       pollingTimerRef.current = null;
     }
 
-    // Close popup if still open
-    if (popupRef.current && !popupRef.current.closed) {
-      try {
-        popupRef.current.close();
-      } catch (_e) {}
-    }
-    
     const resolvedAgeCheckId = 
       detail?.avstatus?.agecheckid ? String(detail.avstatus.agecheckid) : 
       (detail?.agecheckid ? String(detail.agecheckid) : undefined);
