@@ -300,8 +300,16 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
       const isApproved =
         payload.type === "agechecked-approved" ||
+        payload.type === "agechecked_approved" ||
+        payload.type === "AC_APPROVED" ||
         payload.event === "agechecked:approved" ||
+        payload.event === "agechecked.approved" ||
+        payload.event === "agechecked.complete" ||
         payload.event === "agechecked-verified" ||
+        payload.event === "AC_COMPLETE" ||
+        payload.action === "complete" ||
+        payload.action === "approved" ||
+        payload.action === "close" ||
         isApprovedStatus(payload.status) ||
         payload.approved === true ||
         payload.approved === "true" ||
@@ -403,6 +411,19 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         });
 
         const data = (await response.json()) as AgeCheckedResponse & { error?: { message?: string; code?: string } };
+        // Check if AC0130 immediately approved (Status 6 or 7 - where url is empty)
+        const isImmediateApproval =
+          isApprovedStatus(data?.avstatus?.status) ||
+          isApprovedStatus(data?.avstatus?.statustext) ||
+          isApprovedStatus((data as any)?.status) ||
+          data?.approved === true;
+
+        if (isImmediateApproval) {
+          markApproved(data);
+          resolve(true);
+          return;
+        }
+
         let finalRedirectUrl =
           (data as { url?: string }).url ||
           (data as { redirectUrl?: string }).redirectUrl ||
