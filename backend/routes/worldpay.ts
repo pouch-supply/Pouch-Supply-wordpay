@@ -223,9 +223,28 @@ async function saveVerifiedOrder(
         storedSubs.unshift(subData);
         await saveResource('subscriptions', storedSubs.slice(0, 500));
       } catch (_e) {}
+
+      // Update customer subscription status in database
+      try {
+        const customers: any[] = (await fetchResource('customers')) || [];
+        const foundCust = customers.find((c: any) => String(c.email).toLowerCase().trim() === customerEmail);
+        if (foundCust) {
+          foundCust.subscriptionStatus = 'Active Subscriber';
+          foundCust.subStatus = 'active';
+          foundCust.subPlan = planName;
+          foundCust.subPrice = subAmount;
+          foundCust.nextPayment = nextBillingDate.toISOString().split('T')[0];
+          await saveResource('customers', customers);
+        }
+      } catch (_e) {}
     } catch (subErr) {
       console.warn('[Worldpay Order] Auto-subscription creation warning:', subErr);
     }
+  }
+
+  const tags = ['Storefront', pending?.isTestMode ? 'Worldpay Test Order' : 'Worldpay Live Order'];
+  if (subItem) {
+    tags.push('Subscription Order');
   }
 
   const formattedOrder = {
@@ -247,7 +266,9 @@ async function saveVerifiedOrder(
     cardBrand: details.cardBrand || 'Worldpay Card',
     deliveryMethod: 'Royal Mail Tracked 24/48',
     carrier: 'Royal Mail',
-    tags: ['Storefront', pending?.isTestMode ? 'Worldpay Test Order' : 'Worldpay Live Order'],
+    tags,
+    subscriptionId: createdSubscriptionId,
+    isSubscription: Boolean(subItem),
     date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     createdAt: new Date().toISOString(),
     data: {

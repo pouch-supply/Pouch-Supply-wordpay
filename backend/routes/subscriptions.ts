@@ -40,6 +40,119 @@ router.get("/cron", handleProcessRenewals);
 router.post("/cron", handleProcessRenewals);
 
 /**
+ * Diagnostic endpoint: Returns all subscriptions, due renewals count, and worker status.
+ */
+router.get("/status", async (_req: Request, res: Response) => {
+  try {
+    let subscriptions: any[] = [];
+    try {
+      subscriptions = await prisma.subscription.findMany({
+        orderBy: { createdAt: "desc" }
+      });
+    } catch (_e) {}
+
+    if (!subscriptions || subscriptions.length === 0) {
+      try {
+        subscriptions = (await fetchResource("subscriptions")) || [];
+      } catch (_e) {}
+    }
+
+    const now = new Date();
+    const active = subscriptions.filter((s: any) => s.status === "active");
+    const due = active.filter((s: any) => !s.nextBillingDate || new Date(s.nextBillingDate) <= now);
+
+    return res.json({
+      success: true,
+      workerStatus: "running",
+      interval: "5 minutes",
+      totalCount: subscriptions.length,
+      activeCount: active.length,
+      dueNowCount: due.length,
+      timestamp: now.toISOString(),
+      subscriptions: subscriptions.map((s: any) => ({
+        id: s.id,
+        customerName: s.customerName,
+        customerEmail: s.customerEmail,
+        planName: s.planName,
+        amount: s.amount,
+        currency: s.currency || "GBP",
+        status: s.status,
+        billingInterval: s.billingInterval,
+        nextBillingDate: s.nextBillingDate,
+        isDue: !s.nextBillingDate || new Date(s.nextBillingDate) <= now,
+        lastPaymentStatus: s.lastPaymentStatus,
+        lastPaymentAt: s.lastPaymentAt,
+        worldpayTransactionId: s.worldpayTransactionId,
+        hasRecurringToken: Boolean(s.worldpayRecurringHref || s.recurringHref)
+      }))
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch subscription status"
+    });
+  }
+});
+
+/**
+ * Update billing interval or next billing date for a subscription.
+ */
+router.post("/update-schedule", async (req: Request, res: Response) => {
+  try {
+    const { subscriptionId, customerEmail, billingInterval, nextBillingDate, chargeImmediately } = req.body;
+    
+    if (!subscriptionId && !customerEmail) {
+      return res.status(400).json({ success: false, message: "subscriptionId or customerEmail is required" });
+    }
+
+    const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+    let targetNextDate: Date | null = null;
+    if (chargeImmediately) {
+      targetNextDate = new Date(Date.now() - 1000); // 1 sec in the past to trigger immediately
+    } else if (nextBillingDate) {
+      targetNextDate = new Date(nextBillingDate);
+    }
+
+    const updateFields: any = {};
+    if (billingInterval) updateFields.billingInterval = billingInterval;
+    if (targetNextDate) updateFields.nextBillingDate = targetNextDate;
+
+    if (subscriptionId) {
+      try {
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: updateFields
+        });
+      } catch (_e) {}
+    }
+
+    try {
+      const stored: any[] = (await fetchResource("subscriptions")) || [];
+      const updatedList = stored.map((s: any) => {
+        const match = (subscriptionId && String(s.id) === String(subscriptionId)) ||
+          (emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean);
+        if (match) {
+          return { ...s, ...updateFields };
+        }
+        return s;
+      });
+      await saveResource("subscriptions", updatedList);
+    } catch (_e) {}
+
+    return res.json({
+      success: true,
+      message: "Subscription schedule updated successfully",
+      updatedFields: updateFields
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update schedule"
+    });
+  }
+});
+
+/**
  * Create subscription record after the FIRST successful payment.
  */
 router.post(

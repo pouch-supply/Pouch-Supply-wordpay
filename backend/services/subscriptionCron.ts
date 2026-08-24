@@ -118,7 +118,10 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         recurringHref,
         transactionReference,
         amount,
-        currency
+        currency,
+        schemeReference: sub.worldpaySchemeReference,
+        previousTransactionId: sub.worldpayTransactionId,
+        customerEmail
       });
 
       console.log(`[Subscription Worker] Charge SUCCESS for ${subId}: Tx ${transactionReference}`);
@@ -144,20 +147,32 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         orderId: newOrderId,
         customerName: sub.customerName || 'Valued Subscriber',
         customerEmail,
-        destination: sub.shippingAddress || 'Customer Address on File',
+        destination: sub.shippingAddress || 'United Kingdom',
         items: orderItems,
         total: amount,
         storeCreditApplied: 0,
         discountApplied: null,
         status: 'Processing',
-        paymentStatus: 'Paid (Recurring MIT)',
+        fulfillmentStatus: 'Unfulfilled',
+        paymentStatus: 'Paid',
         paymentMethod: 'Worldpay Recurring Subscription',
         worldpayTxId: chargeResult?.id || transactionReference,
         gatewayTxId: chargeResult?.id || transactionReference,
-        worldpayAuthCode: 'AUTH-OK',
-        gatewayAuthCode: 'AUTH-OK',
+        worldpayAuthCode: chargeResult?.authCode || 'AUTH-OK-MIT',
+        gatewayAuthCode: chargeResult?.authCode || 'AUTH-OK-MIT',
+        cardBrand: 'Worldpay Stored Card',
+        deliveryMethod: 'Royal Mail Tracked 24/48',
+        carrier: 'Royal Mail',
+        tags: ['Storefront', 'Subscription Order', 'Worldpay Recurring'],
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         subscriptionId: subId,
         isSubscription: true,
+        data: {
+          subscriptionId: subId,
+          schemeReference: chargeResult?.schemeReference || sub.worldpaySchemeReference,
+          paymentMethod: 'Worldpay Access MIT',
+          recurringRenewal: true
+        },
         createdAt: new Date().toISOString()
       };
 
@@ -170,6 +185,20 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         storedOrders.unshift(newOrderData);
         await saveResource('orders', storedOrders);
       }
+
+      // Auto-register Royal Mail shipment if enabled
+      try {
+        const { getRoyalMailSettings, createRoyalMailShipment } = await import('./royalMailService');
+        const rmSettings = await getRoyalMailSettings();
+        if (rmSettings.enabled && (rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY)) {
+          createRoyalMailShipment(newOrderId, {
+            serviceCode: rmSettings.defaultServiceCode || 'TPS24',
+            weightGrams: rmSettings.defaultWeightGrams || 350
+          }).catch(err => {
+            console.warn(`[Subscription Worker] Background Royal Mail shipment creation note for #${newOrderId}:`, err?.message);
+          });
+        }
+      } catch (_rmErr) {}
 
       // 4. Update Subscription in Database with Next Billing Date
       const updateData = {
@@ -195,9 +224,28 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         await saveResource('subscriptions', updatedList);
       } catch (_e) {}
 
+      // Update customer stats and nextPayment date
+      try {
+        const customers: any[] = (await fetchResource('customers')) || [];
+        const foundCust = customers.find((c: any) => String(c.email).toLowerCase().trim() === customerEmail);
+        if (foundCust) {
+          foundCust.ordersCount = (foundCust.ordersCount || 0) + 1;
+          foundCust.amountSpent = Number(((foundCust.amountSpent || 0) + amount).toFixed(2));
+          foundCust.nextPayment = nextBilling.toISOString().split('T')[0];
+          foundCust.subStatus = 'active';
+          foundCust.subscriptionStatus = 'Active Subscriber';
+          await saveResource('customers', customers);
+        }
+      } catch (_e) {}
+
       // 5. Send Order Confirmation Email & Trigger Klaviyo
       try {
         await sendOrderConfirmationEmail(newOrderData);
+      } catch (_e) {}
+
+      try {
+        const { sendAdminNewOrderNotification } = await import('./emailService');
+        await sendAdminNewOrderNotification(newOrderData);
       } catch (_e) {}
 
       try {
@@ -266,19 +314,19 @@ let cronIntervalHandle: NodeJS.Timeout | null = null;
 
 /**
  * Initializes the background recurring worker timer.
- * Checks for due subscriptions every 15 minutes.
+ * Checks for due subscriptions every 5 minutes.
  */
-export function startSubscriptionRenewalWorker(intervalMs: number = 15 * 60 * 1000) {
+export function startSubscriptionRenewalWorker(intervalMs: number = 5 * 60 * 1000) {
   if (cronIntervalHandle) {
     clearInterval(cronIntervalHandle);
   }
 
   console.log(`[Subscription Worker] Background worker initialized (interval: ${intervalMs / 1000}s).`);
 
-  // Run on startup after 10 seconds
+  // Run on startup after 3 seconds
   setTimeout(() => {
     processDueSubscriptions().catch(err => console.error('[Subscription Worker] Startup run error:', err));
-  }, 10000);
+  }, 3000);
 
   // Periodic recurring check
   cronIntervalHandle = setInterval(() => {

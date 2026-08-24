@@ -635,5 +635,13 @@ export async function createExpressApp() {
     });
   }
 
+  // Initialize background subscription recurring renewal worker
+  try {
+    const { startSubscriptionRenewalWorker } = await import("./backend/services/subscriptionCron");
+    startSubscriptionRenewalWorker(5 * 60 * 1000);
+  } catch (workerErr) {
+    console.warn("[Subscription Cron] Failed to initialize subscription worker:", workerErr);
+  }
+
   return app;
 }
