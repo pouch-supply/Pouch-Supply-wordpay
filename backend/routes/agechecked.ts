@@ -379,7 +379,9 @@ const handleCallback = (req: Request, res: Response) => {
     recordSessionApproval([reference, agecheckid, query.userfield1, query.userfield2, body.userfield1, body.userfield2], agecheckid, email);
   }
 
-  if (req.headers.accept?.includes("application/json") || req.xhr) {
+  // Only return JSON if explicitly requested via query param or strictly JSON-only client
+  const wantsJson = (req.query.format === "json" || req.headers.accept === "application/json") && !req.headers.accept?.includes("text/html");
+  if (wantsJson) {
     return res.json({
       approved,
       agecheckid,
@@ -487,7 +489,13 @@ const handleCallback = (req: Request, res: Response) => {
   `);
 };
 
-router.get("/callback", handleCallback);
-router.post("/callback", handleCallback);
+export { handleCallback };
+
+router.all("/callback", handleCallback);
+router.all("/callback/", handleCallback);
+
+// Direct support for AgeChecked Production Callback URL: https://www.pouch-supply.com/api/agechecked
+router.all("/", handleCallback);
+router.all("", handleCallback);
 
 export default router;

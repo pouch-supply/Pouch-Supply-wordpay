@@ -23,7 +23,7 @@ import emailRouter from "./backend/routes/email";
 import klaviyoRouter from "./backend/routes/klaviyo";
 import royalMailRouter from "./backend/routes/royalMail";
 import contactMessagesRouter from "./backend/routes/contactMessages";
-import agecheckedRouter from "./backend/routes/agechecked";
+import agecheckedRouter, { handleCallback as handleAgeCheckedCallback } from "./backend/routes/agechecked";
 import authRouter, { handleGoogleOAuthCallback } from "./backend/routes/auth";
 
 import mediaRouter from "./backend/routes/media";
@@ -552,6 +552,14 @@ export async function createExpressApp() {
   app.use("/api/klaviyo", klaviyoRouter);
   app.use("/api/royalmail", royalMailRouter);
   app.use("/api/royal-mail", royalMailRouter);
+  // Support exact AgeChecked callback endpoints (/api/agechecked, /api/agechecked/callback)
+  app.all(["/api/agechecked", "/api/agechecked/", "/api/agechecked/callback", "/api/agechecked/callback/"], (req, res, next) => {
+    // If it's a subroute like /api/agechecked/init, let agecheckedRouter handle it
+    if (req.path === "/api/agechecked" || req.path === "/api/agechecked/" || req.path === "/api/agechecked/callback" || req.path === "/api/agechecked/callback/") {
+      return handleAgeCheckedCallback(req, res);
+    }
+    next();
+  });
   app.use("/api/agechecked", agecheckedRouter);
   app.post("/api/create-order", (req, res, next) => {
     req.url = "/create-order";
