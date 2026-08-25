@@ -10,6 +10,7 @@ import {
 import SubscriptionIcon from './SubscriptionIcon';
 import AgeGate, { AgeGateHandle } from './AgeGate';
 import { calculateDiscountAmount, calculateVolumePrice } from '../utils';
+import { resolveDiscountCode } from '../utils/discountUtils';
 import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed, trackSubscriptionStarted } from '../utils/klaviyo';
 
 interface CheckoutViewProps {
@@ -171,48 +172,23 @@ export default function CheckoutView({
     setPromoError('');
     setPromoSuccess('');
 
-    const code = promoCodeInput.trim().toUpperCase();
-    if (!code) {
-      setPromoError('Please enter a code.');
-      return;
-    }
+    const res = resolveDiscountCode(
+      promoCodeInput,
+      activeDiscounts || [],
+      customers || [],
+      loggedInCustomer,
+      cartItems,
+      rawSubtotal
+    );
 
-    const found = activeDiscounts?.find(d => d.title.toUpperCase() === code && d.status === 'Active');
-    if (found) {
-      setCurrentDiscount(found);
+    if (res.success && res.discount) {
+      setCurrentDiscount(res.discount);
       if (onApplyDiscount) {
-        onApplyDiscount(found);
+        onApplyDiscount(res.discount);
       }
-      setPromoSuccess(`Promo Code "${code}" applied: ${found.details}!`);
+      setPromoSuccess(res.message || `Discount Code "${res.discount.title}" applied!`);
     } else {
-      const matchingCustomer = customers?.find(c => c.referralCode && c.referralCode.toUpperCase() === code);
-      if (matchingCustomer) {
-        if (loggedInCustomer && loggedInCustomer.id === matchingCustomer.id) {
-          setPromoError("You cannot use your own referral code.");
-          return;
-        }
-
-        const virtualDiscount: Discount = {
-          id: `disc-ref-virtual-${matchingCustomer.id}`,
-          title: code,
-          status: 'Active',
-          method: 'Code',
-          eligibility: 'All customers',
-          type: 'Amount off order',
-          valueType: 'Percentage',
-          valueAmount: 10,
-          details: `10% referral discount courtesy of ${matchingCustomer.name.split(" ")[0]}`,
-          used: 0,
-          limitOnePerCustomer: true
-        };
-        setCurrentDiscount(virtualDiscount);
-        if (onApplyDiscount) {
-          onApplyDiscount(virtualDiscount);
-        }
-        setPromoSuccess(`Referral code applied! You receive a 10% discount.`);
-      } else {
-        setPromoError('Invalid or expired promo code.');
-      }
+      setPromoError(res.error || 'Invalid or expired discount code.');
     }
   };
 
@@ -314,7 +290,14 @@ export default function CheckoutView({
   const rawSubtotal = cartItems.reduce((acc, item) => acc + getItemTotal(item), 0);
   const discountValue = calculateDiscountAmount(currentDiscount, cartItems, rawSubtotal);
   const subtotalAfterDiscount = Math.max(rawSubtotal - discountValue, 0);
-  const deliveryCost = subtotalAfterDiscount >= 40 ? 0 : 2.99;
+  const isFreeShipping = Boolean(
+    subtotalAfterDiscount >= 40 ||
+    currentDiscount?.type === 'Free shipping' ||
+    currentDiscount?.title?.toUpperCase().includes('BRONZE5') ||
+    currentDiscount?.details?.toLowerCase().includes('free shipping') ||
+    currentDiscount?.details?.toLowerCase().includes('free royal mail')
+  );
+  const deliveryCost = isFreeShipping ? 0 : 2.99;
   const finalTotal = subtotalAfterDiscount + deliveryCost;
   const storeCreditAvailable = loggedInCustomer?.storeCredit || 0;
   const storeCreditApplied = applyStoreCredit ? Math.min(storeCreditAvailable, finalTotal) : 0;

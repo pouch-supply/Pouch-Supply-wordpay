@@ -4,6 +4,7 @@ import { X, Trash2, Plus, Minus, Ticket, Check, ShieldCheck, ShoppingBag, Sparkl
 import { motion, AnimatePresence } from 'motion/react';
 import SubscriptionIcon from './SubscriptionIcon';
 import { calculateDiscountAmount, calculateVolumePrice } from '../utils';
+import { resolveDiscountCode } from '../utils/discountUtils';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -55,7 +56,14 @@ export default function CartDrawer({
   );
 
   const totalBeforeShipping = Math.max(subtotal - discountValue, 0);
-  const shippingFee = (totalBeforeShipping >= 40 || appliedDiscount?.type === 'Free shipping') ? 0 : 2.99;
+  const isFreeShipping = Boolean(
+    totalBeforeShipping >= 40 ||
+    appliedDiscount?.type === 'Free shipping' ||
+    appliedDiscount?.title?.toUpperCase().includes('BRONZE5') ||
+    appliedDiscount?.details?.toLowerCase().includes('free shipping') ||
+    appliedDiscount?.details?.toLowerCase().includes('free royal mail')
+  );
+  const shippingFee = isFreeShipping ? 0 : 2.99;
   const total = totalBeforeShipping + shippingFee;
 
   const handleApplyPromo = (e: React.FormEvent) => {
@@ -65,56 +73,20 @@ export default function CartDrawer({
     setPromoError('');
     setPromoSuccess('');
 
-    // Locate discount matches
-    const code = promoCodeInput.trim().toUpperCase();
-    const found = activeDiscounts.find(d => d.title.toUpperCase() === code && d.status === 'Active');
+    const res = resolveDiscountCode(
+      promoCodeInput,
+      activeDiscounts,
+      customers,
+      loggedInCustomer,
+      cartItems,
+      subtotal
+    );
 
-    if (found) {
-      setAppliedDiscount(found);
-      setPromoSuccess(`Promo Code "${code}" applied: ${found.details}!`);
-    } else if (code === 'SUB10' || code === 'SUBSCRIBER10' || code === 'FIRST50') {
-      const subDiscount: Discount = {
-        id: 'disc-sub-first50',
-        title: code,
-        status: 'Active',
-        method: 'Code',
-        eligibility: 'All customers',
-        type: 'Amount off order',
-        valueType: 'Percentage',
-        valueAmount: 10,
-        details: '10% First 50 Subscribers Permanent Discount',
-        used: 12,
-        limitOnePerCustomer: false
-      };
-      setAppliedDiscount(subDiscount);
-      setPromoSuccess('10% First 50 Subscribers discount applied!');
+    if (res.success && res.discount) {
+      setAppliedDiscount(res.discount);
+      setPromoSuccess(res.message || `Discount code "${res.discount.title}" applied!`);
     } else {
-      // Check if it matches an existing customer's referral code (case-insensitive)
-      const matchingCustomer = customers.find(c => c.referralCode && c.referralCode.toUpperCase() === code);
-      if (matchingCustomer) {
-        if (loggedInCustomer && loggedInCustomer.id === matchingCustomer.id) {
-          setPromoError("You cannot use your own referral code.");
-          return;
-        }
-
-        const virtualDiscount: Discount = {
-          id: `disc-ref-virtual-${matchingCustomer.id}`,
-          title: code,
-          status: 'Active',
-          method: 'Code',
-          eligibility: 'All customers',
-          type: 'Amount off order',
-          valueType: 'Percentage',
-          valueAmount: 10,
-          details: `10% referral discount courtesy of ${matchingCustomer.name.split(" ")[0]}`,
-          used: 0,
-          limitOnePerCustomer: true
-        };
-        setAppliedDiscount(virtualDiscount);
-        setPromoSuccess(`Referral code applied! You receive a 10% discount on your order.`);
-      } else {
-        setPromoError('Invalid or expired promo code.');
-      }
+      setPromoError(res.error || 'Invalid or expired promo code.');
     }
   };
 

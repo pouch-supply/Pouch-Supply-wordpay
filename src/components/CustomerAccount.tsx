@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Customer, Product, Order, Discount } from '../types';
 import { getWishlistProductTitle } from '../utils/mediaUtils';
 import { parseOrderTime } from '../utils';
+import { formatLoyaltyCouponCode, getCustomerPrefix } from '../utils/discountUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
 import SubscriptionIcon from './SubscriptionIcon';
@@ -96,6 +97,15 @@ export default function CustomerAccount({
   const [addrCountry, setAddrCountry] = useState('United Kingdom');
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState<Order | null>(null);
+  const [copiedCouponCode, setCopiedCouponCode] = useState<string | null>(null);
+
+  const handleCopyCouponCode = (code: string, label = 'Voucher code') => {
+    navigator.clipboard.writeText(code);
+    setCopiedCouponCode(code);
+    setTimeout(() => {
+      setCopiedCouponCode(prev => (prev === code ? null : prev));
+    }, 2500);
+  };
 
   // Cancel & Return/Exchange Modal States
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -3089,18 +3099,31 @@ export default function CustomerAccount({
                                     <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-1 border-t border-violet-100">
                                       <span className="text-[10px] text-slate-500 font-bold">Your completed orders: <strong>{ordersCount}</strong></span>
                                       {ordersCount >= 31 ? (
-                                        <div className="flex gap-2">
-                                          <span className="font-mono font-black text-xs bg-white text-[#071d37] border border-violet-200 py-1 px-3 rounded-md">PLATINUM_ODD</span>
-                                          <button 
-                                            onClick={() => {
-                                              navigator.clipboard.writeText("PLATINUM_ODD");
-                                              alert("Voucher code 'PLATINUM_ODD' copied to clipboard! Paste at checkout to request your odd-numbered order selection.");
-                                            }}
-                                            className="text-[9px] font-black text-violet-700 bg-violet-50 hover:bg-violet-100 py-1 px-2.5 rounded-md uppercase tracking-wider cursor-pointer"
-                                          >
-                                            Copy Code
-                                          </button>
-                                        </div>
+                                        (() => {
+                                          const platCode = formatLoyaltyCouponCode("PLATINUM_ODD", loggedInCustomer);
+                                          const isCopied = copiedCouponCode === platCode;
+                                          return (
+                                            <div className="flex items-center gap-2">
+                                              <span className="font-mono font-black text-xs bg-white text-[#071d37] border border-violet-200 py-1 px-3 rounded-md">{platCode}</span>
+                                              <button 
+                                                onClick={() => handleCopyCouponCode(platCode, 'Platinum code')}
+                                                className="text-[9px] font-black text-violet-700 bg-violet-50 hover:bg-violet-100 py-1 px-2.5 rounded-md uppercase tracking-wider cursor-pointer flex items-center gap-1"
+                                              >
+                                                {isCopied ? (
+                                                  <>
+                                                    <Check className="h-3 w-3 text-violet-700" />
+                                                    <span>Copied!</span>
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    <Copy className="h-3 w-3 text-violet-700" />
+                                                    <span>Copy Code</span>
+                                                  </>
+                                                )}
+                                              </button>
+                                            </div>
+                                          );
+                                        })()
                                       ) : (
                                         <span className="text-[10px] text-slate-400 font-bold">Complete {31 - ordersCount} more orders to activate</span>
                                       )}
@@ -3109,6 +3132,8 @@ export default function CustomerAccount({
                                 ) : (
                                   tier.milestones.map((m) => {
                                     const isUnlocked = ordersCount >= m.order;
+                                    const formattedCode = formatLoyaltyCouponCode(m.code, loggedInCustomer);
+                                    const isCopied = copiedCouponCode === formattedCode;
                                     return (
                                       <div 
                                         key={m.order}
@@ -3136,16 +3161,23 @@ export default function CustomerAccount({
                                           <div className="flex items-center justify-between gap-1 bg-white p-1.5 border border-emerald-100 rounded-lg">
                                             <div className="min-w-0">
                                               <span className="text-[7px] text-slate-400 font-bold uppercase block">Voucher Code</span>
-                                              <span className="font-mono font-black text-[10px] text-[#071d37] tracking-wider block truncate">{m.code}</span>
+                                              <span className="font-mono font-black text-[10px] text-[#071d37] tracking-wider block truncate">{formattedCode}</span>
                                             </div>
                                             <button 
-                                              onClick={() => {
-                                                navigator.clipboard.writeText(m.code);
-                                                alert(`Voucher code "${m.code}" copied! Enter at checkout to redeem.`);
-                                              }}
-                                              className="text-[8px] font-black text-emerald-700 bg-emerald-50 hover:bg-emerald-100 py-1 px-2 rounded cursor-pointer shrink-0 uppercase"
+                                              onClick={() => handleCopyCouponCode(formattedCode, 'Voucher code')}
+                                              className="text-[8px] font-black text-emerald-700 bg-emerald-50 hover:bg-emerald-100 py-1 px-2 rounded cursor-pointer shrink-0 uppercase flex items-center gap-1"
                                             >
-                                              Copy
+                                              {isCopied ? (
+                                                <>
+                                                  <Check className="h-2.5 w-2.5 text-emerald-700" />
+                                                  <span>Copied!</span>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <Copy className="h-2.5 w-2.5 text-emerald-700" />
+                                                  <span>Copy</span>
+                                                </>
+                                              )}
                                             </button>
                                           </div>
                                         ) : (
@@ -3195,7 +3227,10 @@ export default function CustomerAccount({
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {customerLoyaltyRewards.map((reward) => (
+                        {customerLoyaltyRewards.map((reward) => {
+                          const formattedPerkCode = formatLoyaltyCouponCode(reward.title, loggedInCustomer);
+                          const isCopied = copiedCouponCode === formattedPerkCode;
+                          return (
                           <div key={reward.id} className="bg-amber-50/25 border border-amber-200/50 p-4 rounded-2xl flex flex-col justify-between gap-3 relative overflow-hidden transition-all hover:border-amber-300/80">
                             {/* Accent gold corner flare */}
                             <div className="absolute right-[-15px] top-[-15px] w-12 h-12 rounded-full bg-amber-100/50" />
@@ -3226,20 +3261,28 @@ export default function CustomerAccount({
                             <div className="flex items-center justify-between gap-2 bg-white p-2 border border-amber-100 rounded-xl mt-1 z-10 shadow-xs">
                               <div className="min-w-0">
                                 <span className="text-[8px] text-slate-400 font-bold uppercase block">Voucher Code</span>
-                                <span className="font-mono font-black text-[11px] text-[#071d37] tracking-wider select-all">{reward.title}</span>
+                                <span className="font-mono font-black text-[11px] text-[#071d37] tracking-wider select-all">{formattedPerkCode}</span>
                               </div>
                               <button 
-                                onClick={() => {
-                                  navigator.clipboard.writeText(reward.title);
-                                  alert(`Loyalty code "${reward.title}" copied to clipboard! Enter at checkout to apply.`);
-                                }}
-                                className="text-[9px] font-black text-amber-800 bg-amber-50 hover:bg-amber-100 py-1.5 px-3 rounded-lg transition-colors cursor-pointer shrink-0 uppercase"
+                                onClick={() => handleCopyCouponCode(formattedPerkCode, 'Loyalty perk code')}
+                                className="text-[9px] font-black text-amber-800 bg-amber-50 hover:bg-amber-100 py-1.5 px-3 rounded-lg transition-colors cursor-pointer shrink-0 uppercase flex items-center gap-1"
                               >
-                                Copy Code
+                                {isCopied ? (
+                                  <>
+                                    <Check className="h-3 w-3 text-amber-800" />
+                                    <span>Copied!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3 w-3 text-amber-800" />
+                                    <span>Copy Code</span>
+                                  </>
+                                )}
                               </button>
                             </div>
                           </div>
-                        ))}
+                        );
+                        })}
                       </div>
                     )}
                   </div>

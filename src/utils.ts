@@ -178,9 +178,45 @@ export function calculateDiscountAmount(
       return 0;
     }
 
+    case 'Loyalty Reward': {
+      if (discount.valueType === 'Percentage' && discount.valueAmount) {
+        return subtotal * (discount.valueAmount / 100);
+      }
+      if (discount.valueType === 'Fixed amount' && discount.valueAmount) {
+        return Math.min(discount.valueAmount, subtotal);
+      }
+      if (discount.loyaltyRewardType === 'Percentage Off') {
+        const pct = typeof discount.loyaltyRewardValue === 'number' ? discount.loyaltyRewardValue : parseFloat(String(discount.loyaltyRewardValue || '10')) || 10;
+        return subtotal * (pct / 100);
+      }
+      if (discount.loyaltyRewardType === 'B1G1') {
+        const cheapestItem = cartItems.length > 0 ? Math.min(...cartItems.map(i => i.price)) : 4.99;
+        return Math.min(cheapestItem, subtotal);
+      }
+      if (discount.valueAmount) {
+        return Math.min(discount.valueAmount, subtotal);
+      }
+      return Math.min(5.00, subtotal);
+    }
+
     default:
+      if (discount.valueType === 'Percentage' && discount.valueAmount) {
+        return subtotal * (discount.valueAmount / 100);
+      }
+      if (discount.valueType === 'Fixed amount' && discount.valueAmount) {
+        return Math.min(discount.valueAmount, subtotal);
+      }
       if (discount.title.includes('15') || discount.details.includes('15')) {
         return subtotal * 0.15;
+      }
+      if (discount.title.includes('10') || discount.details.includes('10')) {
+        return subtotal * 0.10;
+      }
+      if (discount.title.includes('20') || discount.details.includes('20')) {
+        return subtotal * 0.20;
+      }
+      if (discount.title.includes('25') || discount.details.includes('25')) {
+        return subtotal * 0.25;
       }
       return Math.min(5.00, subtotal);
   }
