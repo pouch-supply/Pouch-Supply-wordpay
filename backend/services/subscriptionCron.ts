@@ -129,27 +129,48 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       // 2. Compute Next Billing Date
       const nextBilling = calculateNextBillingDate(sub.billingInterval || '1day', new Date());
 
-      // 3. Create the Recurring Order in Database
+      // 3. Calculate Item Subtotal & Shipping Cost for the renewal order
+      const shippingAmount = typeof sub.shippingFee === 'number'
+        ? sub.shippingFee
+        : (typeof sub.shippingCost === 'number'
+            ? sub.shippingCost
+            : (typeof sub.shippingAmount === 'number'
+                ? sub.shippingAmount
+                : (typeof sub.deliveryCost === 'number'
+                    ? sub.deliveryCost
+                    : (amount >= 40 ? 0 : 2.99))));
+
+      const itemSubtotal = Number(Math.max(0, amount - shippingAmount).toFixed(2)) || amount;
+
+      // 4. Create the Recurring Order in Database
       const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
-      const orderItems = [
-        {
-          productId: sub.planId || 'sub-pack',
-          productTitle: `${planName} (Recurring Renewal)`,
-          price: amount,
-          quantity: 1,
-          isSubscription: true,
-          total: amount
-        }
-      ];
+      const orderItems = (Array.isArray(sub.items) && sub.items.length > 0)
+        ? sub.items.map((it: any) => ({
+            ...it,
+            isSubscription: true
+          }))
+        : [
+            {
+              productId: sub.planId || 'sub-pack',
+              productTitle: `${planName} (Recurring Renewal)`,
+              price: itemSubtotal,
+              quantity: 1,
+              isSubscription: true,
+              total: itemSubtotal
+            }
+          ];
 
       const newOrderData = {
         id: newOrderId,
         orderId: newOrderId,
         customerName: sub.customerName || 'Valued Subscriber',
         customerEmail,
-        destination: sub.shippingAddress || 'United Kingdom',
+        destination: sub.shippingAddress || sub.destination || 'United Kingdom',
         items: orderItems,
         total: amount,
+        subtotal: itemSubtotal,
+        shippingCost: shippingAmount,
+        deliveryCost: shippingAmount,
         storeCreditApplied: 0,
         discountApplied: null,
         status: 'Processing',
@@ -161,7 +182,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         worldpayAuthCode: chargeResult?.authCode || 'AUTH-OK-MIT',
         gatewayAuthCode: chargeResult?.authCode || 'AUTH-OK-MIT',
         cardBrand: 'Worldpay Stored Card',
-        deliveryMethod: 'Royal Mail Tracked 24/48',
+        deliveryMethod: sub.deliveryMethod || 'Royal Mail Tracked 24/48',
         carrier: 'Royal Mail',
         tags: ['Storefront', 'Subscription Order', 'Worldpay Recurring'],
         date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -171,7 +192,9 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           subscriptionId: subId,
           schemeReference: chargeResult?.schemeReference || sub.worldpaySchemeReference,
           paymentMethod: 'Worldpay Access MIT',
-          recurringRenewal: true
+          recurringRenewal: true,
+          shippingCost: shippingAmount,
+          subtotal: itemSubtotal
         },
         createdAt: new Date().toISOString()
       };

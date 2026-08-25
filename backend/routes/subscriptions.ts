@@ -166,6 +166,11 @@ router.post(
         planId,
         planName,
         amount,
+        shippingCost,
+        shippingFee,
+        shippingAddress,
+        deliveryMethod,
+        items,
         currency = "GBP",
         billingInterval = "month",
         worldpayResponse,
@@ -226,6 +231,10 @@ router.post(
       const emailClean = String(customerEmail).toLowerCase().trim();
       const subId = `sub_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
 
+      const effectiveShipping = typeof shippingFee === 'number'
+        ? shippingFee
+        : (typeof shippingCost === 'number' ? shippingCost : (Number(amount) >= 40 ? 0 : 2.99));
+
       const subData = {
         id: subId,
         customerId: customerId || null,
@@ -234,6 +243,12 @@ router.post(
         planId,
         planName: planName || "Nicotine Pouch Subscription Plan",
         amount: Number(amount),
+        shippingFee: effectiveShipping,
+        shippingCost: effectiveShipping,
+        shippingAmount: effectiveShipping,
+        shippingAddress: shippingAddress || 'United Kingdom',
+        deliveryMethod: deliveryMethod || 'Royal Mail Tracked 24/48',
+        items: Array.isArray(items) ? items : undefined,
         currency,
         status: "active",
         billingInterval,
@@ -350,10 +365,11 @@ router.post(
         .toString("hex")
         .toUpperCase()}`;
 
+      const chargeAmount = Number(subscription.amount);
       const result = await chargeRecurringSubscription({
         recurringHref: subscription.worldpayRecurringHref,
         transactionReference,
-        amount: Number(subscription.amount),
+        amount: chargeAmount,
         currency: subscription.currency || "GBP",
       });
 
@@ -399,6 +415,78 @@ router.post(
         );
         await saveResource("subscriptions", updatedList);
       } catch (_e) {}
+
+      // Calculate shipping cost and item subtotal
+      const shippingAmount = typeof subscription.shippingFee === 'number'
+        ? subscription.shippingFee
+        : (typeof subscription.shippingCost === 'number'
+            ? subscription.shippingCost
+            : (typeof subscription.shippingAmount === 'number'
+                ? subscription.shippingAmount
+                : (typeof subscription.deliveryCost === 'number'
+                    ? subscription.deliveryCost
+                    : (chargeAmount >= 40 ? 0 : 2.99))));
+
+      const itemSubtotal = Number(Math.max(0, chargeAmount - shippingAmount).toFixed(2)) || chargeAmount;
+
+      // Create recurring order record in database
+      const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
+      const orderItems = (Array.isArray(subscription.items) && subscription.items.length > 0)
+        ? subscription.items.map((it: any) => ({ ...it, isSubscription: true }))
+        : [
+            {
+              productId: subscription.planId || 'sub-pack',
+              productTitle: `${subscription.planName || 'Pouch Supply Subscription'} (Recurring Renewal)`,
+              price: itemSubtotal,
+              quantity: 1,
+              isSubscription: true,
+              total: itemSubtotal
+            }
+          ];
+
+      const newOrderData = {
+        id: newOrderId,
+        orderId: newOrderId,
+        customerName: subscription.customerName || 'Valued Subscriber',
+        customerEmail: subscription.customerEmail,
+        destination: subscription.shippingAddress || subscription.destination || 'United Kingdom',
+        items: orderItems,
+        total: chargeAmount,
+        subtotal: itemSubtotal,
+        shippingCost: shippingAmount,
+        deliveryCost: shippingAmount,
+        storeCreditApplied: 0,
+        discountApplied: null,
+        status: 'Processing',
+        fulfillmentStatus: 'Unfulfilled',
+        paymentStatus: 'Paid',
+        paymentMethod: 'Worldpay Recurring Subscription',
+        worldpayTxId: result?.id || transactionReference,
+        gatewayTxId: result?.id || transactionReference,
+        worldpayAuthCode: result?.authCode || 'AUTH-OK-MIT',
+        gatewayAuthCode: result?.authCode || 'AUTH-OK-MIT',
+        cardBrand: 'Worldpay Stored Card',
+        deliveryMethod: subscription.deliveryMethod || 'Royal Mail Tracked 24/48',
+        carrier: 'Royal Mail',
+        tags: ['Storefront', 'Subscription Order', 'Worldpay Recurring'],
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        subscriptionId: subscription.id,
+        isSubscription: true,
+        data: {
+          subscriptionId: subscription.id,
+          schemeReference: result?.schemeReference || subscription.worldpaySchemeReference,
+          paymentMethod: 'Worldpay Access MIT',
+          recurringRenewal: true,
+          shippingCost: shippingAmount,
+          subtotal: itemSubtotal
+        },
+        createdAt: new Date().toISOString()
+      };
+
+      try {
+        const { saveSingleOrder } = await import('./orders');
+        await saveSingleOrder(newOrderData);
+      } catch (_ordErr) {}
 
       return res.json({
         success: true,

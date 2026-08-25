@@ -14,6 +14,10 @@ interface PendingCheckout {
   destination: string;
   items: any[];
   total: number;
+  subtotal?: number;
+  shippingCost?: number;
+  deliveryCost?: number;
+  deliveryMethod?: string;
   discountApplied: any;
   storeCreditApplied: number;
   isTestMode: boolean;
@@ -145,6 +149,10 @@ async function saveVerifiedOrder(
     destination?: string;
     items?: any[];
     total?: number;
+    subtotal?: number;
+    shippingCost?: number;
+    deliveryCost?: number;
+    deliveryMethod?: string;
     discountApplied?: any;
     storeCreditApplied?: number;
   }
@@ -161,8 +169,25 @@ async function saveVerifiedOrder(
   const storeCreditApplied = pending?.storeCreditApplied || details.storeCreditApplied || 0;
   const discountApplied = pending?.discountApplied || details.discountApplied || null;
 
-  // Check for subscription products in order items
-  const subItem = items.find((it: any) => it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack'))));
+  // Calculate items subtotal
+  const subItemsList = items.filter((it: any) => it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack'))));
+  const subItem = subItemsList[0] || items.find((it: any) => it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack'))));
+  const subItemsTotal = subItemsList.reduce((sum: number, it: any) => sum + (Number(it.price || 0) * (Number(it.quantity) || 1)), 0);
+
+  // Extract shipping charges from the first order to ensure it remains in all auto recurring subscription payments
+  const effectiveShipping = typeof pending?.shippingCost === 'number'
+    ? pending.shippingCost
+    : (typeof pending?.deliveryCost === 'number'
+        ? pending.deliveryCost
+        : (typeof details.shippingCost === 'number'
+            ? details.shippingCost
+            : (typeof details.deliveryCost === 'number'
+                ? details.deliveryCost
+                : (total > subItemsTotal && subItemsTotal > 0
+                    ? Number((total - subItemsTotal).toFixed(2))
+                    : (total >= 40 ? 0 : 2.99)))));
+
+  const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || 'Royal Mail Tracked 24/48';
   let createdSubscriptionId: string | undefined;
 
   if (subItem) {
@@ -189,7 +214,9 @@ async function saveVerifiedOrder(
 
       const recurringHref = `https://access.worldpay.com/payments/recurring/wp-${details.transactionId || orderId}`;
       const schemeReference = `SCHEME-${details.transactionId || orderId}`;
-      const subAmount = subItem.price && subItem.price > 0 ? Number(subItem.price) : Number(total);
+
+      // CRITICAL: Ensure the recurring subscription charge includes both the plan items and the initial shipping fee
+      const subAmount = total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2));
 
       const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       createdSubscriptionId = subId;
@@ -201,7 +228,14 @@ async function saveVerifiedOrder(
         customerName,
         planId,
         planName,
-        amount: subAmount,
+        amount: subAmount, // Total recurring charge (includes shipping fee)
+        itemPrice: subItemsTotal || Number(subItem.price) || subAmount,
+        shippingCost: effectiveShipping,
+        shippingFee: effectiveShipping,
+        shippingAmount: effectiveShipping,
+        deliveryCost: effectiveShipping,
+        shippingAddress: destination,
+        deliveryMethod,
         currency: 'GBP',
         status: 'active',
         billingInterval,
@@ -211,7 +245,8 @@ async function saveVerifiedOrder(
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: 'authorized',
         lastPaymentId: details.transactionId || orderId,
-        lastPaymentAt: new Date()
+        lastPaymentAt: new Date(),
+        items: items
       };
 
       try {
@@ -247,6 +282,10 @@ async function saveVerifiedOrder(
     tags.push('Subscription Order');
   }
 
+  const calculatedSubtotal = typeof pending?.subtotal === 'number'
+    ? pending.subtotal
+    : (total > effectiveShipping ? Number((total - effectiveShipping).toFixed(2)) : total);
+
   const formattedOrder = {
     id: orderId,
     orderId: orderId,
@@ -255,6 +294,9 @@ async function saveVerifiedOrder(
     destination,
     items,
     total,
+    subtotal: calculatedSubtotal,
+    shippingCost: effectiveShipping,
+    deliveryCost: effectiveShipping,
     storeCreditApplied,
     discountApplied,
     paymentStatus: 'Paid',
@@ -264,7 +306,7 @@ async function saveVerifiedOrder(
     gatewayTxId: details.transactionId,
     gatewayAuthCode: details.authCode || 'AUTH-OK',
     cardBrand: details.cardBrand || 'Worldpay Card',
-    deliveryMethod: 'Royal Mail Tracked 24/48',
+    deliveryMethod,
     carrier: 'Royal Mail',
     tags,
     subscriptionId: createdSubscriptionId,
@@ -276,7 +318,10 @@ async function saveVerifiedOrder(
       paymentMethod: details.paymentMethod || 'Worldpay Access',
       webhookEventId: details.webhookEventId,
       isTestMode: pending?.isTestMode ?? false,
-      subscriptionId: createdSubscriptionId
+      subscriptionId: createdSubscriptionId,
+      shippingCost: effectiveShipping,
+      deliveryCost: effectiveShipping,
+      subtotal: calculatedSubtotal
     }
   };
 
@@ -327,6 +372,11 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
     const {
       orderId,
       amount,
+      total: reqTotal,
+      subtotal: reqSubtotal,
+      shippingCost: reqShippingCost,
+      deliveryCost: reqDeliveryCost,
+      deliveryMethod: reqDeliveryMethod,
       customerName,
       customerEmail,
       destination,
@@ -351,7 +401,14 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       priceNum = Math.round(amount * 100);
     } else if (typeof amount === 'string' && !isNaN(parseFloat(amount))) {
       priceNum = Math.round(parseFloat(amount) * 100);
+    } else if (typeof reqTotal === 'number') {
+      priceNum = Math.round(reqTotal * 100);
     }
+
+    const effectiveTotal = typeof amount === 'number' ? amount : (typeof reqTotal === 'number' ? reqTotal : parseFloat(amount) || 0);
+    const effectiveShippingCost = typeof reqShippingCost === 'number'
+      ? reqShippingCost
+      : (typeof reqDeliveryCost === 'number' ? reqDeliveryCost : (effectiveTotal >= 40 ? 0 : 2.99));
 
     // Store pending order details in memory and persistent storage — DO NOT CREATE ORDER IN DATABASE BEFORE PAYMENT
     const pendingPayload: PendingCheckout = {
@@ -367,9 +424,17 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
         image: it.image || '',
         variant: it.variant || it.concreteVariantName || it.strength || it.flavour || 'Standard',
         sku: it.sku || it.concreteVariantId || it.productId || 'SKU-GENERIC',
-        vendor: it.vendor || ''
+        vendor: it.vendor || '',
+        isSubscription: Boolean(it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack')))),
+        subscriptionPlan: it.subscriptionPlan || 'LITE Plan',
+        subscriptionFrequency: it.subscriptionFrequency || '1day',
+        frequencyDiscount: it.frequencyDiscount || '10%'
       })) : [],
-      total: typeof amount === 'number' ? amount : parseFloat(amount) || 0,
+      total: effectiveTotal,
+      subtotal: typeof reqSubtotal === 'number' ? reqSubtotal : (effectiveTotal > effectiveShippingCost ? Number((effectiveTotal - effectiveShippingCost).toFixed(2)) : effectiveTotal),
+      shippingCost: effectiveShippingCost,
+      deliveryCost: effectiveShippingCost,
+      deliveryMethod: reqDeliveryMethod || 'Royal Mail Tracked 24/48',
       discountApplied: discountApplied || null,
       storeCreditApplied: storeCreditApplied || 0,
       isTestMode: false,
