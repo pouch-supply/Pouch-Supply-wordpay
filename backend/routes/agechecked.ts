@@ -122,7 +122,7 @@ router.post("/init", async (req: Request, res: Response) => {
     console.warn("[AgeChecked] AGECHECKED_SECRET_KEY is not configured on server. Initializing interactive ID scanner portal.");
 
     const mockAgecheckId = `AC-${Date.now()}`;
-    const demoUrl = `${req.protocol}://${req.get("host")}/api/agechecked/demo-portal?reference=${encodeURIComponent(body.reference || 'checkout')}&agecheckid=${mockAgecheckId}&email=${encodeURIComponent(body.email || '')}&name=${encodeURIComponent(body.name || '')}&surname=${encodeURIComponent(body.surname || '')}&postcode=${encodeURIComponent(body.postcode || '')}`;
+    const demoUrl = `/api/agechecked/demo-portal?reference=${encodeURIComponent(body.reference || 'checkout')}&agecheckid=${mockAgecheckId}&email=${encodeURIComponent(body.email || '')}&name=${encodeURIComponent(body.name || '')}&surname=${encodeURIComponent(body.surname || '')}&postcode=${encodeURIComponent(body.postcode || '')}`;
 
     return res.json({
       url: demoUrl,
@@ -278,7 +278,9 @@ router.get("/demo-portal", (req: Request, res: Response) => {
   const surname = String(req.query.surname || "");
   const postcode = String(req.query.postcode || "EC1A 1BB");
 
-  res.setHeader("Content-Type", "text/html");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.removeHeader("X-Frame-Options");
+  res.setHeader("Content-Security-Policy", "frame-ancestors * 'self'");
   res.send(`
     <!DOCTYPE html>
     <html lang="en">
