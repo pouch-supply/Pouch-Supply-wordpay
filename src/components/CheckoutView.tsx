@@ -347,7 +347,8 @@ export default function CheckoutView({
     let currentAgeVerified = isAgeApproved;
     if (typeof window !== 'undefined') {
       const stored = window.localStorage.getItem('agechecked-approved');
-      if (stored === 'true') {
+      const storedVerified = window.localStorage.getItem('ageVerified');
+      if (stored === 'true' || storedVerified === 'true') {
         currentAgeVerified = true;
         setIsAgeApproved(true);
       }
