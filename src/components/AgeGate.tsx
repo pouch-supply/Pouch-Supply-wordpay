@@ -1,10 +1,13 @@
 // src/components/AgeGate.tsx
 import React, { useEffect, useState, useImperativeHandle, forwardRef, useRef, useCallback } from "react";
-import { ShieldCheck, ShieldAlert, CheckCircle2, Lock, AlertCircle, RefreshCw, ExternalLink, X, Camera, FileCheck } from "lucide-react";
+import { ShieldCheck, CheckCircle2, Lock, AlertCircle, RefreshCw, X } from "lucide-react";
 import { trackAgeVerified } from "../utils/klaviyo";
 
 const AGE_APPROVED_STORAGE_KEY = "agechecked-approved";
+const AGE_VERIFIED_STORAGE_KEY = "ageVerified";
 const AGE_APPROVED_AT_STORAGE_KEY = "agechecked-verified-at";
+const AGE_CHECKED_ORIGIN = "https://agechecked.getid.ee";
+const AGE_CHECKED_SANDBOX_ORIGIN = "https://agechecked.sb.getid.dev";
 
 export interface AgeCheckedResponse {
   avstatus?: {
@@ -39,6 +42,7 @@ function getPortalUrl(publicKey: string, returnUrl?: string, customPortalUrl?: s
       url.searchParams.set("returnUrl", returnUrl);
       url.searchParams.set("redirectUrl", returnUrl);
     }
+    url.searchParams.set("embedded", "true");
     return url.toString();
   } catch {
     const separator = baseUrl.includes("?") ? "&" : "?";
@@ -50,6 +54,7 @@ function getPortalUrl(publicKey: string, returnUrl?: string, customPortalUrl?: s
       params.push(`returnUrl=${encodeURIComponent(returnUrl)}`);
       params.push(`redirectUrl=${encodeURIComponent(returnUrl)}`);
     }
+    params.push("embedded=true");
     return `${baseUrl}${params.length ? separator + params.join("&") : ""}`;
   }
 }
@@ -97,10 +102,12 @@ export interface AgeGateHandle {
 export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = false, onApprovedChange, customerData }, ref) => {
   const [approved, setApproved] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
-    const storedValue = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const storedApproved = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
     const params = new URLSearchParams(window.location.search);
     return (
-      storedValue === "true" ||
+      storedApproved === "true" ||
+      storedVerified === "true" ||
       params.get("agechecked") === "approved" ||
       params.get("approved") === "true" ||
       isApprovedStatus(params.get("status"))
@@ -124,11 +131,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   });
   const [serverConfig, setServerConfig] = useState<{ portalUrl?: string; publicKey?: string } | null>(null);
 
-  // Verification Modal state
+  // Single Verification Iframe Modal state (NO double popup)
   const [showModal, setShowModal] = useState(false);
   const [portalUrl, setPortalUrl] = useState<string>("");
-  const [isExternalPortal, setIsExternalPortal] = useState(false);
-  const [iframeError, setIframeError] = useState(false);
   const [checkStatusNotice, setCheckStatusNotice] = useState<string | null>(null);
 
   const onApprovedChangeRef = useRef(onApprovedChange);
@@ -138,7 +143,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
   const activeResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const pollingTimerRef = useRef<number | null>(null);
-  const popupRef = useRef<Window | null>(null);
 
   const publicKey = 
     serverConfig?.publicKey ||
@@ -166,21 +170,27 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       .catch(() => {});
   }, []);
 
-  const markApproved = useCallback((detail?: AgeCheckedResponse) => {
-    if (typeof window === "undefined") return;
-
-    window.localStorage.setItem(AGE_APPROVED_STORAGE_KEY, "true");
-    window.localStorage.setItem(AGE_APPROVED_AT_STORAGE_KEY, new Date().toISOString());
-    setApproved(true);
-    setIsChecking(false);
+  // Close the iframe modal cleanly
+  const closeAgeCheckedIframe = useCallback(() => {
     setShowModal(false);
-    setCheckStatusNotice(null);
-    
-    // Clear active polling timer
+    setPortalUrl("");
+    setIsChecking(false);
     if (pollingTimerRef.current) {
       window.clearInterval(pollingTimerRef.current);
       pollingTimerRef.current = null;
     }
+  }, []);
+
+  // Handle successful age verification
+  const markApproved = useCallback((detail?: AgeCheckedResponse) => {
+    if (typeof window === "undefined") return;
+
+    // 1. Immediately store verification in localStorage
+    try {
+      window.localStorage.setItem(AGE_APPROVED_STORAGE_KEY, "true");
+      window.localStorage.setItem(AGE_VERIFIED_STORAGE_KEY, "true");
+      window.localStorage.setItem(AGE_APPROVED_AT_STORAGE_KEY, new Date().toISOString());
+    } catch (_e) {}
 
     const resolvedAgeCheckId = 
       detail?.avstatus?.agecheckid ? String(detail.avstatus.agecheckid) : 
@@ -188,18 +198,41 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     
     if (resolvedAgeCheckId) {
       setAgecheckId(resolvedAgeCheckId);
-      window.localStorage.setItem("agechecked-id", resolvedAgeCheckId);
+      try {
+        window.localStorage.setItem("agechecked-id", resolvedAgeCheckId);
+      } catch (_e) {}
     }
+
+    // 2. Close modal immediately
+    closeAgeCheckedIframe();
+
+    // 3. Update React states
+    setApproved(true);
+    setCheckStatusNotice(null);
     setStatusMessage("Your age (18+) has been verified successfully.");
 
+    // 4. Resolve promise
     if (activeResolverRef.current) {
       activeResolverRef.current(true);
       activeResolverRef.current = null;
     }
 
+    // 5. Notify parent callback
     onApprovedChangeRef.current?.(true);
-    
-    // Dispatch Klaviyo Age Verified Event
+
+    // 6. Broadcast event to window & parent
+    try {
+      window.postMessage(
+        {
+          type: "AGECHECKED_VERIFIED",
+          verified: true,
+          data: detail
+        },
+        window.location.origin
+      );
+    } catch (_e) {}
+
+    // 7. Klaviyo tracking
     try {
       trackAgeVerified({
         agecheck_id: resolvedAgeCheckId,
@@ -207,7 +240,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         verified_at: new Date().toISOString(),
       });
     } catch (_e) {}
-  }, [customerData?.email]);
+  }, [closeAgeCheckedIframe, customerData?.email]);
 
   // Query server status endpoint directly
   const pollServerStatus = useCallback(async (refToTest?: string, idToTest?: string, emailToTest?: string): Promise<boolean> => {
@@ -246,10 +279,12 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const storedValue = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const storedApproved = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
     const params = new URLSearchParams(window.location.search);
     const isApprovedFromParam =
-      storedValue === "true" ||
+      storedApproved === "true" ||
+      storedVerified === "true" ||
       params.get("agechecked") === "approved" ||
       params.get("approved") === "true" ||
       isApprovedStatus(params.get("status"));
@@ -261,38 +296,12 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     }
   }, [approved, markApproved]);
 
-  // Sync on window focus and tab visibility change
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const handleCheckOnFocus = () => {
-      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-      if (stored === "true") {
-        markApproved();
-        return;
-      }
-      if (!approved) {
-        pollServerStatus();
-      }
-    };
-
-    window.addEventListener("focus", handleCheckOnFocus);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        handleCheckOnFocus();
-      }
-    });
-
-    return () => {
-      window.removeEventListener("focus", handleCheckOnFocus);
-    };
-  }, [approved, markApproved, pollServerStatus]);
-
-  // Listen to postMessage, storage events & BroadcastChannel
+  // Listen to postMessage from AgeChecked GetID iframe, storage events & BroadcastChannel
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const handleMessage = (event: MessageEvent) => {
+      // Validate origin if coming from AgeChecked domain or local
       let payload = event.data;
       if (typeof payload === "string") {
         try {
@@ -308,11 +317,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
             lowerStr === "success" ||
             lowerStr === "continue"
           ) {
-            if (popupRef.current && !popupRef.current.closed) {
-              try {
-                popupRef.current.close();
-              } catch (_e) {}
-            }
             markApproved();
             return;
           }
@@ -321,24 +325,19 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
       if (!payload || typeof payload !== "object") return;
 
-      // Handle official AgeChecked GetID postMessage event format
-      if ("getidEventName" in payload) {
-        const eventName = String(payload.getidEventName || "").toLowerCase();
+      // Handle official AgeChecked GetID event format
+      const eventName = payload.getidEventName || payload.eventName || payload.event;
+      if (eventName) {
+        const lowerEvent = String(eventName).toLowerCase();
         if (
-          eventName === "complete" ||
-          eventName === "exit" ||
-          eventName === "close" ||
-          eventName === "finish" ||
-          eventName === "continue" ||
-          eventName === "success" ||
-          eventName === "redirect"
+          lowerEvent === "complete" ||
+          lowerEvent === "exit" ||
+          lowerEvent === "close" ||
+          lowerEvent === "finish" ||
+          lowerEvent === "continue" ||
+          lowerEvent === "success" ||
+          lowerEvent === "redirect"
         ) {
-          if (popupRef.current && !popupRef.current.closed) {
-            try {
-              popupRef.current.close();
-            } catch (_e) {}
-          }
-
           const resolvedId = payload.data?.id || payload.data?.profileId || payload.data?.agecheckid || agecheckId || undefined;
           markApproved({
             avstatus: {
@@ -346,13 +345,26 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               status: "6",
               statustext: "Approved"
             },
-            agecheckid: resolvedId
+            agecheckid: resolvedId,
+            details: payload.data
           });
+          return;
+        }
+
+        if (lowerEvent === "fail" || lowerEvent === "error" || lowerEvent === "cancel") {
+          closeAgeCheckedIframe();
+          setCheckStatusNotice(payload.error || payload.message || "Age verification was not completed.");
+          if (activeResolverRef.current) {
+            activeResolverRef.current(false);
+            activeResolverRef.current = null;
+          }
           return;
         }
       }
 
+      // Handle standard AgeChecked broadcast / custom events
       const isApproved =
+        payload.type === "AGECHECKED_VERIFIED" ||
         payload.type === "agechecked-approved" ||
         payload.type === "agechecked_approved" ||
         payload.type === "AC_APPROVED" ||
@@ -366,10 +378,10 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         payload.action === "complete" ||
         payload.action === "approved" ||
         payload.action === "continue" ||
-        payload.action === "close" ||
         isApprovedStatus(payload.status) ||
         payload.approved === true ||
         payload.approved === "true" ||
+        payload.verified === true ||
         (typeof payload.statusText === "string" && isApprovedStatus(payload.statusText)) ||
         (typeof payload.statustext === "string" && isApprovedStatus(payload.statustext)) ||
         (payload.avstatus && (
@@ -379,17 +391,12 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         ));
 
       if (isApproved) {
-        if (popupRef.current && !popupRef.current.closed) {
-          try {
-            popupRef.current.close();
-          } catch (_e) {}
-        }
         markApproved(payload as AgeCheckedResponse);
       }
     };
 
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === AGE_APPROVED_STORAGE_KEY && e.newValue === "true") {
+      if ((e.key === AGE_APPROVED_STORAGE_KEY || e.key === AGE_VERIFIED_STORAGE_KEY) && e.newValue === "true") {
         markApproved();
       }
     };
@@ -402,7 +409,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       if (typeof BroadcastChannel !== "undefined") {
         bc = new BroadcastChannel("agechecked_channel");
         bc.onmessage = (ev) => {
-          if (ev.data && (ev.data.type === "agechecked-approved" || ev.data.approved === true || ev.data.status === "approved")) {
+          if (ev.data && (ev.data.type === "agechecked-approved" || ev.data.approved === true || ev.data.status === "approved" || ev.data.verified === true)) {
             markApproved(ev.data);
           }
         };
@@ -416,48 +423,34 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         bc.close();
       }
     };
-  }, [markApproved, agecheckId]);
+  }, [markApproved, closeAgeCheckedIframe, agecheckId]);
 
   const resetApproval = () => {
     if (typeof window === "undefined") return;
 
     window.localStorage.removeItem(AGE_APPROVED_STORAGE_KEY);
+    window.localStorage.removeItem(AGE_VERIFIED_STORAGE_KEY);
     window.localStorage.removeItem(AGE_APPROVED_AT_STORAGE_KEY);
     window.localStorage.removeItem("agechecked-id");
     setApproved(false);
     setIsChecking(false);
     setAgecheckId(null);
     setShowModal(false);
+    setPortalUrl("");
     setCheckStatusNotice(null);
-    setStatusMessage("Age verification (18+) is required to complete your order.");
+    setStatusMessage("Under UK law, 18+ age verification is required before checkout.");
     onApprovedChangeRef.current?.(false);
   };
 
-  const launchPopupWindow = (url: string) => {
-    try {
-      const width = 540;
-      const height = 740;
-      const left = window.screen.width ? (window.screen.width - width) / 2 : 100;
-      const top = window.screen.height ? (window.screen.height - height) / 2 : 100;
-      const popup = window.open(
-        url,
-        "AgeCheckedVerification",
-        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,resizable=yes,location=no,status=no`
-      );
-      popupRef.current = popup;
-      if (popup) {
-        popup.focus();
-      }
-    } catch (_e) {
-      // Popup blocked or not permitted
-    }
-  };
-
+  // Open the single AgeChecked verification portal iframe
   const openPortal = async (): Promise<boolean> => {
     if (typeof window === "undefined") return approved;
 
     // Check localStorage immediately
-    if (window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true") {
+    if (
+      window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
+      window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
+    ) {
       setApproved(true);
       return true;
     }
@@ -514,8 +507,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           (data as { url?: string }).url ||
           (data as { redirectUrl?: string }).redirectUrl ||
           (data as { redirect_url?: string }).redirect_url;
-        const providerMessage =
-          data?.error?.message || data?.message || data?.avstatus?.statusText || data?.avstatus?.statustext;
 
         if (!finalRedirectUrl && publicKey) {
           finalRedirectUrl = getPortalUrl(
@@ -526,22 +517,21 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }
 
         if (!finalRedirectUrl) {
-          // Fallback to interactive demo-portal
+          // Default to interactive demo portal
           finalRedirectUrl = `/api/agechecked/demo-portal?reference=${encodeURIComponent(sessionRef)}&email=${encodeURIComponent(customerData?.email || '')}&name=${encodeURIComponent(firstName)}&surname=${encodeURIComponent(lastName)}`;
+        }
+
+        // Ensure embedded=true param exists on iframe url
+        if (!finalRedirectUrl.includes("embedded=true")) {
+          const sep = finalRedirectUrl.includes("?") ? "&" : "?";
+          finalRedirectUrl = `${finalRedirectUrl}${sep}embedded=true`;
         }
 
         const resolvedSessionId = data?.avstatus?.agecheckid ? String(data.avstatus.agecheckid) : `AC-${Date.now()}`;
         setAgecheckId(resolvedSessionId);
 
-        const isExternal = finalRedirectUrl.startsWith("http://") || (finalRedirectUrl.startsWith("https://") && !finalRedirectUrl.includes(window.location.host));
-        setIsExternalPortal(isExternal);
+        // Display ONLY ONE iframe modal (NO double window.open!)
         setPortalUrl(finalRedirectUrl);
-        setIframeError(false);
-
-        // Open popup window
-        launchPopupWindow(finalRedirectUrl);
-
-        // Show verification modal
         setShowModal(true);
         setStatusMessage("Please complete age verification (18+) in the AgeChecked window.");
 
@@ -551,7 +541,10 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }
 
         pollingTimerRef.current = window.setInterval(async () => {
-          if (window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true") {
+          if (
+            window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
+            window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
+          ) {
             if (pollingTimerRef.current) {
               window.clearInterval(pollingTimerRef.current);
               pollingTimerRef.current = null;
@@ -571,7 +564,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }, 800);
 
       } catch (error) {
-        setStatusMessage(error instanceof Error ? error.message : "Age verification failed.");
+        setStatusMessage(error instanceof Error ? error.message : "Age verification connection failed.");
         setIsChecking(false);
         setShowModal(false);
         if (activeResolverRef.current) {
@@ -587,7 +580,10 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     setCheckStatusNotice(null);
     
     // Check localStorage first
-    if (window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true") {
+    if (
+      window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
+      window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
+    ) {
       markApproved();
       return;
     }
@@ -598,8 +594,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (verified) {
       markApproved();
     } else {
-      // Real check failed: inform the user without fake bypass
-      setCheckStatusNotice("Verification status: Pending. Please complete the ID check in the verification window to verify your age (18+).");
+      setCheckStatusNotice("Verification status: Pending. Please complete the ID check to verify your age (18+).");
     }
   };
 
@@ -659,7 +654,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         {!approved ? (
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-medium text-amber-900/80">
-              Click <strong className="font-bold text-amber-950">Pay with Worldpay</strong> to start official 18+ ID check.
+              Click <strong className="font-bold text-amber-950">Pay with Worldpay</strong> to start 18+ ID check.
             </span>
           </div>
         ) : (
@@ -671,14 +666,24 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
         <div className="flex items-center gap-2">
           {!approved ? (
-            <button
-              type="button"
-              onClick={manualConfirmCheck}
-              disabled={isChecking}
-              className="text-[11px] font-bold text-amber-900 hover:text-amber-950 underline flex items-center gap-1 cursor-pointer"
-            >
-              <RefreshCw className={`h-3 w-3 ${isChecking ? 'animate-spin' : ''}`} /> Check Status
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => openPortal()}
+                disabled={isChecking}
+                className="text-[11px] font-bold bg-amber-200/80 hover:bg-amber-300 text-amber-950 px-3 py-1 rounded-lg transition cursor-pointer"
+              >
+                Verify Now
+              </button>
+              <button
+                type="button"
+                onClick={manualConfirmCheck}
+                disabled={isChecking}
+                className="text-[11px] font-bold text-amber-900 hover:text-amber-950 underline flex items-center gap-1 cursor-pointer"
+              >
+                <RefreshCw className={`h-3 w-3 ${isChecking ? 'animate-spin' : ''}`} /> Check Status
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -704,12 +709,16 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         </p>
       )}
 
-      {/* AgeChecked Verification Modal */}
+      {/* Single AgeChecked Verification Modal Overlay */}
       {showModal && portalUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
-          <div className="relative w-full max-w-lg bg-[#071d37] border border-sky-800/80 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-            {/* Modal Header */}
-            <div className="px-5 py-3.5 bg-[#0d284c] border-b border-sky-900/60 flex items-center justify-between">
+        <div
+          id="agecheck-container"
+          className="fixed inset-0 z-9999 flex items-center justify-center bg-black/65 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in"
+          style={{ zIndex: 9999 }}
+        >
+          <div className="relative w-full max-w-[900px] h-[640px] max-h-[92vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-700/30">
+            {/* Top Bar with Clean Header and Close Button */}
+            <div className="px-5 py-3 bg-[#0d284c] border-b border-sky-900/60 flex items-center justify-between text-white shrink-0">
               <div className="flex items-center gap-2.5">
                 <span className="p-1.5 rounded-lg bg-sky-500/20 text-sky-400">
                   <ShieldCheck className="h-4 w-4" />
@@ -721,112 +730,25 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setShowModal(false);
-                  setIsChecking(false);
-                  if (activeResolverRef.current) {
-                    activeResolverRef.current(false);
-                    activeResolverRef.current = null;
-                  }
-                }}
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-sky-900/50 transition cursor-pointer"
+                onClick={closeAgeCheckedIframe}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-sky-900/50 transition cursor-pointer"
                 title="Close"
               >
-                <X className="h-4.5 w-4.5" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="relative w-full flex-1 p-6 bg-[#071d37] overflow-y-auto">
-              {!isExternalPortal && !iframeError ? (
-                /* Interactive In-App Scanner Portal */
-                <div className="w-full rounded-2xl overflow-hidden border border-sky-900/50 bg-[#0d284c] min-h-[480px]">
-                  <iframe
-                    id="agecheck-iframe"
-                    src={portalUrl}
-                    title="AgeChecked Verification Portal"
-                    frameBorder="0"
-                    allow="camera; microphone; autoplay; encrypted-media; geolocation"
-                    onError={() => setIframeError(true)}
-                    className="w-full h-[480px] border-0"
-                  />
-                </div>
-              ) : (
-                /* External / Popup Window Guidance Interface */
-                <div className="text-center py-4 space-y-5">
-                  <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
-                    <div className="absolute inset-0 rounded-full bg-sky-500/20 animate-ping" />
-                    <div className="relative w-16 h-16 rounded-full bg-sky-500/20 border-2 border-sky-400 flex items-center justify-center text-sky-300">
-                      <Camera className="h-7 w-7" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 max-w-sm mx-auto">
-                    <h3 className="text-lg font-black text-white">AgeChecked ID Scanner Active</h3>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      Please complete your 18+ document scan in the secure AgeChecked window.
-                    </p>
-                  </div>
-
-                  <div className="bg-[#0d284c] border border-sky-900/60 rounded-2xl p-4 text-left space-y-2.5 max-w-sm mx-auto">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-sky-300">
-                      <FileCheck className="h-4 w-4 shrink-0 text-sky-400" />
-                      <span>Accepted Documents:</span>
-                    </div>
-                    <ul className="text-[11px] text-slate-300 space-y-1 list-disc list-inside">
-                      <li>UK Driving Licence (Full or Provisional)</li>
-                      <li>UK or International Passport</li>
-                      <li>PASS Card / CitizenCard</li>
-                    </ul>
-                  </div>
-
-                  <div className="pt-2 flex flex-col gap-2.5 max-w-sm mx-auto">
-                    <button
-                      type="button"
-                      onClick={() => launchPopupWindow(portalUrl)}
-                      className="w-full py-3.5 px-4 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <span>Re-Open Verification Window</span>
-                      <ExternalLink className="h-4 w-4" />
-                    </button>
-                    
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Switch to in-app portal fallback
-                        const fallbackUrl = `/api/agechecked/demo-portal?reference=${encodeURIComponent(currentReference || '')}&email=${encodeURIComponent(customerData?.email || '')}`;
-                        setPortalUrl(fallbackUrl);
-                        setIsExternalPortal(false);
-                        setIframeError(false);
-                      }}
-                      className="text-xs text-sky-400 hover:text-sky-300 underline font-semibold py-1 cursor-pointer"
-                    >
-                      Switch to In-App ID Scanner
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {checkStatusNotice && (
-                <div className="mt-4 p-3 bg-amber-950/60 border border-amber-700/80 rounded-xl text-xs text-amber-200 flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
-                  <span>{checkStatusNotice}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-5 py-3.5 bg-[#0a1e38] border-t border-sky-900/40 flex items-center justify-between text-xs text-slate-400">
-              <span className="text-[11px]">Auto-updates upon scan completion.</span>
-              <button
-                type="button"
-                onClick={manualConfirmCheck}
-                disabled={isChecking}
-                className="text-[11px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1.5 cursor-pointer underline"
-              >
-                <RefreshCw className={`h-3 w-3 ${isChecking ? 'animate-spin' : ''}`} />
-                <span>Check Status</span>
-              </button>
+            {/* AgeChecked Iframe */}
+            <div className="relative w-full flex-1 bg-[#071d37]">
+              <iframe
+                id="agecheck"
+                src={portalUrl}
+                title="AgeChecked Verification"
+                frameBorder="0"
+                allow="camera; microphone; autoplay; encrypted-media; fullscreen"
+                allowFullScreen
+                className="w-full h-full border-0 bg-transparent"
+              />
             </div>
           </div>
         </div>

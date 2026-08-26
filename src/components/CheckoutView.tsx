@@ -81,10 +81,12 @@ export default function CheckoutView({
   const [isAgeApproved, setIsAgeApproved] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     const stored = window.localStorage.getItem('agechecked-approved');
+    const storedVerified = window.localStorage.getItem('ageVerified');
     const params = new URLSearchParams(window.location.search);
     const statusParam = (params.get('status') || '').toLowerCase();
     return (
       stored === 'true' ||
+      storedVerified === 'true' ||
       params.get('agechecked') === 'approved' ||
       params.get('approved') === 'true' ||
       statusParam === '6' ||
@@ -95,13 +97,14 @@ export default function CheckoutView({
     );
   });
 
-  // Keep isAgeApproved synchronized with localStorage & storage events
+  // Keep isAgeApproved synchronized with localStorage, message events & storage events
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const checkAgeApprovedStorage = () => {
       const stored = window.localStorage.getItem('agechecked-approved');
-      if (stored === 'true') {
+      const storedVerified = window.localStorage.getItem('ageVerified');
+      if (stored === 'true' || storedVerified === 'true') {
         setIsAgeApproved(true);
         setPaymentError(null);
       }
@@ -110,7 +113,7 @@ export default function CheckoutView({
     checkAgeApprovedStorage();
 
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'agechecked-approved') {
+      if (e.key === 'agechecked-approved' || e.key === 'ageVerified') {
         const approved = e.newValue === 'true';
         setIsAgeApproved(approved);
         if (approved) {
@@ -119,11 +122,40 @@ export default function CheckoutView({
       }
     };
 
+    const handleMessage = (event: MessageEvent) => {
+      if (!event.data) return;
+      let data = event.data;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch (_e) {
+          if (data === 'agechecked-approved' || data === 'AGECHECKED_VERIFIED') {
+            setIsAgeApproved(true);
+            setPaymentError(null);
+            return;
+          }
+        }
+      }
+
+      if (
+        data?.type === 'AGECHECKED_VERIFIED' ||
+        data?.type === 'agechecked-approved' ||
+        data?.getidEventName === 'complete' ||
+        data?.approved === true ||
+        data?.verified === true
+      ) {
+        setIsAgeApproved(true);
+        setPaymentError(null);
+      }
+    };
+
     window.addEventListener('storage', handleStorage);
+    window.addEventListener('message', handleMessage);
     window.addEventListener('focus', checkAgeApprovedStorage);
 
     return () => {
       window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('message', handleMessage);
       window.removeEventListener('focus', checkAgeApprovedStorage);
     };
   }, []);

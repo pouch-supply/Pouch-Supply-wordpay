@@ -514,6 +514,7 @@ router.get("/demo-portal", (req: Request, res: Response) => {
             setTimeout(async () => {
               try {
                 localStorage.setItem('agechecked-approved', 'true');
+                localStorage.setItem('ageVerified', 'true');
                 localStorage.setItem('agechecked-verified-at', new Date().toISOString());
                 localStorage.setItem('agechecked-id', '${agecheckid}');
               } catch(e) {}
@@ -546,7 +547,7 @@ router.get("/demo-portal", (req: Request, res: Response) => {
               try {
                 if (typeof BroadcastChannel !== 'undefined') {
                   const bc = new BroadcastChannel('agechecked_channel');
-                  bc.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true });
+                  bc.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true, verified: true });
                   bc.close();
                 }
               } catch(e) {}
@@ -555,6 +556,7 @@ router.get("/demo-portal", (req: Request, res: Response) => {
               targets.forEach(target => {
                 try {
                   target.postMessage(payload, '*');
+                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, data: payload.data }, '*');
                   target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true }, '*');
                   target.postMessage('agechecked-approved', '*');
                 } catch(e) {}
@@ -563,9 +565,9 @@ router.get("/demo-portal", (req: Request, res: Response) => {
               document.getElementById('step-scan').classList.add('hidden');
               document.getElementById('step-confirmed').classList.remove('hidden');
 
-              // Auto finish in 1s
-              setTimeout(finishAndClose, 1200);
-            }, 1400);
+              // Auto finish in 0.5s
+              setTimeout(finishAndClose, 500);
+            }, 1200);
           }
 
           function finishAndClose() {
