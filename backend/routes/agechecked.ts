@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { prisma } from '../../src/lib/prisma';
 
 const router = Router();
 
@@ -25,6 +26,7 @@ function isApprovedStatus(status?: string | null | number): boolean {
     normalized === "true" ||
     normalized === "6" ||
     normalized === "7" ||
+    normalized === "1" ||
     normalized === "verified" ||
     normalized === "pass" ||
     normalized === "passed" ||
@@ -33,7 +35,10 @@ function isApprovedStatus(status?: string | null | number): boolean {
     normalized === "complete" ||
     normalized === "valid" ||
     normalized === "validated" ||
-    normalized === "ok"
+    normalized === "ok" ||
+    normalized === "pass_18" ||
+    normalized === "pass_21" ||
+    normalized === "accepted"
   );
 }
 
@@ -95,16 +100,125 @@ function buildPayloads(secretKey: string, body: Record<string, any>) {
 // In-memory verification cache for active session references, emails, and agecheck IDs
 const verifiedSessions = new Map<string, { approved: boolean; agecheckid: string; email?: string; timestamp: number }>();
 
-// Helper to record approval across all available identifiers
-function recordSessionApproval(keys: (string | undefined | null)[], agecheckid: string, email?: string) {
-  const record = { approved: true, agecheckid, email: email?.toLowerCase().trim(), timestamp: Date.now() };
-  if (agecheckid) verifiedSessions.set(agecheckid.trim(), record);
-  if (email) verifiedSessions.set(email.toLowerCase().trim(), record);
+// Helper to record approval across in-memory cache and PostgreSQL database
+async function persistAgeVerification(keys: (string | undefined | null)[], agecheckid: string, email?: string, metadata?: Record<string, any>) {
+  const normalizedAgeCheckId = agecheckid || `AC-${Date.now()}`;
+  const normalizedEmail = email ? email.toLowerCase().trim() : undefined;
+
+  const record = { approved: true, agecheckid: normalizedAgeCheckId, email: normalizedEmail, timestamp: Date.now() };
+  if (normalizedAgeCheckId) verifiedSessions.set(normalizedAgeCheckId.trim(), record);
+  if (normalizedEmail) verifiedSessions.set(normalizedEmail, record);
   for (const k of keys) {
     if (k && typeof k === 'string' && k.trim()) {
       verifiedSessions.set(k.trim(), record);
     }
   }
+
+  // Persist to PostgreSQL database
+  try {
+    const verifiedPayload = {
+      approved: true,
+      verified: true,
+      agecheckid: normalizedAgeCheckId,
+      email: normalizedEmail || null,
+      keys: keys.filter((k): k is string => Boolean(k && typeof k === 'string' && k.trim())),
+      verifiedAt: new Date().toISOString(),
+      provider: "AgeChecked",
+      ...metadata
+    };
+
+    const validKeys = Array.from(new Set([
+      normalizedAgeCheckId,
+      normalizedEmail,
+      ...keys.filter((k): k is string => Boolean(k && typeof k === 'string' && k.trim()))
+    ].filter(Boolean) as string[]));
+
+    for (const key of validKeys) {
+      try {
+        await prisma.storeResource.upsert({
+          where: {
+            resource_itemId: {
+              resource: "age_verification",
+              itemId: key
+            }
+          },
+          update: {
+            data: verifiedPayload,
+            updatedAt: new Date()
+          },
+          create: {
+            resource: "age_verification",
+            itemId: key,
+            data: verifiedPayload
+          }
+        });
+      } catch (_storeErr) {}
+    }
+
+    // Update customer in database if email is provided
+    if (normalizedEmail) {
+      try {
+        const existingCustomer = await prisma.customer.findUnique({
+          where: { email: normalizedEmail }
+        });
+        if (existingCustomer) {
+          const currentData = (existingCustomer.data && typeof existingCustomer.data === 'object') ? (existingCustomer.data as Record<string, any>) : {};
+          await prisma.customer.update({
+            where: { email: normalizedEmail },
+            data: {
+              data: {
+                ...currentData,
+                ageVerified: true,
+                ageChecked: true,
+                ageCheckId: normalizedAgeCheckId,
+                ageVerifiedAt: new Date().toISOString()
+              }
+            }
+          });
+        }
+      } catch (_custErr) {}
+    }
+  } catch (err) {
+    console.error("[AgeChecked] DB persistence error:", err);
+  }
+}
+
+// Helper to check DB for persistent age verification record
+async function checkAgeVerificationDb(keys: (string | undefined | null)[]): Promise<{ approved: boolean; agecheckid: string } | null> {
+  const validKeys = Array.from(new Set(keys.filter((k): k is string => Boolean(k && typeof k === 'string' && k.trim()))));
+  if (validKeys.length === 0) return null;
+
+  try {
+    const records = await prisma.storeResource.findMany({
+      where: {
+        resource: "age_verification",
+        itemId: { in: validKeys }
+      }
+    });
+
+    if (records.length > 0) {
+      const data = records[0].data as any;
+      if (data && (data.approved === true || data.verified === true)) {
+        return { approved: true, agecheckid: data.agecheckid || records[0].itemId };
+      }
+    }
+
+    // Check Customer table directly
+    const emailKey = validKeys.find(k => k.includes('@'));
+    if (emailKey) {
+      const customer = await prisma.customer.findUnique({
+        where: { email: emailKey.toLowerCase().trim() }
+      });
+      if (customer && customer.data && typeof customer.data === 'object') {
+        const custData = customer.data as Record<string, any>;
+        if (custData.ageVerified === true || custData.ageChecked === true) {
+          return { approved: true, agecheckid: custData.ageCheckId || `AC-${customer.id}` };
+        }
+      }
+    }
+  } catch (_dbErr) {}
+
+  return null;
 }
 
 // POST /api/agechecked/init - Initialize AgeChecked AC0130 session
@@ -193,7 +307,7 @@ router.post("/init", async (req: Request, res: Response) => {
   });
 });
 
-// GET /api/agechecked/status - Polling endpoint for checkout window
+// GET /api/agechecked/status - Polling endpoint for checkout and client components
 router.get("/status", async (req: Request, res: Response) => {
   const reference = String(req.query.reference || "").trim();
   const agecheckid = String(req.query.agecheckid || "").trim();
@@ -215,7 +329,15 @@ router.get("/status", async (req: Request, res: Response) => {
     return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
   }
 
-  // 2. If AGECHECKED_SECRET_KEY is configured and we have an agecheckid or reference, query AgeChecked AC0131
+  // 2. Check PostgreSQL database persistence
+  const dbRecord = await checkAgeVerificationDb([reference, agecheckid, email]);
+  if (dbRecord && dbRecord.approved) {
+    const resolvedId = dbRecord.agecheckid || agecheckid || `AC-${Date.now()}`;
+    await persistAgeVerification([reference, agecheckid, email], resolvedId, email);
+    return res.json({ success: true, approved: true, agecheckid: resolvedId, status: "6", statusText: "Approved" });
+  }
+
+  // 3. If AGECHECKED_SECRET_KEY is configured and we have an agecheckid or reference, query AgeChecked AC0131
   const secretKey = normalizeSecretKey(process.env.AGECHECKED_SECRET_KEY);
   if (secretKey && (agecheckid || reference)) {
     try {
@@ -239,11 +361,12 @@ router.get("/status", async (req: Request, res: Response) => {
 
       if (checkRes.ok) {
         const checkData: any = await checkRes.json().catch(() => ({}));
-        const statusVal = checkData?.avstatus?.status ?? checkData?.status;
-        const statusText = checkData?.avstatus?.statustext ?? checkData?.avstatus?.statusText ?? checkData?.statustext;
-        if (isApprovedStatus(statusVal) || isApprovedStatus(statusText)) {
-          recordSessionApproval([reference, agecheckid, email], agecheckid || checkData?.avstatus?.agecheckid || `AC-${Date.now()}`, email);
-          return res.json({ success: true, approved: true, agecheckid: agecheckid || checkData?.avstatus?.agecheckid, status: "6", statusText: "Approved" });
+        const statusVal = checkData?.avstatus?.status ?? checkData?.status ?? checkData?.code ?? checkData?.result;
+        const statusText = checkData?.avstatus?.statustext ?? checkData?.avstatus?.statusText ?? checkData?.statustext ?? checkData?.statusText;
+        if (isApprovedStatus(statusVal) || isApprovedStatus(statusText) || checkData?.approved === true || checkData?.verified === true) {
+          const resolvedId = agecheckid || checkData?.avstatus?.agecheckid || checkData?.agecheckid || `AC-${Date.now()}`;
+          await persistAgeVerification([reference, agecheckid, email], resolvedId, email, checkData);
+          return res.json({ success: true, approved: true, agecheckid: resolvedId, status: "6", statusText: "Approved" });
         }
       }
     } catch (_err) {
@@ -251,18 +374,18 @@ router.get("/status", async (req: Request, res: Response) => {
     }
   }
 
-  // Return real pending status (never false approval)
+  // Return real pending status
   return res.json({ success: false, approved: false, status: "0", statusText: "Pending" });
 });
 
-// POST /api/agechecked/approve - Verified callback approval endpoint
-router.post("/approve", (req: Request, res: Response) => {
+// POST /api/agechecked/approve - Verified approval endpoint
+router.post("/approve", async (req: Request, res: Response) => {
   const { reference, email, agecheckid, verified, method } = req.body || {};
   
   // Only record if verified flag is true
-  if (verified === true || verified === "true") {
+  if (verified === true || verified === "true" || verified === 1 || verified === "1") {
     const resolvedAgeCheckId = agecheckid || `AC-${Date.now()}`;
-    recordSessionApproval([reference, email, resolvedAgeCheckId], resolvedAgeCheckId, email);
+    await persistAgeVerification([reference, email, resolvedAgeCheckId], resolvedAgeCheckId, email, { method });
     return res.json({ success: true, approved: true, agecheckid: resolvedAgeCheckId, method });
   }
 
@@ -479,7 +602,7 @@ router.get("/demo-portal", (req: Request, res: Response) => {
               Age Verified (18+ Approved)
             </div>
             <h1>Verification Complete</h1>
-            <p>Your ID documents have been successfully verified with AgeChecked. Returning to checkout...</p>
+            <p>Your ID documents have been successfully verified with AgeChecked. Closing window and returning to checkout...</p>
             <button type="button" class="btn-primary" style="background: #10b981;" onclick="finishAndClose()">
               Continue to Payment →
             </button>
@@ -512,7 +635,6 @@ router.get("/demo-portal", (req: Request, res: Response) => {
             scanPrompt.classList.add('hidden');
             scanStatus.classList.remove('hidden');
 
-            // Simulate realistic document scanning delay (1.2s)
             setTimeout(async () => {
               try {
                 localStorage.setItem('agechecked-approved', 'true');
@@ -535,31 +657,40 @@ router.get("/demo-portal", (req: Request, res: Response) => {
                 });
               } catch(e) {}
 
-              // Notify parent window / opener
+              // Notify parent window / opener via BroadcastChannel & postMessage
+              try {
+                if (typeof BroadcastChannel !== 'undefined') {
+                  const bc = new BroadcastChannel('agechecked_channel');
+                  bc.postMessage({ 
+                    type: 'agechecked-approved', 
+                    status: 'approved', 
+                    agecheckid: '${agecheckid}', 
+                    reference: '${reference}',
+                    email: '${email}',
+                    approved: true, 
+                    verified: true 
+                  });
+                  bc.close();
+                }
+              } catch(e) {}
+
               const payload = {
                 getidEventName: 'complete',
                 data: {
                   id: '${agecheckid}',
                   status: 'approved',
                   agecheckid: '${agecheckid}',
+                  reference: '${reference}',
                   method: selectedDocName
                 }
               };
-
-              try {
-                if (typeof BroadcastChannel !== 'undefined') {
-                  const bc = new BroadcastChannel('agechecked_channel');
-                  bc.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true, verified: true });
-                  bc.close();
-                }
-              } catch(e) {}
 
               const targets = [window.opener, window.parent, window.top].filter(t => t && t !== window);
               targets.forEach(target => {
                 try {
                   target.postMessage(payload, '*');
-                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, data: payload.data }, '*');
-                  target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true }, '*');
+                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, approved: true, data: payload.data }, '*');
+                  target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true, verified: true }, '*');
                   target.postMessage('agechecked-approved', '*');
                 } catch(e) {}
               });
@@ -567,9 +698,9 @@ router.get("/demo-portal", (req: Request, res: Response) => {
               document.getElementById('step-scan').classList.add('hidden');
               document.getElementById('step-confirmed').classList.remove('hidden');
 
-              // Auto finish in 0.5s
-              setTimeout(finishAndClose, 500);
-            }, 1200);
+              // Automatically close window
+              setTimeout(finishAndClose, 400);
+            }, 1000);
           }
 
           function finishAndClose() {
@@ -578,7 +709,7 @@ router.get("/demo-portal", (req: Request, res: Response) => {
             } catch(e) {}
             setTimeout(() => {
               if (!window.closed) {
-                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:12px;color:#10b981;">✓</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">You may now return to your checkout screen.</p></div></div>';
+                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:12px;color:#10b981;">✓</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">Verification complete. You may now return to your checkout screen.</p></div></div>';
               }
             }, 200);
           }
@@ -602,50 +733,135 @@ router.get("/demo-portal", (req: Request, res: Response) => {
   `);
 });
 
-// GET & POST /api/agechecked/callback
-const handleCallback = (req: Request, res: Response) => {
+// GET & POST /api/agechecked/callback and webhooks
+const handleCallback = async (req: Request, res: Response) => {
   const query = req.query || {};
   const body = req.body || {};
 
-  const status = String(query.status || query.statustext || body.status || body.statustext || body.avstatus?.status || body.avstatus?.statustext || "");
-  const statusText = String(query.statusText || query.statustext || body.statusText || body.statustext || body.avstatus?.statusText || body.avstatus?.statustext || "");
-  const agecheckid = String(query.agecheckid || query.ageverifiedid || query.id || body.agecheckid || body.avstatus?.agecheckid || body.id || `AC-${Date.now()}`);
-  const reference = String(query.reference || query.ref || query.userfield1 || body.reference || body.ref || body.userfield1 || "");
-  const email = String(query.email || query.userfield2 || body.email || body.userfield2 || "");
+  const status = String(
+    query.status || 
+    query.statustext || 
+    query.code ||
+    query.result ||
+    query.action ||
+    body.status || 
+    body.statustext || 
+    body.code ||
+    body.result ||
+    body.action ||
+    body.avstatus?.status || 
+    body.avstatus?.statustext || 
+    body.data?.status ||
+    ""
+  );
 
-  const approved = isApprovedStatus(status) || isApprovedStatus(statusText) || query.approved === "true" || query.agechecked === "approved" || body.approved === true || statusText.toLowerCase() === "approved" || req.path.includes("pass") || req.path.includes("success") || req.path.includes("complete");
+  const statusText = String(
+    query.statusText || 
+    query.statustext || 
+    body.statusText || 
+    body.statustext || 
+    body.avstatus?.statusText || 
+    body.avstatus?.statustext || 
+    body.data?.statusText ||
+    ""
+  );
+
+  const agecheckid = String(
+    query.agecheckid || 
+    query.ageverifiedid || 
+    query.id || 
+    query.checkid ||
+    query.verificationId ||
+    body.agecheckid || 
+    body.avstatus?.agecheckid || 
+    body.id || 
+    body.verificationId ||
+    `AC-${Date.now()}`
+  );
+
+  const reference = String(
+    query.reference || 
+    query.ref || 
+    query.userfield1 || 
+    query.orderRef ||
+    query.order_id ||
+    body.reference || 
+    body.ref || 
+    body.userfield1 || 
+    body.orderRef ||
+    ""
+  );
+
+  const email = String(
+    query.email || 
+    query.userfield2 || 
+    body.email || 
+    body.userfield2 || 
+    ""
+  );
+
+  const returnUrl = String(
+    query.returnUrl || 
+    query.redirectUrl || 
+    body.returnUrl || 
+    body.redirectUrl || 
+    "/pages/checkout"
+  );
+
+  const approved = 
+    isApprovedStatus(status) || 
+    isApprovedStatus(statusText) || 
+    query.approved === "true" || 
+    query.agechecked === "approved" || 
+    query.verified === "true" ||
+    body.approved === true || 
+    body.verified === true ||
+    statusText.toLowerCase() === "approved" || 
+    req.path.includes("pass") || 
+    req.path.includes("success") || 
+    req.path.includes("complete");
 
   if (approved) {
-    recordSessionApproval([reference, agecheckid, query.userfield1, query.userfield2, body.userfield1, body.userfield2], agecheckid, email);
+    await persistAgeVerification(
+      [reference, agecheckid, query.userfield1, query.userfield2, body.userfield1, body.userfield2], 
+      agecheckid, 
+      email,
+      { query, body }
+    );
   }
 
   const wantsJson = (req.query.format === "json" || req.headers.accept === "application/json") && !req.headers.accept?.includes("text/html");
   if (wantsJson) {
     return res.json({
       approved,
+      verified: approved,
       agecheckid,
       status,
-      statusText,
+      statusText: statusText || (approved ? "Approved" : "Pending"),
       reference,
       receivedAt: new Date().toISOString()
     });
   }
 
-  res.setHeader("Content-Type", "text/html");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.removeHeader("X-Frame-Options");
+  res.setHeader("Content-Security-Policy", "frame-ancestors * 'self'");
   res.send(`
     <!DOCTYPE html>
     <html>
       <head>
+        <meta charset="utf-8">
         <title>AgeChecked Verification Complete</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #071d37; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+          * { box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #071d37; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
           .card { background: #0d284c; border: 1px solid ${approved ? '#10b981' : '#f43f5e'}; border-radius: 24px; padding: 32px 24px; max-width: 440px; width: 100%; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
           .icon { width: 56px; height: 56px; background: ${approved ? 'rgba(34,197,94,0.15)' : 'rgba(244,63,94,0.15)'}; border: 2px solid ${approved ? '#22c55e' : '#f43f5e'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; color: ${approved ? '#22c55e' : '#f43f5e'}; font-size: 28px; }
           .badge { display: inline-flex; align-items: center; gap: 6px; background: ${approved ? '#22c55e' : '#f43f5e'}; color: ${approved ? '#052e16' : '#ffffff'}; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
           h1 { font-size: 22px; margin: 0 0 10px 0; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
           p { font-size: 13.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 24px; }
-          .btn-continue { background: #0284c7; color: #ffffff; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(2,132,199,0.4); }
+          .btn-continue { background: #0284c7; color: #ffffff; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(2,132,199,0.4); text-decoration: none; }
           .btn-continue:hover { background: #0369a1; transform: translateY(-1px); }
           .ref { font-family: monospace; font-size: 11px; color: #64748b; margin-top: 20px; }
         </style>
@@ -655,32 +871,75 @@ const handleCallback = (req: Request, res: Response) => {
           <div class="icon">${approved ? '✓' : '⚠️'}</div>
           <div class="badge">${approved ? 'Verified 18+' : 'Incomplete'}</div>
           <h1>${approved ? 'Verification Successful' : 'Verification Incomplete'}</h1>
-          <p>${approved ? 'Your age documents have been verified successfully. Returning to checkout...' : 'Verification could not be confirmed. Please return to checkout and try again.'}</p>
-          <button class="btn-continue" onclick="finishAndClose()">Continue →</button>
+          <p>${approved ? 'Your age documents have been verified successfully. Closing window and returning to checkout...' : 'Verification could not be confirmed. Please return to checkout and try again.'}</p>
+          <a href="${returnUrl}" class="btn-continue" onclick="finishAndClose(event)">${approved ? 'Return to Checkout →' : 'Back to Checkout'}</a>
           <div class="ref">AgeChecked ID: ${agecheckid}</div>
         </div>
         <script>
-          try {
-            localStorage.setItem('agechecked-approved', '${approved ? "true" : "false"}');
-            if (${approved}) {
-              localStorage.setItem('agechecked-verified-at', new Date().toISOString());
-              localStorage.setItem('agechecked-id', '${agecheckid}');
-            }
-          } catch(e) {}
+          (function() {
+            const isApproved = ${approved ? "true" : "false"};
+            const ageCheckId = "${agecheckid}";
+            const sessionRef = "${reference}";
+            const customerEmail = "${email}";
 
-          function finishAndClose() {
+            if (isApproved) {
+              try {
+                localStorage.setItem('agechecked-approved', 'true');
+                localStorage.setItem('ageVerified', 'true');
+                localStorage.setItem('agechecked-verified-at', new Date().toISOString());
+                localStorage.setItem('agechecked-id', ageCheckId);
+              } catch(e) {}
+
+              // Notify BroadcastChannel
+              try {
+                if (typeof BroadcastChannel !== 'undefined') {
+                  const bc = new BroadcastChannel('agechecked_channel');
+                  bc.postMessage({ 
+                    type: 'agechecked-approved', 
+                    status: 'approved', 
+                    approved: true, 
+                    verified: true, 
+                    agecheckid: ageCheckId, 
+                    reference: sessionRef, 
+                    email: customerEmail 
+                  });
+                  bc.close();
+                }
+              } catch(e) {}
+
+              // Notify postMessage listeners (opener, parent, top)
+              const payload = {
+                getidEventName: 'complete',
+                data: { id: ageCheckId, status: 'approved', agecheckid: ageCheckId, reference: sessionRef }
+              };
+              const targets = [window.opener, window.parent, window.top].filter(t => t && t !== window);
+              targets.forEach(target => {
+                try {
+                  target.postMessage(payload, '*');
+                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, approved: true, data: { id: ageCheckId, agecheckid: ageCheckId, reference: sessionRef } }, '*');
+                  target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: ageCheckId, approved: true, verified: true }, '*');
+                  target.postMessage('agechecked-approved', '*');
+                } catch(e) {}
+              });
+
+              // Automatically close window immediately
+              try {
+                window.close();
+              } catch(e) {}
+
+              // Fallback timer to close or redirect if window remains open
+              setTimeout(function() {
+                try {
+                  window.close();
+                } catch(e) {}
+              }, 400);
+            }
+          })();
+
+          function finishAndClose(e) {
             try {
               window.close();
-            } catch(e) {}
-            setTimeout(function() {
-              if (!window.closed) {
-                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:16px;color:#22c55e;">✓</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">Verification complete. Returning to your checkout screen...</p></div></div>';
-              }
-            }, 200);
-          }
-
-          if (${approved}) {
-            setTimeout(finishAndClose, 500);
+            } catch(err) {}
           }
         </script>
       </body>
@@ -692,6 +951,12 @@ export { handleCallback };
 
 router.all("/callback", handleCallback);
 router.all("/callback/", handleCallback);
+router.all("/webhook", handleCallback);
+router.all("/webhook/", handleCallback);
+router.all("/notification", handleCallback);
+router.all("/notification/", handleCallback);
+router.all("/notify", handleCallback);
+router.all("/notify/", handleCallback);
 router.all("/pass", handleCallback);
 router.all("/pass/", handleCallback);
 router.all("/success", handleCallback);

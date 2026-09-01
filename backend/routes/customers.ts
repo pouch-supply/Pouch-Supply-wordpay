@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import { fetchResource, saveResource, getDb } from "../../serverDb";
 import { Customer } from "../../src/types";
+import { prisma } from "../../src/lib/prisma";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, sendLoginNotificationEmail } from "../services/emailService";
 import { trackCustomerSignup, trackEmailVerified } from "../services/klaviyoService";
 import { verifyRecaptchaToken } from "../services/recaptchaService";
@@ -16,6 +17,38 @@ function hashPassword(password: string): string {
     .digest("hex");
 }
 
+// Helper to enrich customer object with persistent age verification status
+async function enrichCustomerAgeStatus(customer: any) {
+  if (!customer || !customer.email) return customer;
+  const emailTrim = customer.email.trim().toLowerCase();
+
+  try {
+    const ageResource = await prisma.storeResource.findUnique({
+      where: {
+        resource_itemId: {
+          resource: "age_verification",
+          itemId: emailTrim
+        }
+      }
+    });
+
+    if (ageResource && ageResource.data) {
+      const data = ageResource.data as any;
+      if (data.approved === true || data.verified === true) {
+        return {
+          ...customer,
+          ageVerified: true,
+          ageChecked: true,
+          ageCheckId: data.agecheckid || customer.ageCheckId,
+          ageVerifiedAt: data.verifiedAt || customer.ageVerifiedAt
+        };
+      }
+    }
+  } catch (_e) {}
+
+  return customer;
+}
+
 // GET all customers (Admin use)
 router.get("/", async (req, res) => {
   try {
@@ -26,6 +59,29 @@ router.get("/", async (req, res) => {
   } catch (err: any) {
     console.error("[Customers Router] GET Error:", err);
     res.status(500).json({ error: err.message || "Failed to fetch customers" });
+  }
+});
+
+// GET customer by email
+router.get("/by-email", async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: "Email query parameter is required." });
+    }
+
+    const customersList = await fetchResource("customers");
+    const found: any = customersList.find((c: any) => c.email.toLowerCase() === email);
+
+    if (!found) {
+      return res.status(404).json({ error: "Customer not found." });
+    }
+
+    const { passwordHash, ...safeCustomer } = found;
+    const enriched = await enrichCustomerAgeStatus(safeCustomer);
+    res.json({ customer: enriched });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to fetch customer" });
   }
 });
 
@@ -400,9 +456,10 @@ router.post("/login", async (req, res) => {
 
     // Return authenticated customer details safely
     const { passwordHash, ...safeCustomer } = found;
+    const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     res.json({
       message: "Login successful!",
-      customer: safeCustomer
+      customer: enrichedCustomer
     });
   } catch (err: any) {
     console.error("[Customer Auth] Login Error:", err);
@@ -447,9 +504,10 @@ router.post("/google-login", async (req, res) => {
       sendLoginNotificationEmail(emailTrim, found.name).catch(e => console.warn('Login notification email error:', e));
 
       const { passwordHash, ...safeCustomer } = found;
+      const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
       return res.json({
         message: "Logged in via Google successfully!",
-        customer: safeCustomer
+        customer: enrichedCustomer
       });
     }
 
@@ -486,9 +544,10 @@ router.post("/google-login", async (req, res) => {
     sendWelcomeEmail(emailTrim, customerName, newReferralCode).catch(e => console.warn('Welcome email error:', e));
 
     const { passwordHash, ...safeCustomer } = newCustomer;
+    const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     return res.json({
       message: "Account created with Google!",
-      customer: safeCustomer
+      customer: enrichedCustomer
     });
   } catch (err: any) {
     console.error("[Customer Auth] Google Login Error:", err);

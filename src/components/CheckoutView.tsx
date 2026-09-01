@@ -97,16 +97,32 @@ export default function CheckoutView({
     );
   });
 
-  // Keep isAgeApproved synchronized with localStorage, message events & storage events
+  // Keep isAgeApproved synchronized with localStorage, message events, storage events & server DB
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const checkAgeApprovedStorage = () => {
+    const checkAgeApprovedStorage = async () => {
       const stored = window.localStorage.getItem('agechecked-approved');
       const storedVerified = window.localStorage.getItem('ageVerified');
       if (stored === 'true' || storedVerified === 'true') {
         setIsAgeApproved(true);
         setPaymentError(null);
+        return;
+      }
+
+      if (email && email.includes('@')) {
+        try {
+          const res = await fetch(`/api/agechecked/status?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.approved === true || data.status === '6' || data.status === '7' || data.success === true) {
+              window.localStorage.setItem('agechecked-approved', 'true');
+              window.localStorage.setItem('ageVerified', 'true');
+              setIsAgeApproved(true);
+              setPaymentError(null);
+            }
+          }
+        } catch (_err) {}
       }
     };
 
@@ -129,7 +145,7 @@ export default function CheckoutView({
         try {
           data = JSON.parse(data);
         } catch (_e) {
-          if (data === 'agechecked-approved' || data === 'AGECHECKED_VERIFIED') {
+          if (data === 'agechecked-approved' || data === 'AGECHECKED_VERIFIED' || data === 'approved') {
             setIsAgeApproved(true);
             setPaymentError(null);
             return;
@@ -142,23 +158,46 @@ export default function CheckoutView({
         data?.type === 'agechecked-approved' ||
         data?.getidEventName === 'complete' ||
         data?.approved === true ||
-        data?.verified === true
+        data?.verified === true ||
+        data?.status === 'approved' ||
+        data?.status === '6' ||
+        data?.status === '7'
       ) {
         setIsAgeApproved(true);
         setPaymentError(null);
       }
     };
 
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel('agechecked_channel');
+        bc.onmessage = (ev) => {
+          if (ev.data && (ev.data.type === 'agechecked-approved' || ev.data.approved === true || ev.data.status === 'approved' || ev.data.verified === true)) {
+            setIsAgeApproved(true);
+            setPaymentError(null);
+          }
+        };
+      }
+    } catch (_bcErr) {}
+
     window.addEventListener('storage', handleStorage);
     window.addEventListener('message', handleMessage);
     window.addEventListener('focus', checkAgeApprovedStorage);
+    window.addEventListener('pageshow', checkAgeApprovedStorage);
+    document.addEventListener('visibilitychange', checkAgeApprovedStorage);
 
     return () => {
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('message', handleMessage);
       window.removeEventListener('focus', checkAgeApprovedStorage);
+      window.removeEventListener('pageshow', checkAgeApprovedStorage);
+      document.removeEventListener('visibilitychange', checkAgeApprovedStorage);
+      if (bc) {
+        bc.close();
+      }
     };
-  }, []);
+  }, [email]);
 
   // Logging for development
   const [showLogs, setShowLogs] = useState(false);

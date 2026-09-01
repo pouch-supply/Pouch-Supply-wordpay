@@ -221,11 +221,42 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         {
           type: "AGECHECKED_VERIFIED",
           verified: true,
+          approved: true,
           data: detail
         },
         window.location.origin
       );
     } catch (_e) {}
+
+    // Broadcast across tabs/windows
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        const bc = new BroadcastChannel("agechecked_channel");
+        bc.postMessage({
+          type: "agechecked-approved",
+          status: "approved",
+          approved: true,
+          verified: true,
+          agecheckid: resolvedAgeCheckId,
+          email: customerData?.email
+        });
+        bc.close();
+      }
+    } catch (_e) {}
+
+    // Persist to server backend database
+    if (customerData?.email || currentReference || resolvedAgeCheckId) {
+      fetch("/api/agechecked/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reference: currentReference || customerData?.reference,
+          email: customerData?.email,
+          agecheckid: resolvedAgeCheckId,
+          verified: true
+        })
+      }).catch(() => {});
+    }
 
     // 7. Klaviyo tracking
     try {
@@ -235,10 +266,19 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         verified_at: new Date().toISOString(),
       });
     } catch (_e) {}
-  }, [customerData?.email, agecheckId]);
+  }, [customerData?.email, customerData?.reference, currentReference, agecheckId]);
 
   // Query server status endpoint directly
   const pollServerStatus = useCallback(async (refToTest?: string, idToTest?: string, emailToTest?: string): Promise<boolean> => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+      if (stored === "true" || storedVerified === "true") {
+        markApproved();
+        return true;
+      }
+    }
+
     const refParam = refToTest || currentReference || customerData?.reference || "";
     const idParam = idToTest || agecheckId || "";
     const emailParam = emailToTest || customerData?.email || "";
@@ -254,7 +294,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       const res = await fetch(`/api/agechecked/status?${queryParams.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.approved || data.success) {
+        if (data.approved === true || data.status === "6" || data.status === "7" || data.success === true) {
           markApproved({
             avstatus: {
               agecheckid: data.agecheckid || idParam || undefined,
@@ -270,7 +310,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     return false;
   }, [currentReference, customerData?.reference, customerData?.email, agecheckId, markApproved]);
 
-  // Sync with localStorage on mount & URL parameters
+  // Sync with localStorage & server on mount & when email/reference becomes available
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -288,8 +328,54 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       markApproved({
         avstatus: { agecheckid: params.get("agecheckid") || undefined }
       });
+      return;
     }
-  }, [approved, markApproved]);
+
+    if (!approved && (customerData?.email || customerData?.reference || agecheckId)) {
+      pollServerStatus();
+    }
+  }, [approved, customerData?.email, customerData?.reference, agecheckId, markApproved, pollServerStatus]);
+
+  // Continuous background synchronization & window focus/visibility listeners
+  useEffect(() => {
+    if (typeof window === "undefined" || approved) return;
+
+    // Check on focus / visibility change (e.g. user returns from phone verification or popup)
+    const handleVisibilityOrFocus = () => {
+      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+      if (stored === "true" || storedVerified === "true") {
+        markApproved();
+        return;
+      }
+      pollServerStatus();
+    };
+
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    window.addEventListener("pageshow", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    // Continuous polling interval: every 600ms if popup open, every 1200ms in background
+    const intervalMs = isOpenInWindow || isChecking ? 600 : 1200;
+    const intervalId = window.setInterval(async () => {
+      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+      if (stored === "true" || storedVerified === "true") {
+        markApproved();
+        return;
+      }
+      if (customerData?.email || currentReference || agecheckId || isOpenInWindow) {
+        await pollServerStatus();
+      }
+    }, intervalMs);
+
+    return () => {
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      window.removeEventListener("pageshow", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      window.clearInterval(intervalId);
+    };
+  }, [approved, isOpenInWindow, isChecking, customerData?.email, currentReference, agecheckId, markApproved, pollServerStatus]);
 
   // Listen to postMessage from AgeChecked GetID popup window, storage events & BroadcastChannel
   useEffect(() => {
