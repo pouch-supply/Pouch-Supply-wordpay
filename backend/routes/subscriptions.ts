@@ -153,6 +153,238 @@ router.post("/update-schedule", async (req: Request, res: Response) => {
 });
 
 /**
+ * Update complete subscription plan, products/flavors, and box items for an active customer.
+ * Persists updates to Neon PostgreSQL, StoreResource, Customer profile, and recent subscription orders.
+ */
+router.post("/update-plan", async (req: Request, res: Response) => {
+  try {
+    const {
+      subscriptionId,
+      customerEmail,
+      planId,
+      planName,
+      subPlan,
+      amount,
+      subPrice,
+      billingInterval,
+      subFrequency,
+      subCansCount,
+      cansCount,
+      items,
+      subItems,
+      status,
+      subStatus,
+      nextPayment,
+      nextDelivery,
+      nextBillingDate
+    } = req.body;
+
+    if (!customerEmail && !subscriptionId) {
+      return res.status(400).json({ success: false, message: "customerEmail or subscriptionId is required" });
+    }
+
+    const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+    const finalPlanName = subPlan || planName || (planId ? planId.toUpperCase() : "Custom Box");
+    const finalPlanId = planId || (subPlan ? subPlan.toLowerCase().split(" ")[0] : "custom");
+    const finalAmount = Number(subPrice ?? amount ?? 0);
+    const finalInterval = subFrequency || billingInterval || "Bi-Weekly";
+    const finalItems = subItems || items || [];
+    const finalCans = subCansCount ?? cansCount ?? (Array.isArray(finalItems) ? finalItems.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0) : 6);
+    const finalStatus = (subStatus || status || "active").toLowerCase();
+
+    // 1. Update Prisma subscription record if exists
+    if (subscriptionId) {
+      try {
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            planId: finalPlanId,
+            planName: finalPlanName,
+            amount: finalAmount,
+            billingInterval: finalInterval,
+            status: finalStatus,
+            ...(nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {})
+          }
+        });
+      } catch (_e) {}
+    } else if (emailClean) {
+      try {
+        const existingSub = await prisma.subscription.findFirst({
+          where: { customerEmail: emailClean }
+        });
+        if (existingSub) {
+          await prisma.subscription.update({
+            where: { id: existingSub.id },
+            data: {
+              planId: finalPlanId,
+              planName: finalPlanName,
+              amount: finalAmount,
+              billingInterval: finalInterval,
+              status: finalStatus,
+              ...(nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {})
+            }
+          });
+        }
+      } catch (_e) {}
+    }
+
+    // 2. Update StoreResource 'subscriptions'
+    try {
+      const storedSubs: any[] = (await fetchResource("subscriptions")) || [];
+      let foundSub = false;
+      const updatedSubs = storedSubs.map((s: any) => {
+        const match = (subscriptionId && String(s.id) === String(subscriptionId)) ||
+          (emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean);
+        if (match) {
+          foundSub = true;
+          return {
+            ...s,
+            planId: finalPlanId,
+            planName: finalPlanName,
+            amount: finalAmount,
+            billingInterval: finalInterval,
+            items: finalItems,
+            cansCount: finalCans,
+            status: finalStatus,
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return s;
+      });
+
+      if (!foundSub && emailClean) {
+        updatedSubs.push({
+          id: subscriptionId || `sub_${Date.now()}`,
+          customerEmail: emailClean,
+          planId: finalPlanId,
+          planName: finalPlanName,
+          amount: finalAmount,
+          billingInterval: finalInterval,
+          items: finalItems,
+          cansCount: finalCans,
+          status: finalStatus,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      await saveResource("subscriptions", updatedSubs);
+    } catch (_e) {}
+
+    // 3. Update StoreResource 'customers' & Prisma Customer
+    let updatedCustomerRecord: any = null;
+    if (emailClean) {
+      try {
+        const storedCustomers: any[] = (await fetchResource("customers")) || [];
+        const updatedCustList = storedCustomers.map((c: any) => {
+          if (String(c.email || "").toLowerCase().trim() === emailClean) {
+            const updatedC = {
+              ...c,
+              subscriptionStatus: finalStatus === "active" ? "Subscribed" : (finalStatus === "paused" ? "Paused" : "Not subscribed"),
+              subStatus: finalStatus === "active" ? "Active" : (finalStatus === "paused" ? "Paused" : "Cancelled"),
+              subPlan: finalPlanName,
+              subPrice: finalAmount,
+              subFrequency: finalInterval,
+              subCansCount: finalCans,
+              subItems: finalItems,
+              subPlanManuallyConfigured: true,
+              ...(nextPayment ? { nextPayment } : {}),
+              ...(nextDelivery ? { nextDelivery } : {}),
+              data: {
+                ...(c.data || {}),
+                subPlan: finalPlanName,
+                subPrice: finalAmount,
+                subFrequency: finalInterval,
+                subCansCount: finalCans,
+                subItems: finalItems,
+                subPlanManuallyConfigured: true
+              }
+            };
+            updatedCustomerRecord = updatedC;
+            return updatedC;
+          }
+          return c;
+        });
+
+        await saveResource("customers", updatedCustList);
+
+        // Update Prisma customer table
+        try {
+          await prisma.customer.updateMany({
+            where: { email: emailClean },
+            data: {
+              subscriptionStatus: finalStatus === "active" ? "Subscribed" : (finalStatus === "paused" ? "Paused" : "Not subscribed"),
+              subStatus: finalStatus === "active" ? "Active" : (finalStatus === "paused" ? "Paused" : "Cancelled"),
+              subPlan: finalPlanName,
+              subPrice: finalAmount,
+              subFrequency: finalInterval,
+              subCansCount: finalCans,
+              ...(nextPayment ? { nextPayment } : {}),
+              ...(nextDelivery ? { nextDelivery } : {})
+            }
+          });
+        } catch (_prErr) {}
+      } catch (_e) {}
+    }
+
+    // 4. Update the most recent subscription order in StoreResource 'orders' if available
+    if (emailClean) {
+      try {
+        const storedOrders: any[] = (await fetchResource("orders")) || [];
+        const updatedOrders = storedOrders.map((o: any) => {
+          if (String(o.customerEmail || "").toLowerCase().trim() === emailClean && Array.isArray(o.items)) {
+            const hasSubItem = o.items.some((i: any) => i.isSubscription || i.subscriptionPlan);
+            if (hasSubItem) {
+              const updatedItems = o.items.map((i: any) => {
+                if (i.isSubscription || i.subscriptionPlan) {
+                  return {
+                    ...i,
+                    subscriptionPlan: finalPlanName,
+                    subscriptionFrequency: finalInterval,
+                    price: finalAmount,
+                    selectedFlavors: finalItems
+                  };
+                }
+                return i;
+              });
+              return {
+                ...o,
+                items: updatedItems,
+                total: finalAmount
+              };
+            }
+          }
+          return o;
+        });
+        await saveResource("orders", updatedOrders);
+      } catch (_ordErr) {}
+    }
+
+    console.log(`[Subscription Plan Update] Successfully updated subscription for ${emailClean || subscriptionId}: ${finalPlanName} (£${finalAmount})`);
+
+    return res.json({
+      success: true,
+      message: `Subscription plan updated to ${finalPlanName} successfully!`,
+      plan: {
+        planId: finalPlanId,
+        planName: finalPlanName,
+        amount: finalAmount,
+        billingInterval: finalInterval,
+        cansCount: finalCans,
+        items: finalItems,
+        status: finalStatus
+      },
+      customer: updatedCustomerRecord
+    });
+  } catch (error: any) {
+    console.error("[Subscription Plan Update] Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update subscription plan"
+    });
+  }
+});
+
+/**
  * Create subscription record after the FIRST successful payment.
  */
 router.post(

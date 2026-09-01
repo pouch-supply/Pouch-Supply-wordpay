@@ -1345,6 +1345,14 @@ export default function App() {
   const handleUpdateProfile = (updated: Customer) => {
     setLoggedInCustomer(updated);
     setCustomers(prev => prev.map(c => c.id === updated.id ? updated : c));
+    // Persist to Neon PostgreSQL / server database
+    fetch('/api/customers/update-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer: updated })
+    }).catch(err => {
+      console.warn('[handleUpdateProfile] Background profile sync warn:', err);
+    });
   };
 
   const handleUpdateOrder = (updated: Order) => {

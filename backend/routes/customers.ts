@@ -533,4 +533,82 @@ router.post("/admin-login", async (req, res) => {
   }
 });
 
+// POST: Update Customer Profile & Subscription Settings
+router.post("/update-profile", async (req, res) => {
+  try {
+    const customerData = req.body.customer || req.body;
+    if (!customerData || (!customerData.email && !customerData.id)) {
+      return res.status(400).json({ error: "Customer email or id is required to update profile." });
+    }
+
+    const emailTrim = customerData.email ? customerData.email.trim().toLowerCase() : "";
+    const customersList: any[] = (await fetchResource("customers")) || [];
+    
+    let foundIndex = -1;
+    if (customerData.id) {
+      foundIndex = customersList.findIndex((c: any) => c.id === customerData.id);
+    }
+    if (foundIndex === -1 && emailTrim) {
+      foundIndex = customersList.findIndex((c: any) => c.email && c.email.toLowerCase() === emailTrim);
+    }
+
+    if (foundIndex === -1) {
+      return res.status(404).json({ error: "Customer account not found." });
+    }
+
+    const existing = customersList[foundIndex];
+    const updated = {
+      ...existing,
+      ...customerData,
+      id: existing.id, // Preserve ID
+      email: existing.email, // Preserve email
+      data: {
+        ...(existing.data || {}),
+        ...(customerData.data || {}),
+        ...(customerData.subItems ? { subItems: customerData.subItems } : {}),
+        ...(customerData.subPlan ? { subPlan: customerData.subPlan } : {}),
+        ...(customerData.subPrice ? { subPrice: customerData.subPrice } : {}),
+        ...(customerData.subFrequency ? { subFrequency: customerData.subFrequency } : {}),
+        ...(customerData.subCansCount ? { subCansCount: customerData.subCansCount } : {}),
+        ...(customerData.subPlanManuallyConfigured ? { subPlanManuallyConfigured: true } : {})
+      }
+    };
+
+    customersList[foundIndex] = updated;
+    await saveResource("customers", customersList);
+
+    // Also sync to Prisma customer model
+    try {
+      await getDb();
+      const { PrismaClient } = await import("@prisma/client");
+      const prisma = new PrismaClient();
+      await prisma.customer.updateMany({
+        where: { email: existing.email },
+        data: {
+          name: updated.name,
+          subscriptionStatus: updated.subscriptionStatus || "Not subscribed",
+          subStatus: updated.subStatus || null,
+          subPlan: updated.subPlan || null,
+          subFrequency: updated.subFrequency || null,
+          subCansCount: updated.subCansCount ? Number(updated.subCansCount) : null,
+          subPrice: updated.subPrice ? Number(updated.subPrice) : null,
+          nextPayment: updated.nextPayment || null,
+          nextDelivery: updated.nextDelivery || null,
+          data: updated as any
+        }
+      });
+    } catch (_dbPrismaErr) {}
+
+    const { passwordHash, ...safeCustomer } = updated;
+    return res.json({
+      success: true,
+      message: "Customer profile updated successfully.",
+      customer: safeCustomer
+    });
+  } catch (err: any) {
+    console.error("[Customer Profile Update] Error:", err);
+    return res.status(500).json({ error: err.message || "Failed to update profile." });
+  }
+});
+
 export default router;
