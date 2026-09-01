@@ -346,34 +346,40 @@ router.get("/status", async (req: Request, res: Response) => {
 
   // 3. If AGECHECKED_SECRET_KEY is configured and we have an agecheckid or reference, query AgeChecked AC0131
   const secretKey = normalizeSecretKey(process.env.AGECHECKED_SECRET_KEY);
-  if (secretKey && (agecheckid || reference)) {
+  if (secretKey && (agecheckid || reference || email)) {
     try {
       const baseUrl = (
         process.env.AGECHECKED_BASE_URL ||
         DEFAULT_BASE_URL
       ).replace(/\/ac0130\/?$/, "/ac0131");
 
-      const queryPayload = {
-        merchantSecretKey: secretKey,
-        merchantKey: secretKey,
-        agecheckid: agecheckid || undefined,
-        reference: reference || undefined,
-      };
+      const queryVariants = [
+        { merchantSecretKey: secretKey, agecheckid: agecheckid || undefined, reference: reference || undefined },
+        { merchantKey: secretKey, agecheckid: agecheckid || undefined, reference: reference || undefined },
+        { secretKey: secretKey, agecheckid: agecheckid || undefined, reference: reference || undefined },
+        { merchantSecretKey: secretKey, reference: reference || undefined, email: email || undefined },
+      ];
 
-      const checkRes = await fetch(baseUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(queryPayload)
-      });
+      for (const queryPayload of queryVariants) {
+        try {
+          const checkRes = await fetch(baseUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(queryPayload)
+          });
 
-      if (checkRes.ok) {
-        const checkData: any = await checkRes.json().catch(() => ({}));
-        const statusVal = checkData?.avstatus?.status ?? checkData?.status ?? checkData?.code ?? checkData?.result;
-        const statusText = checkData?.avstatus?.statustext ?? checkData?.avstatus?.statusText ?? checkData?.statustext ?? checkData?.statusText;
-        if (isApprovedStatus(statusVal) || isApprovedStatus(statusText) || checkData?.approved === true || checkData?.verified === true) {
-          const resolvedId = agecheckid || checkData?.avstatus?.agecheckid || checkData?.agecheckid || `AC-${Date.now()}`;
-          await persistAgeVerification([reference, agecheckid, email], resolvedId, email, checkData);
-          return res.json({ success: true, approved: true, agecheckid: resolvedId, status: "6", statusText: "Approved" });
+          if (checkRes.ok) {
+            const checkData: any = await checkRes.json().catch(() => ({}));
+            const statusVal = checkData?.avstatus?.status ?? checkData?.status ?? checkData?.code ?? checkData?.result ?? checkData?.data?.status;
+            const statusText = checkData?.avstatus?.statustext ?? checkData?.avstatus?.statusText ?? checkData?.statustext ?? checkData?.statusText ?? checkData?.data?.statustext;
+            if (isApprovedStatus(statusVal) || isApprovedStatus(statusText) || checkData?.approved === true || checkData?.verified === true) {
+              const resolvedId = agecheckid || checkData?.avstatus?.agecheckid || checkData?.agecheckid || checkData?.data?.id || `AC-${Date.now()}`;
+              await persistAgeVerification([reference, agecheckid, email], resolvedId, email, checkData);
+              return res.json({ success: true, approved: true, agecheckid: resolvedId, status: "6", statusText: "Approved" });
+            }
+          }
+        } catch (_fetchErr) {
+          // Continue to next variant
         }
       }
     } catch (_err) {
