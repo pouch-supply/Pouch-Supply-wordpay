@@ -375,6 +375,9 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({ onRefreshAll }) 
         </div>
       </div>
 
+      {/* Neon PostgreSQL Data Persistence & Automated Snapshots */}
+      <DatabaseBackupSection onRefreshAll={onRefreshAll} />
+
       {/* Re-configure DATABASE_URL Section */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-4">
         <div className="flex items-center gap-2">
@@ -423,6 +426,201 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({ onRefreshAll }) 
             )}
           </div>
         </form>
+      </div>
+    </div>
+  );
+};
+
+interface BackupItem {
+  id: string;
+  name: string;
+  timestamp: string;
+  resourceCount: number;
+}
+
+const DatabaseBackupSection: React.FC<{ onRefreshAll?: () => void }> = ({ onRefreshAll }) => {
+  const [backups, setBackups] = useState<BackupItem[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [backupName, setBackupName] = useState('');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [diagRes, backupRes] = await Promise.all([
+        fetch('/api/db-diagnostics').then(r => r.json()).catch(() => ({})),
+        fetch('/api/backup').then(r => r.json()).catch(() => [])
+      ]);
+      if (diagRes && diagRes.counts) {
+        setCounts(diagRes.counts);
+      }
+      if (Array.isArray(backupRes)) {
+        setBackups(backupRes);
+      }
+    } catch (err) {
+      console.warn('Error loading backup diagnostics:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleCreateBackup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: backupName.trim() || `Manual Snapshot ${new Date().toLocaleTimeString()}` })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFeedback({ type: 'success', message: 'Database snapshot successfully created and stored in Neon PostgreSQL!' });
+        setBackupName('');
+        await loadData();
+      } else {
+        setFeedback({ type: 'error', message: data.error || 'Failed to create backup' });
+      }
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || 'Error communicating with server' });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleRestore = async (id: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to restore the snapshot "${name}"? This will safely reload all store pages, products, collections, and settings from this snapshot.`)) {
+      return;
+    }
+    setRestoringId(id);
+    setFeedback(null);
+    try {
+      const res = await fetch('/api/backup/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFeedback({ type: 'success', message: `Successfully restored snapshot "${name}"! Reloading data...` });
+        if (onRefreshAll) onRefreshAll();
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } else {
+        setFeedback({ type: 'error', message: data.error || 'Failed to restore snapshot' });
+      }
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || 'Error restoring snapshot' });
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <ShieldCheck className="h-5 w-5 text-teal-600" />
+          <div>
+            <h3 className="text-base font-bold text-slate-900">Neon PostgreSQL Real-Time Data Persistence</h3>
+            <p className="text-xs text-slate-500 mt-0.5">Live table synchronization status and automated snapshot recovery.</p>
+          </div>
+        </div>
+        <button
+          onClick={loadData}
+          disabled={loading}
+          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+          title="Refresh counts"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {/* Live Table Records Counter */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="p-3 bg-teal-50/60 border border-teal-150 rounded-xl">
+          <span className="text-[11px] font-bold text-teal-700 uppercase tracking-wider block">Custom Pages</span>
+          <span className="text-lg font-extrabold text-teal-950">{counts.customPages ?? '—'}</span>
+        </div>
+        <div className="p-3 bg-indigo-50/60 border border-indigo-150 rounded-xl">
+          <span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wider block">Products</span>
+          <span className="text-lg font-extrabold text-indigo-950">{counts.products ?? '—'}</span>
+        </div>
+        <div className="p-3 bg-sky-50/60 border border-sky-150 rounded-xl">
+          <span className="text-[11px] font-bold text-sky-700 uppercase tracking-wider block">Collections</span>
+          <span className="text-lg font-extrabold text-sky-950">{counts.collections ?? '—'}</span>
+        </div>
+        <div className="p-3 bg-purple-50/60 border border-purple-150 rounded-xl">
+          <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Media Files</span>
+          <span className="text-lg font-extrabold text-purple-950">{counts.files ?? '—'}</span>
+        </div>
+      </div>
+
+      {feedback && (
+        <div className={`p-3.5 rounded-xl text-xs font-medium ${
+          feedback.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+        }`}>
+          {feedback.message}
+        </div>
+      )}
+
+      {/* Create Instant Backup Snapshot Form */}
+      <form onSubmit={handleCreateBackup} className="flex flex-col sm:flex-row gap-2 pt-2">
+        <input
+          type="text"
+          value={backupName}
+          onChange={(e) => setBackupName(e.target.value)}
+          placeholder="Snapshot label (e.g., Pre-deployment Page Builder State)"
+          className="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-teal-500"
+        />
+        <button
+          type="submit"
+          disabled={creating}
+          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 cursor-pointer shrink-0"
+        >
+          {creating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+          <span>Create Neon DB Snapshot</span>
+        </button>
+      </form>
+
+      {/* Backups List */}
+      <div className="space-y-2 pt-1">
+        <span className="text-xs font-bold text-slate-700 block">Saved Snapshots ({backups.length})</span>
+        {backups.length === 0 ? (
+          <div className="text-xs text-slate-400 italic py-3 text-center bg-slate-50 rounded-xl border border-slate-200">
+            No manual snapshots created yet. Create one above to preserve your exact page state.
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden max-h-48 overflow-y-auto">
+            {backups.map((b) => (
+              <div key={b.id} className="p-3 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 text-xs">
+                <div>
+                  <span className="font-bold text-slate-900 block">{b.name}</span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {new Date(b.timestamp).toLocaleString()} • {b.resourceCount} items
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRestore(b.id, b.name)}
+                  disabled={restoringId === b.id}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-teal-50 text-slate-700 hover:text-teal-700 font-semibold text-xs rounded-lg border border-slate-200 hover:border-teal-200 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {restoringId === b.id ? 'Restoring...' : 'Restore'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -4,7 +4,8 @@ import fs from "fs";
 import { 
   fetchResource, saveResource, saveUploadedImage, getUploadedImage, 
   getConnectionStatus, updateDatabaseUrl, getDb, getDatabaseDetails, 
-  fetchLayoutSettings, saveLayoutSettings, fetchDevSettings, saveDevSettings 
+  fetchLayoutSettings, saveLayoutSettings, fetchDevSettings, saveDevSettings,
+  createDatabaseBackup, listDatabaseBackups, restoreDatabaseBackup
 } from "./serverDb";
 
 // Import modular routers for products, collections, customers, orders, files, discounts, custom pages, and blogs
@@ -421,6 +422,85 @@ export async function createExpressApp() {
     } catch (err: any) {
       console.error("[API update-db-uri] Error updating connection string:", err);
       res.status(500).json({ error: err.message || "Failed to update connection string" });
+    }
+  });
+
+  // Automated Neon PostgreSQL Backups
+  app.post("/api/backup", async (req, res) => {
+    try {
+      const name = req.body?.name || `Manual Backup ${new Date().toLocaleDateString()}`;
+      const snapshot = await createDatabaseBackup(name);
+      res.json({ success: true, backup: snapshot });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to create database backup' });
+    }
+  });
+
+  app.get("/api/backup", async (req, res) => {
+    try {
+      const list = await listDatabaseBackups();
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to list database backups' });
+    }
+  });
+
+  app.post("/api/backup/restore", async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) return res.status(400).json({ error: 'Backup ID is required' });
+      const success = await restoreDatabaseBackup(id);
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to restore database backup' });
+    }
+  });
+
+  // Full Database Diagnostics across all tables
+  app.get("/api/db-diagnostics", async (req, res) => {
+    try {
+      const isConnected = await getDb();
+      if (!isConnected) {
+        return res.json({ connected: false, error: "Database not connected" });
+      }
+      const [
+        pagesCount,
+        productsCount,
+        collectionsCount,
+        ordersCount,
+        customersCount,
+        blogsCount,
+        discountsCount,
+        filesCount,
+        resourcesCount
+      ] = await Promise.all([
+        prisma.customPage.count().catch(() => 0),
+        prisma.product.count().catch(() => 0),
+        prisma.collection.count().catch(() => 0),
+        prisma.order.count().catch(() => 0),
+        prisma.customer.count().catch(() => 0),
+        prisma.blogPost.count().catch(() => 0),
+        prisma.discount.count().catch(() => 0),
+        prisma.fileEntry.count().catch(() => 0),
+        prisma.storeResource.count().catch(() => 0)
+      ]);
+
+      res.json({
+        connected: true,
+        counts: {
+          customPages: pagesCount,
+          products: productsCount,
+          collections: collectionsCount,
+          orders: ordersCount,
+          customers: customersCount,
+          blogs: blogsCount,
+          discounts: discountsCount,
+          files: filesCount,
+          storeResources: resourcesCount
+        }
+      });
+    } catch (err: any) {
+      res.status(500).json({ connected: false, error: err?.message });
     }
   });
 

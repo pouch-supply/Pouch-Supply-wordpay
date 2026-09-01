@@ -563,9 +563,7 @@ export default function App() {
               if (defaultBrands) combined = [...combined, defaultBrands];
             }
 
-            // Sync back merged clean pages to server
-            syncToApi('custompages', combined);
-
+            lastSyncedHash.current['custompages'] = JSON.stringify(combined);
             return combined;
           });
           loadedPagesSuccess.current = true;

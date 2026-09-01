@@ -63,9 +63,10 @@ loadMemoryCacheFromBackup();
 
 let isTablesInitialized = false;
 
-async function ensureNeonTablesExist(): Promise<void> {
+export async function ensureNeonTablesExist(): Promise<void> {
   if (isTablesInitialized) return;
   try {
+    // 1. Central Key-Value Store Resources & Settings
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "StoreResource" (
         "id" TEXT PRIMARY KEY,
@@ -94,6 +95,86 @@ async function ensureNeonTablesExist(): Promise<void> {
       );
     `);
     await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "NeonBackup" (
+        "id" TEXT PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "resourceCount" INTEGER NOT NULL DEFAULT 0,
+        "data" JSONB NOT NULL
+      );
+    `);
+
+    // 2. Custom Pages & Page Builder
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "CustomPage" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "slug" TEXT UNIQUE NOT NULL,
+        "visibility" TEXT NOT NULL DEFAULT 'Visible',
+        "isHomepage" BOOLEAN NOT NULL DEFAULT FALSE,
+        "sections" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 3. Products & Collections
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Product" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "description" TEXT,
+        "price" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        "compareAtPrice" DOUBLE PRECISION DEFAULT 0.0,
+        "inventory" INTEGER NOT NULL DEFAULT 0,
+        "sku" TEXT,
+        "category" TEXT,
+        "vendor" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'Active',
+        "image" TEXT,
+        "weight" DOUBLE PRECISION,
+        "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "media" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "variants" JSONB,
+        "concreteVariants" JSONB,
+        "barcode" TEXT,
+        "weightUnit" TEXT,
+        "slug" TEXT UNIQUE,
+        "seoTitle" TEXT,
+        "seoDescription" TEXT,
+        "strength" TEXT,
+        "flavour" TEXT,
+        "isVariantCard" BOOLEAN DEFAULT FALSE,
+        "concreteVariantId" TEXT,
+        "parentSlug" TEXT,
+        "parentId" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Collection" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "description" TEXT,
+        "type" TEXT NOT NULL DEFAULT 'Manual',
+        "image" TEXT,
+        "productIds" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "productConditions" TEXT,
+        "slug" TEXT UNIQUE,
+        "seoTitle" TEXT,
+        "seoDescription" TEXT,
+        "ogImage" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 4. File Entry (Media Manager with Cloudinary synchronization)
+    await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "FileEntry" (
         "id" TEXT PRIMARY KEY,
         "publicId" TEXT UNIQUE,
@@ -112,6 +193,62 @@ async function ensureNeonTablesExist(): Promise<void> {
         "size" TEXT,
         "references" TEXT,
         "mimeType" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 5. Orders, Customers & Subscriptions
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Order" (
+        "id" TEXT PRIMARY KEY,
+        "customerName" TEXT NOT NULL,
+        "customerEmail" TEXT NOT NULL,
+        "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "fulfillmentStatus" TEXT NOT NULL DEFAULT 'Unfulfilled',
+        "paymentStatus" TEXT DEFAULT 'Paid',
+        "worldpayTxId" TEXT,
+        "worldpayAuthCode" TEXT,
+        "gatewayTxId" TEXT,
+        "gatewayAuthCode" TEXT,
+        "cardBrand" TEXT,
+        "total" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        "storeCreditApplied" DOUBLE PRECISION DEFAULT 0.0,
+        "destination" TEXT NOT NULL,
+        "date" TEXT NOT NULL,
+        "deliveryMethod" TEXT NOT NULL,
+        "items" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "trackingId" TEXT,
+        "carrier" TEXT,
+        "trackingHistory" JSONB,
+        "discountApplied" JSONB,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Customer" (
+        "id" TEXT PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "email" TEXT UNIQUE NOT NULL,
+        "subscriptionStatus" TEXT NOT NULL DEFAULT 'Not subscribed',
+        "location" TEXT,
+        "ordersCount" INTEGER NOT NULL DEFAULT 0,
+        "amountSpent" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        "addresses" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "wishlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "referralCode" TEXT,
+        "storeCredit" DOUBLE PRECISION DEFAULT 0.0,
+        "referredByCode" TEXT,
+        "subStatus" TEXT,
+        "subPlan" TEXT,
+        "subFrequency" TEXT,
+        "subCansCount" INTEGER,
+        "subPrice" DOUBLE PRECISION,
+        "nextPayment" TEXT,
+        "nextDelivery" TEXT,
         "data" JSONB,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -141,11 +278,159 @@ async function ensureNeonTablesExist(): Promise<void> {
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // 6. Blog Posts, Discounts, Layout & Analytics
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "BlogPost" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "slug" TEXT UNIQUE NOT NULL,
+        "excerpt" TEXT,
+        "content" TEXT NOT NULL,
+        "image" TEXT,
+        "author" TEXT,
+        "category" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'Active',
+        "publishedAt" TEXT,
+        "readTime" TEXT,
+        "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Discount" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "status" TEXT NOT NULL DEFAULT 'Active',
+        "method" TEXT,
+        "eligibility" TEXT,
+        "type" TEXT NOT NULL,
+        "used" INTEGER NOT NULL DEFAULT 0,
+        "details" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "LayoutSetting" (
+        "id" TEXT PRIMARY KEY DEFAULT 'layout_settings',
+        "headerLogoText" TEXT,
+        "headerLogoSubtext" TEXT,
+        "headerLogoImage" TEXT,
+        "footerLogoText" TEXT,
+        "footerLogoDescription" TEXT,
+        "footerLogoImage" TEXT,
+        "menuItems" JSONB,
+        "data" JSONB,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "AnalyticsRecord" (
+        "id" TEXT PRIMARY KEY,
+        "metric" TEXT NOT NULL,
+        "value" DOUBLE PRECISION NOT NULL,
+        "period" TEXT,
+        "metadata" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     isTablesInitialized = true;
   } catch (err) {
     console.warn('[Neon Table Setup] Warning: Table initialization check encountered error:', err);
   }
 }
+
+/**
+ * Hydrates the in-memory cache directly from the Neon PostgreSQL database on server boot.
+ * This guarantees the database is the primary source of truth and prevents any stale
+ * local files from overwriting newly created or restored pages.
+ */
+export async function hydrateMemoryCacheFromDatabase(): Promise<void> {
+  const isConnected = await getDb();
+  if (!isConnected) {
+    console.log('[Database Hydration] Database is offline or not configured. Using local backup state.');
+    return;
+  }
+
+  try {
+    await ensureNeonTablesExist();
+    console.log('[Database Hydration] Syncing memory cache with Neon PostgreSQL database...');
+
+    const resources = ['customPages', 'products', 'collections', 'orders', 'files', 'customers', 'discounts', 'blogs'];
+    for (const resName of resources) {
+      const records = await prisma.storeResource.findMany({
+        where: { resource: resName },
+        orderBy: { createdAt: 'asc' }
+      });
+      const directList = await fetchFromPrismaModel(resName);
+
+      const mergedMap = new Map<string, any>();
+      for (const r of (records || [])) {
+        if (r && r.data) {
+          const item = r.data as any;
+          const key = String(item.id || item.slug || item.orderId || '');
+          if (key) mergedMap.set(key, item);
+        }
+      }
+      for (const item of directList) {
+        if (!item) continue;
+        const key = String(item.id || item.slug || item.orderId || '');
+        if (key) {
+          if (!mergedMap.has(key)) {
+            mergedMap.set(key, item);
+          } else {
+            const existing = mergedMap.get(key);
+            let merged = { ...existing, ...item };
+            if (resName === 'customPages' || resName === 'custompages') {
+              const itemSecs = Array.isArray(item?.sections) ? item.sections : [];
+              const existSecs = Array.isArray(existing?.sections) ? existing.sections : [];
+              if (itemSecs.length > 0) merged.sections = itemSecs;
+              else if (existSecs.length > 0) merged.sections = existSecs;
+            }
+            mergedMap.set(key, merged);
+          }
+        }
+      }
+
+      if (mergedMap.size > 0) {
+        const list = Array.from(mergedMap.values());
+        memoryCache[resName] = list;
+      } else {
+        // Table in Neon DB is empty; if memoryCache has default items, seed Neon DB now
+        const defaultItems = memoryCache[resName] || [];
+        if (defaultItems.length > 0) {
+          console.log(`[Database Hydration] Seeding initial ${resName} into Neon DB (${defaultItems.length} items)...`);
+          for (const item of defaultItems) {
+            const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
+            await prisma.storeResource.upsert({
+              where: { resource_itemId: { resource: resName, itemId } },
+              update: { data: item },
+              create: { resource: resName, itemId, data: item }
+            }).catch(() => {});
+            syncToPrismaModel(resName, item).catch(() => {});
+          }
+        }
+      }
+    }
+
+    // Persist current synchronized state to local backup JSON
+    persistMemoryCacheToBackup();
+    console.log('[Database Hydration] Successfully hydrated memory cache from Neon PostgreSQL.');
+  } catch (err: any) {
+    console.error('[Database Hydration] Error during startup hydration from Neon DB:', err?.message || err);
+  }
+}
+
+// Automatically trigger startup hydration
+ensureNeonTablesExist().then(() => {
+  hydrateMemoryCacheFromDatabase().catch(() => {});
+}).catch(() => {});
 
 function getHostFromDatabaseUrl(urlStr?: string): { host: string; database: string } {
   if (!urlStr) return { host: 'N/A', database: 'N/A' };
@@ -952,6 +1237,20 @@ export async function saveResource(resource: string, list: any[] | any): Promise
   const normalizedList = Array.isArray(list) ? list : (list ? [list] : []);
   if (!Array.isArray(normalizedList)) return memoryCache[normResource] || [];
 
+  // For customPages, ensure sections are preserved and not accidentally stripped
+  if (normResource === 'customPages' || normResource === 'custompages' || normResource === 'pages') {
+    const existingPages = memoryCache['customPages'] || [];
+    for (let i = 0; i < normalizedList.length; i++) {
+      const p = normalizedList[i];
+      if (p && (!p.sections || !Array.isArray(p.sections) || p.sections.length === 0)) {
+        const existing = existingPages.find((ep: any) => ep && (ep.id === p.id || ep.slug === p.slug));
+        if (existing && Array.isArray(existing.sections) && existing.sections.length > 0) {
+          normalizedList[i] = { ...p, sections: existing.sections };
+        }
+      }
+    }
+  }
+
   memoryCache[normResource] = [...normalizedList];
   if (normResource !== resource) memoryCache[resource] = memoryCache[normResource];
   persistMemoryCacheToBackup();
@@ -989,7 +1288,7 @@ export async function saveResource(resource: string, list: any[] | any): Promise
         }));
       }
 
-      // Delete items removed from list in StoreResource
+      // Delete items removed from list in StoreResource only if validItemIds has items and list wasn't empty
       if (validItemIds.length > 0) {
         await prisma.storeResource.deleteMany({
           where: {
@@ -1003,22 +1302,24 @@ export async function saveResource(resource: string, list: any[] | any): Promise
 
       // Delete items removed from list in dedicated Prisma tables
       const norm = normResource.toLowerCase();
-      if (norm === 'orders') {
-        await prisma.order.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-      } else if (norm === 'products') {
-        await prisma.product.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-      } else if (norm === 'collections') {
-        await prisma.collection.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-      } else if (norm === 'customers') {
-        await prisma.customer.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-      } else if (norm === 'blogs') {
-        await prisma.blogPost.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-      } else if (norm === 'discounts') {
-        await prisma.discount.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-      } else if (norm === 'custompages' || norm === 'pages') {
-        await prisma.customPage.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-      } else if (norm === 'files' || norm === 'fileentry' || norm === 'fileentries') {
-        await prisma.fileEntry.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+      if (validItemIds.length > 0) {
+        if (norm === 'orders') {
+          await prisma.order.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        } else if (norm === 'products') {
+          await prisma.product.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        } else if (norm === 'collections') {
+          await prisma.collection.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        } else if (norm === 'customers') {
+          await prisma.customer.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        } else if (norm === 'blogs') {
+          await prisma.blogPost.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        } else if (norm === 'discounts') {
+          await prisma.discount.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        } else if (norm === 'custompages' || norm === 'pages') {
+          await prisma.customPage.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        } else if (norm === 'files' || norm === 'fileentry' || norm === 'fileentries') {
+          await prisma.fileEntry.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
+        }
       }
     } catch (err) {
       console.error(`[Neon DB] Error saving resource ${normResource}:`, err);
@@ -1026,6 +1327,86 @@ export async function saveResource(resource: string, list: any[] | any): Promise
   }
 
   return normalizedList;
+}
+
+/**
+ * Creates a full snapshot backup in Neon PostgreSQL and locally.
+ */
+export async function createDatabaseBackup(name: string = 'Auto Snapshot'): Promise<any> {
+  const isConnected = await getDb();
+  const backupData: Record<string, any> = {};
+  const resources = ['customPages', 'products', 'collections', 'orders', 'files', 'customers', 'discounts', 'blogs'];
+
+  for (const r of resources) {
+    backupData[r] = await fetchResource(r);
+  }
+
+  const backupId = `backup_${Date.now()}`;
+  const totalCount = Object.values(backupData).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0);
+
+  if (isConnected) {
+    try {
+      await ensureNeonTablesExist();
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "NeonBackup" ("id", "name", "timestamp", "resourceCount", "data") VALUES ($1, $2, NOW(), $3, $4::jsonb) ON CONFLICT ("id") DO UPDATE SET "data" = $4::jsonb`,
+        backupId,
+        name,
+        totalCount,
+        JSON.stringify(backupData)
+      );
+    } catch (err) {
+      console.warn('[Neon Backup] Error storing backup in Neon PostgreSQL:', err);
+    }
+  }
+
+  persistMemoryCacheToBackup();
+  return { id: backupId, name, timestamp: new Date().toISOString(), resourceCount: totalCount };
+}
+
+/**
+ * Lists all database snapshots stored in Neon PostgreSQL.
+ */
+export async function listDatabaseBackups(): Promise<any[]> {
+  const isConnected = await getDb();
+  if (isConnected) {
+    try {
+      await ensureNeonTablesExist();
+      const rows: any[] = await prisma.$queryRawUnsafe(`
+        SELECT "id", "name", "timestamp", "resourceCount" FROM "NeonBackup" ORDER BY "timestamp" DESC LIMIT 20
+      `);
+      return rows || [];
+    } catch (err) {
+      console.warn('[Neon Backup] Error listing backups from Neon PostgreSQL:', err);
+    }
+  }
+  return [];
+}
+
+/**
+ * Restores the database and memoryCache from a snapshot.
+ */
+export async function restoreDatabaseBackup(backupId: string): Promise<boolean> {
+  const isConnected = await getDb();
+  if (!isConnected) return false;
+
+  try {
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT "data" FROM "NeonBackup" WHERE "id" = $1 LIMIT 1
+    `, backupId);
+
+    if (rows && rows.length > 0 && rows[0].data) {
+      const data = typeof rows[0].data === 'string' ? JSON.parse(rows[0].data) : rows[0].data;
+      for (const [resKey, items] of Object.entries(data)) {
+        if (Array.isArray(items)) {
+          await saveResource(resKey, items);
+        }
+      }
+      return true;
+    }
+  } catch (err) {
+    console.error('[Neon Backup] Error restoring backup from Neon PostgreSQL:', err);
+  }
+  return false;
 }
 
 export async function fetchStoreSetting(id: string, defaultVal: any = null): Promise<any> {
@@ -1106,6 +1487,16 @@ export async function saveSingleItem(resource: string, item: any): Promise<any> 
   const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
 
   const items = memoryCache[normResource] || memoryCache[resource] || [];
+
+  if (normResource === 'customPages' || normResource === 'custompages' || normResource === 'pages') {
+    if (!item.sections || !Array.isArray(item.sections) || item.sections.length === 0) {
+      const existing = items.find((i: any) => i.id === itemId || i.slug === itemId);
+      if (existing && Array.isArray(existing.sections) && existing.sections.length > 0) {
+        item = { ...item, sections: existing.sections };
+      }
+    }
+  }
+
   const idx = items.findIndex((i: any) => i.id === itemId || i.slug === itemId);
   if (idx !== -1) {
     items[idx] = { ...item };
