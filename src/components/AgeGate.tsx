@@ -1,6 +1,14 @@
 // src/components/AgeGate.tsx
-import React, { useEffect, useState, useImperativeHandle, forwardRef, useRef, useCallback } from "react";
-import { ShieldCheck, CheckCircle2, Lock, AlertCircle, RefreshCw, X, ExternalLink } from "lucide-react";
+import React, { 
+  useEffect, 
+  useState, 
+  useImperativeHandle, 
+  forwardRef, 
+  useRef, 
+  useCallback,
+  useMemo 
+} from "react";
+import { ShieldCheck, CheckCircle2, Lock, AlertCircle, RefreshCw, ExternalLink } from "lucide-react";
 import { trackAgeVerified } from "../utils/klaviyo";
 
 const AGE_APPROVED_STORAGE_KEY = "agechecked-approved";
@@ -25,15 +33,47 @@ export interface AgeCheckedResponse {
     message?: string;
     details?: string;
   };
+  approved?: boolean;
   [key: string]: unknown;
 }
+
+// Helper to safely check if we're in browser environment
+const isBrowser = typeof window !== "undefined";
+
+// Safe localStorage access
+const safeLocalStorage = {
+  getItem: (key: string): string | null => {
+    if (!isBrowser) return null;
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    if (!isBrowser) return;
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Ignore storage errors
+    }
+  },
+  removeItem: (key: string): void => {
+    if (!isBrowser) return;
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore storage errors
+    }
+  }
+};
 
 function getPortalUrl(publicKey: string, returnUrl?: string, customPortalUrl?: string) {
   const baseUrl = 
     customPortalUrl ||
-    (typeof import.meta !== "undefined" && (import.meta as any).env?.NEXT_PUBLIC_AGECHECKED_PORTAL_URL) ||
-    (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_AGECHECKED_PORTAL_URL) ||
-    (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGECHECKED_PORTAL_URL) || 
+    (isBrowser && (import.meta as any)?.env?.NEXT_PUBLIC_AGECHECKED_PORTAL_URL) ||
+    (isBrowser && (import.meta as any)?.env?.VITE_AGECHECKED_PORTAL_URL) ||
+    (isBrowser && process?.env?.NEXT_PUBLIC_AGECHECKED_PORTAL_URL) || 
     "https://portal.agechecked.com/portal";
 
   try {
@@ -103,9 +143,9 @@ export interface AgeGateHandle {
 
 export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = false, onApprovedChange, customerData }, ref) => {
   const [approved, setApproved] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    const storedApproved = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-    const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+    if (!isBrowser) return false;
+    const storedApproved = safeLocalStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const storedVerified = safeLocalStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
     const params = new URLSearchParams(window.location.search);
     return (
       storedApproved === "true" ||
@@ -115,6 +155,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       isApprovedStatus(params.get("status"))
     );
   });
+
   const [isVerifying, setIsVerifying] = useState(false);
   const [activePortalUrl, setActivePortalUrl] = useState<string>("");
   const [statusMessage, setStatusMessage] = useState(
@@ -123,76 +164,32 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       : "Under UK law, 18+ age verification is required before checkout."
   );
   const [agecheckId, setAgecheckId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
+    if (!isBrowser) return null;
     const params = new URLSearchParams(window.location.search);
-    return params.get("agecheckid") || window.localStorage.getItem("agechecked-id") || null;
+    return params.get("agecheckid") || safeLocalStorage.getItem("agechecked-id") || null;
   });
   const [currentReference, setCurrentReference] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
+    if (!isBrowser) return null;
     const params = new URLSearchParams(window.location.search);
     return params.get("reference") || null;
   });
   const [serverConfig, setServerConfig] = useState<{ portalUrl?: string; publicKey?: string } | null>(null);
   const [checkStatusNotice, setCheckStatusNotice] = useState<string | null>(null);
 
+  // Refs for cleanup
+  const pollingTimerRef = useRef<number | null>(null);
+  const windowRef = useRef<Window | null>(null);
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+  const activeResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const onApprovedChangeRef = useRef(onApprovedChange);
+  const isMountedRef = useRef(true);
+
   useEffect(() => {
     onApprovedChangeRef.current = onApprovedChange;
   }, [onApprovedChange]);
 
-  const activeResolverRef = useRef<((approved: boolean) => void) | null>(null);
-  const pollingTimerRef = useRef<number | null>(null);
-  const windowRef = useRef<Window | null>(null);
-
-  const publicKey = 
-    serverConfig?.publicKey ||
-    (typeof import.meta !== "undefined" && (import.meta as any).env?.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY) ||
-    (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_AGECHECKED_PUBLIC_KEY) ||
-    (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY) || 
-    "";
-
-  // Load AgeChecked server configuration
-  useEffect(() => {
-    fetch('/api/agechecked/config')
-      .then(async res => {
-        if (!res.ok) return null;
-        const contentType = res.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-          return await res.json();
-        }
-        return null;
-      })
-      .then(cfg => {
-        if (cfg) {
-          setServerConfig(cfg);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  // Handle successful age verification
-  const markApproved = useCallback((detail?: AgeCheckedResponse) => {
-    if (typeof window === "undefined") return;
-
-    // 1. Immediately store verification in localStorage
-    try {
-      window.localStorage.setItem(AGE_APPROVED_STORAGE_KEY, "true");
-      window.localStorage.setItem(AGE_VERIFIED_STORAGE_KEY, "true");
-      window.localStorage.setItem(AGE_APPROVED_AT_STORAGE_KEY, new Date().toISOString());
-    } catch (_e) {}
-
-    const resolvedAgeCheckId = 
-      detail?.avstatus?.agecheckid ? String(detail.avstatus.agecheckid) : 
-      (detail?.agecheckid ? String(detail.agecheckid) : agecheckId || `AC-${Date.now()}`);
-    
-    if (resolvedAgeCheckId) {
-      setAgecheckId(resolvedAgeCheckId);
-      try {
-        window.localStorage.setItem("agechecked-id", resolvedAgeCheckId);
-      } catch (_e) {}
-    }
-
-    // 2. Stop polling & close popup if open
+  // Cleanup function
+  const cleanup = useCallback(() => {
     if (pollingTimerRef.current) {
       window.clearInterval(pollingTimerRef.current);
       pollingTimerRef.current = null;
@@ -200,25 +197,95 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (windowRef.current && !windowRef.current.closed) {
       try {
         windowRef.current.close();
-      } catch (_e) {}
+      } catch {
+        // Ignore close errors
+      }
+    }
+    if (broadcastChannelRef.current) {
+      try {
+        broadcastChannelRef.current.close();
+        broadcastChannelRef.current = null;
+      } catch {
+        // Ignore close errors
+      }
+    }
+  }, []);
+
+  // Get public key with memoization
+  const publicKey = useMemo(() => {
+    return (
+      serverConfig?.publicKey ||
+      (isBrowser && (import.meta as any)?.env?.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY) ||
+      (isBrowser && (import.meta as any)?.env?.VITE_AGECHECKED_PUBLIC_KEY) ||
+      (isBrowser && process?.env?.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY) || 
+      ""
+    );
+  }, [serverConfig]);
+
+  // Load server configuration
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const res = await fetch('/api/agechecked/config');
+        if (!res.ok) return;
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const cfg = await res.json();
+          if (cfg && isMountedRef.current) {
+            setServerConfig(cfg);
+          }
+        }
+      } catch {
+        // Silently fail - use defaults
+      }
+    };
+
+    if (isBrowser) {
+      fetchConfig();
     }
 
-    // 3. Update React states
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Mark as approved
+  const markApproved = useCallback((detail?: AgeCheckedResponse) => {
+    if (!isBrowser || !isMountedRef.current) return;
+
+    // Store verification in localStorage
+    safeLocalStorage.setItem(AGE_APPROVED_STORAGE_KEY, "true");
+    safeLocalStorage.setItem(AGE_VERIFIED_STORAGE_KEY, "true");
+    safeLocalStorage.setItem(AGE_APPROVED_AT_STORAGE_KEY, new Date().toISOString());
+
+    const resolvedAgeCheckId = 
+      detail?.avstatus?.agecheckid ? String(detail.avstatus.agecheckid) : 
+      (detail?.agecheckid ? String(detail.agecheckid) : agecheckId || `AC-${Date.now()}`);
+    
+    if (resolvedAgeCheckId) {
+      setAgecheckId(resolvedAgeCheckId);
+      safeLocalStorage.setItem("agechecked-id", resolvedAgeCheckId);
+    }
+
+    // Cleanup
+    cleanup();
+
+    // Update states
     setApproved(true);
     setIsVerifying(false);
     setCheckStatusNotice(null);
     setStatusMessage("Your age (18+) has been verified successfully.");
 
-    // 4. Resolve promise
+    // Resolve promise
     if (activeResolverRef.current) {
       activeResolverRef.current(true);
       activeResolverRef.current = null;
     }
 
-    // 5. Notify parent callback
+    // Notify parent
     onApprovedChangeRef.current?.(true);
 
-    // 6. Broadcast event to window & parent
+    // Broadcast to window
     try {
       window.postMessage(
         {
@@ -229,9 +296,11 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         },
         window.location.origin
       );
-    } catch (_e) {}
+    } catch {
+      // Ignore postMessage errors
+    }
 
-    // Broadcast across tabs/windows
+    // Broadcast across tabs
     try {
       if (typeof BroadcastChannel !== "undefined") {
         const bc = new BroadcastChannel("agechecked_channel");
@@ -245,9 +314,11 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         });
         bc.close();
       }
-    } catch (_e) {}
+    } catch {
+      // Ignore broadcast errors
+    }
 
-    // Persist to server backend database
+    // Persist to server
     if (customerData?.email || currentReference || resolvedAgeCheckId) {
       fetch("/api/agechecked/approve", {
         method: "POST",
@@ -258,27 +329,34 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           agecheckid: resolvedAgeCheckId,
           verified: true
         })
-      }).catch(() => {});
+      }).catch(() => {
+        // Silently fail - user still approved locally
+      });
     }
 
-    // 7. Klaviyo tracking
+    // Track with Klaviyo
     try {
-      trackAgeVerified({
-        email: customerData?.email || "customer@example.com",
-        verified_at: new Date().toISOString(),
-      });
-    } catch (_e) {}
-  }, [customerData?.email, customerData?.reference, currentReference, agecheckId]);
-
-  // Query server status endpoint directly
-  const pollServerStatus = useCallback(async (refToTest?: string, idToTest?: string, emailToTest?: string): Promise<boolean> => {
-    if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
-      if (stored === "true" || storedVerified === "true") {
-        markApproved();
-        return true;
+      if (customerData?.email) {
+        trackAgeVerified({
+          email: customerData.email,
+          verified_at: new Date().toISOString(),
+        });
       }
+    } catch {
+      // Ignore tracking errors
+    }
+  }, [customerData?.email, customerData?.reference, currentReference, agecheckId, cleanup]);
+
+  // Poll server status
+  const pollServerStatus = useCallback(async (refToTest?: string, idToTest?: string, emailToTest?: string): Promise<boolean> => {
+    if (!isBrowser || !isMountedRef.current) return false;
+
+    // Check localStorage first
+    const stored = safeLocalStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const storedVerified = safeLocalStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+    if (stored === "true" || storedVerified === "true") {
+      markApproved();
+      return true;
     }
 
     const refParam = refToTest || currentReference || customerData?.reference || "";
@@ -310,16 +388,18 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           return true;
         }
       }
-    } catch (_e) {}
+    } catch {
+      // Silently fail
+    }
     return false;
   }, [currentReference, customerData?.reference, customerData?.email, agecheckId, markApproved]);
 
-  // Sync with localStorage & server on mount & when email/reference becomes available
+  // Sync with localStorage on mount and when dependencies change
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!isBrowser) return;
 
-    const storedApproved = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-    const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+    const storedApproved = safeLocalStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+    const storedVerified = safeLocalStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
     const params = new URLSearchParams(window.location.search);
     const isApprovedFromParam =
       storedApproved === "true" ||
@@ -342,14 +422,13 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     }
   }, [approved, customerData?.email, customerData?.reference, agecheckId, markApproved, pollServerStatus]);
 
-  // Continuous background synchronization & window focus/visibility listeners
-  // This automatically detects when the user completes verification on mobile or in the window
+  // Continuous background synchronization
   useEffect(() => {
-    if (typeof window === "undefined" || approved) return;
+    if (!isBrowser || approved) return;
 
     const handleVisibilityOrFocus = () => {
-      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+      const stored = safeLocalStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+      const storedVerified = safeLocalStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
       if (stored === "true" || storedVerified === "true") {
         markApproved();
         return;
@@ -363,31 +442,41 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
     const intervalMs = isVerifying ? 700 : 1400;
     const intervalId = window.setInterval(async () => {
-      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+      if (!isMountedRef.current) return;
+      
+      const stored = safeLocalStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+      const storedVerified = safeLocalStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
       if (stored === "true" || storedVerified === "true") {
         markApproved();
         return;
       }
+      
       if (customerData?.email || currentReference || agecheckId || isVerifying) {
         await pollServerStatus();
       }
     }, intervalMs);
 
+    pollingTimerRef.current = intervalId;
+
     return () => {
       window.removeEventListener("focus", handleVisibilityOrFocus);
       window.removeEventListener("pageshow", handleVisibilityOrFocus);
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
-      window.clearInterval(intervalId);
+      if (pollingTimerRef.current) {
+        window.clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
     };
   }, [approved, isVerifying, customerData?.email, currentReference, agecheckId, markApproved, pollServerStatus]);
 
-  // Official AgeChecked postMessage listener
+  // Message and storage event listeners
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!isBrowser) return;
 
     const handleMessage = (event: MessageEvent) => {
       let payload = event.data;
+      
+      // Handle string messages
       if (typeof payload === "string") {
         try {
           payload = JSON.parse(payload);
@@ -410,7 +499,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
       if (!payload || typeof payload !== "object") return;
 
-      // When getidEventName === "complete", ID capture finished successfully
+      // Handle getid events
       if ("getidEventName" in payload) {
         if (payload.getidEventName === "complete") {
           const resolvedId = payload.data?.id || payload.data?.profileId || payload.data?.agecheckid || agecheckId || undefined;
@@ -428,7 +517,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
         if (payload.getidEventName === "fail") {
           setIsVerifying(false);
-          const errorDetail = payload.error?.message || payload.error?.details || (typeof payload.error === "string" ? payload.error : "Age verification attempt was not successful. Please try again.");
+          const errorDetail = payload.error?.message || payload.error?.details || 
+            (typeof payload.error === "string" ? payload.error : 
+            "Age verification attempt was not successful. Please try again.");
           setCheckStatusNotice(errorDetail);
           if (activeResolverRef.current) {
             activeResolverRef.current(false);
@@ -438,35 +529,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }
       }
 
-      // Event name aliases
-      const eventName = payload.eventName || payload.event || payload.action;
-      if (eventName) {
-        const lowerEvent = String(eventName).toLowerCase();
-        if (
-          lowerEvent === "complete" ||
-          lowerEvent === "exit" ||
-          lowerEvent === "close" ||
-          lowerEvent === "finish" ||
-          lowerEvent === "continue" ||
-          lowerEvent === "success" ||
-          lowerEvent === "redirect" ||
-          lowerEvent === "approved"
-        ) {
-          const resolvedId = payload.data?.id || payload.data?.profileId || payload.data?.agecheckid || agecheckId || undefined;
-          markApproved({
-            avstatus: {
-              agecheckid: resolvedId,
-              status: "6",
-              statustext: "Approved"
-            },
-            agecheckid: resolvedId,
-            details: payload.data
-          });
-          return;
-        }
-      }
-
-      // Fallback verification messages
+      // Check for approval events
       const isApproved =
         payload.type === "AGECHECKED_VERIFIED" ||
         payload.type === "agechecked-approved" ||
@@ -499,34 +562,45 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     window.addEventListener("message", handleMessage);
     window.addEventListener("storage", handleStorage);
 
-    let bc: BroadcastChannel | null = null;
+    // Setup BroadcastChannel
     try {
       if (typeof BroadcastChannel !== "undefined") {
-        bc = new BroadcastChannel("agechecked_channel");
+        const bc = new BroadcastChannel("agechecked_channel");
+        broadcastChannelRef.current = bc;
         bc.onmessage = (ev) => {
-          if (ev.data && (ev.data.type === "agechecked-approved" || ev.data.approved === true || ev.data.status === "approved" || ev.data.verified === true)) {
+          if (ev.data && (ev.data.type === "agechecked-approved" || ev.data.approved === true || 
+            ev.data.status === "approved" || ev.data.verified === true)) {
             markApproved(ev.data);
           }
         };
       }
-    } catch (_e) {}
+    } catch {
+      // Ignore broadcast channel errors
+    }
 
     return () => {
       window.removeEventListener("message", handleMessage);
       window.removeEventListener("storage", handleStorage);
-      if (bc) {
-        bc.close();
+      if (broadcastChannelRef.current) {
+        try {
+          broadcastChannelRef.current.close();
+        } catch {
+          // Ignore
+        }
+        broadcastChannelRef.current = null;
       }
     };
   }, [markApproved, agecheckId]);
 
-  const resetApproval = () => {
-    if (typeof window === "undefined") return;
+  const resetApproval = useCallback(() => {
+    if (!isBrowser) return;
 
-    window.localStorage.removeItem(AGE_APPROVED_STORAGE_KEY);
-    window.localStorage.removeItem(AGE_VERIFIED_STORAGE_KEY);
-    window.localStorage.removeItem(AGE_APPROVED_AT_STORAGE_KEY);
-    window.localStorage.removeItem("agechecked-id");
+    safeLocalStorage.removeItem(AGE_APPROVED_STORAGE_KEY);
+    safeLocalStorage.removeItem(AGE_VERIFIED_STORAGE_KEY);
+    safeLocalStorage.removeItem(AGE_APPROVED_AT_STORAGE_KEY);
+    safeLocalStorage.removeItem("agechecked-id");
+    
+    cleanup();
     setApproved(false);
     setIsVerifying(false);
     setActivePortalUrl("");
@@ -534,16 +608,15 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     setCheckStatusNotice(null);
     setStatusMessage("Under UK law, 18+ age verification is required before checkout.");
     onApprovedChangeRef.current?.(false);
-  };
+  }, [cleanup]);
 
-  // Start AgeChecked AC0130 verification directly in a dedicated verification popup window
-  const openPortal = async (): Promise<boolean> => {
-    if (typeof window === "undefined") return approved;
+  const openPortal = useCallback(async (): Promise<boolean> => {
+    if (!isBrowser) return approved;
 
     // Check localStorage immediately
     if (
-      window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
-      window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
+      safeLocalStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
+      safeLocalStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
     ) {
       setApproved(true);
       return true;
@@ -582,9 +655,13 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           }),
         });
 
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         const data = (await response.json()) as AgeCheckedResponse;
         
-        // Handle error codes from AC0130
+        // Handle error responses
         if (data.error && !data.url && !data.redirectUrl) {
           const errCode = data.error.code ? `[Code ${data.error.code}] ` : "";
           const errText = `${errCode}${data.error.message || "AgeChecked initialization error"}${data.error.details ? ` (${data.error.details})` : ""}`;
@@ -595,7 +672,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           return;
         }
 
-        // Check if AC0130 immediately approved
+        // Check for immediate approval
         const isImmediateApproval =
           isApprovedStatus(data?.avstatus?.status) ||
           isApprovedStatus(data?.avstatus?.statustext) ||
@@ -629,7 +706,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         setAgecheckId(resolvedSessionId);
         setActivePortalUrl(rawRedirectUrl);
 
-        // Open in a focused popup window to prevent iframe block / refusal errors
+        // Open popup
         const width = 840;
         const height = 760;
         const left = Math.max(0, Math.round((window.screen.width - width) / 2));
@@ -641,27 +718,44 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           windowRef.current = newWin;
           newWin.focus();
         } else {
-          // Fallback if browser blocked popup
+          // Fallback if popup blocked
           window.open(rawRedirectUrl, "_blank");
         }
 
         setStatusMessage("AgeChecked 18+ verification in progress. Please complete verification in the opened window or on your phone.");
 
-        // Start active background polling (every 700ms)
+        // Start active polling
         if (pollingTimerRef.current) {
           window.clearInterval(pollingTimerRef.current);
         }
 
+        let pollCount = 0;
+        const maxPolls = 120; // ~84 seconds max
         pollingTimerRef.current = window.setInterval(async () => {
-          if (
-            window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
-            window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
-          ) {
+          pollCount++;
+          
+          if (pollCount > maxPolls) {
+            if (pollingTimerRef.current) {
+              window.clearInterval(pollingTimerRef.current);
+              pollingTimerRef.current = null;
+            }
+            setIsVerifying(false);
+            setStatusMessage("Verification timed out. Please try again.");
+            resolve(false);
+            return;
+          }
+
+          if (!isMountedRef.current) return;
+
+          const stored = safeLocalStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+          const storedVerified = safeLocalStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+          if (stored === "true" || storedVerified === "true") {
             if (pollingTimerRef.current) {
               window.clearInterval(pollingTimerRef.current);
               pollingTimerRef.current = null;
             }
             markApproved();
+            resolve(true);
             return;
           }
 
@@ -671,9 +765,19 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               window.clearInterval(pollingTimerRef.current);
               pollingTimerRef.current = null;
             }
+            resolve(true);
             return;
           }
         }, 700);
+
+        // Cleanup timer if component unmounts
+        const cleanupTimer = () => {
+          if (pollingTimerRef.current) {
+            window.clearInterval(pollingTimerRef.current);
+            pollingTimerRef.current = null;
+          }
+        };
+        return () => cleanupTimer();
 
       } catch (error) {
         setStatusMessage(error instanceof Error ? error.message : "Age verification connection failed.");
@@ -682,17 +786,24 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           activeResolverRef.current(false);
           activeResolverRef.current = null;
         }
+        resolve(false);
       }
     });
-  };
+  }, [approved, customerData, publicKey, serverConfig, markApproved, pollServerStatus]);
 
   useImperativeHandle(ref, () => ({
     openPortal,
     resetApproval,
     checkStatus: () => pollServerStatus(),
     isApproved: approved,
-  }), [approved, pollServerStatus]);
+  }), [approved, openPortal, resetApproval, pollServerStatus]);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return cleanup;
+  }, [cleanup]);
+
+  // Render
   return (
     <div
       className={`rounded-2xl border p-4 sm:p-5 transition-all shadow-xs ${
@@ -782,7 +893,8 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               <button
                 type="button"
                 onClick={() => openPortal()}
-                className="text-[11px] font-bold bg-sky-600 hover:bg-sky-700 text-white px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                disabled={isVerifying}
+                className="text-[11px] font-bold bg-sky-600 hover:bg-sky-700 disabled:bg-sky-400 disabled:cursor-not-allowed text-white px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 shadow-xs"
               >
                 {isVerifying ? (
                   <>
@@ -797,7 +909,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
                 )}
               </button>
               
-              {/* If window is in progress and user wants to reopen if blocked */}
               {isVerifying && activePortalUrl && (
                 <button
                   type="button"
@@ -830,7 +941,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         </div>
       )}
 
-      {agecheckId && (
+      {agecheckId && !compact && (
         <p className="mt-2 text-[10px] font-mono text-slate-400">
           Ref: {agecheckId}
         </p>

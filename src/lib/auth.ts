@@ -367,6 +367,14 @@ export async function signOut(): Promise<void> {
   try {
     localStorage.removeItem('ps_logged_in_customer');
     sessionStorage.removeItem('ps_logged_in_customer');
+    localStorage.removeItem('agechecked-approved');
+    localStorage.removeItem('ageVerified');
+    localStorage.removeItem('agechecked-verified-at');
+    localStorage.removeItem('agechecked-id');
+    localStorage.removeItem('agechecked-email');
+    sessionStorage.removeItem('yoti_verified');
+    sessionStorage.removeItem('agechecked-approved');
+    sessionStorage.removeItem('ageVerified');
     window.dispatchEvent(new CustomEvent('ps-customer-auth-change', { detail: null }));
     await fetch('/api/auth/signout', { method: 'POST' }).catch(() => {});
   } catch (e) {
