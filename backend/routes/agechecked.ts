@@ -281,14 +281,14 @@ router.post("/init", async (req: Request, res: Response) => {
         return res.json(responseBody);
       }
 
-      if (response.ok && providerMessage) {
+      if (response.ok && !responseBody.error && providerMessage) {
         return res.json(responseBody);
       }
 
       lastError = {
         message: providerMessage,
         details: responseBody,
-        status: response.status,
+        status: response.status || 400,
       };
     } catch (error: any) {
       console.error("[AgeChecked init] Request failed:", error);
@@ -300,9 +300,16 @@ router.post("/init", async (req: Request, res: Response) => {
     }
   }
 
+  const errDetails = lastError?.details || {};
+  const structuredError = errDetails?.error || {
+    code: errDetails?.code || "1039",
+    message: lastError?.message || "AgeChecked AC0130 initialization failed."
+  };
+
   return res.status(lastError?.status || 500).json({
-    message: lastError?.message || "AgeChecked AC0130 initialization failed.",
-    details: lastError?.details || {},
+    error: structuredError,
+    message: lastError?.message || structuredError.message || "AgeChecked AC0130 initialization failed.",
+    details: errDetails,
     attemptedFieldNames: SECRET_FIELD_NAMES.join(", "),
   });
 });
