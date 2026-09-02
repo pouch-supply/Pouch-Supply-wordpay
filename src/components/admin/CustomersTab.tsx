@@ -55,23 +55,43 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
 
   // Helper to extract subscription metadata
   const getSubscriptionDetails = (order: Order) => {
-    if (order.subscriptionDetails) return order.subscriptionDetails;
+    let details: any = order.subscriptionDetails ? { ...order.subscriptionDetails } : {};
 
     const subItem = order.items?.find((i: any) => 
       i.isSubscription || 
       i.vendor === 'Subscription Pack' || 
-      (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('pack')))
+      (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('plan') || i.productTitle.toLowerCase().includes('pack'))) ||
+      (i.productId && (i.productId.startsWith('sub-pack') || i.productId.includes('sub-pack')))
     ) as any;
 
-    let planName = subItem?.subscriptionPlan || 'LITE Plan';
-    let frequency = subItem?.subscriptionFrequency || '';
-    let frequencyDiscount = subItem?.frequencyDiscount || '';
-
+    let planName = details.planName || subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '';
+    const rawPlan = (subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '').toLowerCase();
     const title = (subItem?.productTitle || '').toLowerCase();
-    if (title.includes('core')) planName = 'CORE Plan';
-    else if (title.includes('pro')) planName = 'PRO Plan';
-    else if (title.includes('ultimate')) planName = 'ULTIMATE Plan';
-    else if (title.includes('lite')) planName = 'LITE Plan';
+    const prodId = (subItem?.productId || '').toLowerCase();
+
+    if (rawPlan.includes('ultimate') || title.startsWith('ultimate') || title.includes('ultimate plan') || prodId.includes('ultimate')) {
+      planName = 'ULTIMATE Plan';
+    } else if (rawPlan.includes('pro') || title.startsWith('pro') || title.includes('pro plan') || prodId.includes('pro')) {
+      planName = 'PRO Plan';
+    } else if (rawPlan.includes('core') || title.startsWith('core') || title.includes('core plan') || prodId.includes('core')) {
+      planName = 'CORE Plan';
+    } else if (rawPlan.includes('lite') || title.startsWith('lite') || title.includes('lite plan') || prodId.includes('lite')) {
+      planName = 'LITE Plan';
+    } else if (details.planName) {
+      const p = String(details.planName).toLowerCase();
+      if (p.includes('ultimate')) planName = 'ULTIMATE Plan';
+      else if (p.includes('pro')) planName = 'PRO Plan';
+      else if (p.includes('core')) planName = 'CORE Plan';
+      else if (p.includes('lite')) planName = 'LITE Plan';
+      else planName = details.planName;
+    } else if (subItem?.subscriptionPlan) {
+      planName = subItem.subscriptionPlan;
+    } else {
+      planName = 'PRO Plan';
+    }
+
+    let frequency = details.frequency || subItem?.subscriptionFrequency || '';
+    let frequencyDiscount = details.frequencyDiscount || subItem?.frequencyDiscount || '';
 
     if (!frequency) {
       if (title.includes('next day') || title.includes('1 day')) {
@@ -107,12 +127,13 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
     }
 
     return {
+      ...details,
       planName,
       frequency,
       frequencyDiscount,
-      paymentStatus: order.paymentStatus || 'Paid',
-      lastPaymentDate: baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      nextPaymentDate: nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      paymentStatus: order.paymentStatus || details.paymentStatus || 'Paid',
+      lastPaymentDate: details.lastPaymentDate || baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      nextPaymentDate: details.nextPaymentDate || nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     };
   };
 

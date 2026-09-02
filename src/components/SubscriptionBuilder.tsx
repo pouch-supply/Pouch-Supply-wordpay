@@ -260,17 +260,30 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
         ? prod.concreteVariants?.find(v => v.id === variantId) 
         : null;
 
+      const variantName = variant ? variant.name : 'Standard';
+
       const finalProduct: Product = {
         ...prod,
         id: variant ? variant.id : prod.id,
-        title: variant ? `${prod.title} ${variant.name}` : prod.title,
+        title: prod.title,
+        concreteVariantName: variantName,
+        variant: variantName,
         price: variant ? variant.price : prod.price,
         image: (variant && variant.images && variant.images.length > 0 && variant.images[0])
           ? variant.images[0]
           : prod.image
       };
 
-      return { product: finalProduct, quantity };
+      return { 
+        product: finalProduct, 
+        quantity,
+        productId: prod.id,
+        productTitle: prod.title,
+        variantName: variantName,
+        variant: variantName,
+        price: finalProduct.price,
+        image: finalProduct.image
+      };
     });
 
     const extraCans = isUltimate && totalSelectedCount > 12 ? totalSelectedCount - 12 : 0;
@@ -278,11 +291,12 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
     const freqDiscountPercent = frequency === 'Weekly' ? 5 : (frequency === 'One Month' || frequency === 'Monthly' ? 12 : 10);
     const finalPrice = Number((baseSubPrice * ((100 - freqDiscountPercent) / 100)).toFixed(2));
 
+    const planUpper = (activePlan?.name || activePlanSlug || 'PRO').toUpperCase();
     const displayName = isUltimate && extraCans > 0 
-      ? `${activePlan?.name || 'Ultimate'} Plan (+${extraCans} Extra)` 
-      : `${activePlan?.name || 'Custom'} Plan`;
+      ? `${planUpper} Plan (+${extraCans} Extra)` 
+      : `${planUpper} Plan`;
 
-    onAddSubToCart(displayName, compiledItems, frequency, finalPrice);
+    onAddSubToCart(displayName, compiledItems as any, frequency, finalPrice);
     
     setSuccessAnimation(true);
     setTimeout(() => {

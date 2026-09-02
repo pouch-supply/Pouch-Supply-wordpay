@@ -509,21 +509,33 @@ export default function CheckoutView({
         customerName: fullName,
         customerEmail: email,
         destination: `${addressLine}, ${city}, ${postcode}, ${country}`,
-        items: cartItems.map(item => ({
-          productId: item.productId,
-          productTitle: item.productTitle,
-          price: item.price,
-          quantity: item.quantity,
-          image: item.image || '',
-          variant: (item as any).variant || (item as any).concreteVariantName || (item as any).strength || (item as any).flavour || 'Standard',
-          sku: (item as any).sku || (item as any).concreteVariantId || item.productId || 'SKU-001',
-          vendor: item.vendor || '',
-          isSubscription: Boolean(item.isSubscription || (item.productId && (item.productId.startsWith('sub-pack') || item.productId.includes('sub-pack')))),
-          subscriptionPlan: (item as any).subscriptionPlan || 'LITE Plan',
-          subscriptionFrequency: (item as any).subscriptionFrequency || '1day',
-          frequencyDiscount: (item as any).frequencyDiscount || '10%',
-          total: Number((item.price * item.quantity).toFixed(2))
-        })),
+        items: cartItems.map(item => {
+          let planName = (item as any).subscriptionPlan || '';
+          const titleLower = (item.productTitle || '').toLowerCase();
+          if (!planName) {
+            if (titleLower.includes('ultimate')) planName = 'ULTIMATE Plan';
+            else if (titleLower.includes('pro')) planName = 'PRO Plan';
+            else if (titleLower.includes('core')) planName = 'CORE Plan';
+            else if (titleLower.includes('lite')) planName = 'LITE Plan';
+            else if (item.isSubscription) planName = 'PRO Plan';
+          }
+          return {
+            productId: item.productId,
+            productTitle: item.productTitle,
+            price: item.price,
+            quantity: item.quantity,
+            image: item.image || '',
+            variant: (item as any).variant || (item as any).concreteVariantName || (item as any).strength || (item as any).flavour || 'Standard',
+            sku: (item as any).sku || (item as any).concreteVariantId || item.productId || 'SKU-001',
+            vendor: item.vendor || '',
+            isSubscription: Boolean(item.isSubscription || (item.productId && (item.productId.startsWith('sub-pack') || item.productId.includes('sub-pack')))),
+            subscriptionPlan: planName || (item as any).subscriptionPlan || 'PRO Plan',
+            subscriptionFrequency: (item as any).subscriptionFrequency || 'Bi-Weekly',
+            frequencyDiscount: (item as any).frequencyDiscount || '10%',
+            subscriptionItems: (item as any).subscriptionItems || [],
+            total: Number((item.price * item.quantity).toFixed(2))
+          };
+        }),
         discountApplied: currentDiscount,
         storeCreditApplied: storeCreditApplied
       };

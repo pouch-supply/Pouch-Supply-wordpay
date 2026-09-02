@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Download, Upload, Search, Eye, ArrowLeft, AlertTriangle, 
   ChevronDown, ChevronUp, MoreHorizontal, Calendar, Truck, Tag, MessageSquare, Send, Trash2, RotateCcw, CheckSquare, Square,
-  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink
+  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink, Package
 } from 'lucide-react';
 import { Order } from '../../types';
 import { parseOrderTime } from '../../utils';
@@ -91,70 +91,142 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     return false;
   };
 
-  // Helper to extract subscription metadata for detailed display
+  // Helper to extract subscription metadata and selected products for detailed display
   const getSubscriptionDetails = (order: Order) => {
     const isCancelled = isSubscriptionCancelled(order);
-    let details: any = order.subscriptionDetails ? { ...order.subscriptionDetails } : null;
+    let details: any = order.subscriptionDetails ? { ...order.subscriptionDetails } : {};
 
-    if (!details) {
-      const subItem = order.items?.find((i: any) => 
-        i.isSubscription || 
-        i.vendor === 'Subscription Pack' || 
-        (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('pack')))
-      ) as any;
+    const subItem = order.items?.find((i: any) => 
+      i.isSubscription || 
+      i.vendor === 'Subscription Pack' || 
+      (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('plan') || i.productTitle.toLowerCase().includes('pack'))) ||
+      (i.productId && (i.productId.startsWith('sub-pack') || i.productId.includes('sub-pack')))
+    ) as any;
 
-      let planName = subItem?.subscriptionPlan || 'LITE Plan';
-      let frequency = subItem?.subscriptionFrequency || '';
-      let frequencyDiscount = subItem?.frequencyDiscount || '';
+    // 1. Accurately resolve plan name
+    let planName = details.planName || subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '';
+    const rawPlan = (subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '').toLowerCase();
+    const title = (subItem?.productTitle || '').toLowerCase();
+    const prodId = (subItem?.productId || '').toLowerCase();
 
-      const title = (subItem?.productTitle || '').toLowerCase();
-      if (title.includes('core')) planName = 'CORE Plan';
-      else if (title.includes('pro')) planName = 'PRO Plan';
-      else if (title.includes('ultimate')) planName = 'ULTIMATE Plan';
-      else if (title.includes('lite')) planName = 'LITE Plan';
-
-      if (!frequency) {
-        if (title.includes('next day') || title.includes('1 day')) {
-          frequency = 'Next Day (Test)';
-        } else if (title.includes('weekly') && !title.includes('bi')) {
-          frequency = 'Weekly';
-        } else if (title.includes('bi-weekly') || title.includes('by weekly') || title.includes('2 week')) {
-          frequency = 'Bi-Weekly';
-        } else if (title.includes('month') || title.includes('one month')) {
-          frequency = 'One Month';
-        } else {
-          frequency = 'Bi-Weekly';
-        }
-      }
-
-      if (!frequencyDiscount) {
-        if (frequency.includes('Next Day')) frequencyDiscount = '10%';
-        else if (frequency === 'Weekly') frequencyDiscount = '5%';
-        else if (frequency === 'One Month') frequencyDiscount = '12%';
-        else frequencyDiscount = '10%';
-      }
-
-      const baseDate = order.createdAt ? new Date(order.createdAt) : new Date();
-      const nextDate = new Date(baseDate);
-      if (frequency.includes('Next Day')) {
-        nextDate.setDate(baseDate.getDate() + 1);
-      } else if (frequency === 'Weekly') {
-        nextDate.setDate(baseDate.getDate() + 7);
-      } else if (frequency === 'Bi-Weekly') {
-        nextDate.setDate(baseDate.getDate() + 14);
-      } else {
-        nextDate.setDate(baseDate.getDate() + 30);
-      }
-
-      details = {
-        planName,
-        frequency,
-        frequencyDiscount,
-        paymentStatus: order.paymentStatus || 'Paid',
-        lastPaymentDate: baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-        nextPaymentDate: nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-      };
+    if (rawPlan.includes('ultimate') || title.startsWith('ultimate') || title.includes('ultimate plan') || prodId.includes('ultimate')) {
+      planName = 'ULTIMATE Plan';
+    } else if (rawPlan.includes('pro') || title.startsWith('pro') || title.includes('pro plan') || prodId.includes('pro')) {
+      planName = 'PRO Plan';
+    } else if (rawPlan.includes('core') || title.startsWith('core') || title.includes('core plan') || prodId.includes('core')) {
+      planName = 'CORE Plan';
+    } else if (rawPlan.includes('lite') || title.startsWith('lite') || title.includes('lite plan') || prodId.includes('lite')) {
+      planName = 'LITE Plan';
+    } else if (details.planName) {
+      const p = String(details.planName).toLowerCase();
+      if (p.includes('ultimate')) planName = 'ULTIMATE Plan';
+      else if (p.includes('pro')) planName = 'PRO Plan';
+      else if (p.includes('core')) planName = 'CORE Plan';
+      else if (p.includes('lite')) planName = 'LITE Plan';
+      else planName = details.planName;
+    } else if (subItem?.subscriptionPlan) {
+      planName = subItem.subscriptionPlan;
+    } else {
+      planName = 'PRO Plan';
     }
+
+    // 2. Frequency & discount
+    let frequency = details.frequency || subItem?.subscriptionFrequency || (order as any).subscriptionFrequency || '';
+    let frequencyDiscount = details.frequencyDiscount || subItem?.frequencyDiscount || (order as any).frequencyDiscount || '';
+
+    if (!frequency) {
+      if (title.includes('next day') || title.includes('1 day')) {
+        frequency = 'Next Day (Test)';
+      } else if (title.includes('weekly') && !title.includes('bi')) {
+        frequency = 'Weekly';
+      } else if (title.includes('bi-weekly') || title.includes('by weekly') || title.includes('2 week')) {
+        frequency = 'Bi-Weekly';
+      } else if (title.includes('month') || title.includes('one month')) {
+        frequency = 'One Month';
+      } else {
+        frequency = 'Bi-Weekly';
+      }
+    }
+
+    if (!frequencyDiscount) {
+      if (frequency.includes('Next Day')) frequencyDiscount = '10%';
+      else if (frequency === 'Weekly') frequencyDiscount = '5%';
+      else if (frequency === 'One Month') frequencyDiscount = '12%';
+      else frequencyDiscount = '10%';
+    }
+
+    const baseDate = order.createdAt ? new Date(order.createdAt) : new Date();
+    const nextDate = new Date(baseDate);
+    if (frequency.includes('Next Day')) {
+      nextDate.setDate(baseDate.getDate() + 1);
+    } else if (frequency === 'Weekly') {
+      nextDate.setDate(baseDate.getDate() + 7);
+    } else if (frequency === 'Bi-Weekly') {
+      nextDate.setDate(baseDate.getDate() + 14);
+    } else {
+      nextDate.setDate(baseDate.getDate() + 30);
+    }
+
+    // 3. Extract selected products with variant names
+    const selectedProducts: { name: string; variant: string; quantity: number; image?: string; price?: number }[] = [];
+
+    const rawItems = subItem?.subscriptionItems || subItem?.items || details.items || details.selectedProducts || (order as any).subscriptionItems;
+    if (Array.isArray(rawItems) && rawItems.length > 0) {
+      rawItems.forEach((it: any) => {
+        const p = it.product || it;
+        const name = p.title || p.productTitle || p.name || it.productTitle || 'Pouch Product';
+        const variant = it.variantName || it.variant || p.concreteVariantName || p.variant || (it as any).strength || (it as any).flavour || 'Standard';
+        const quantity = Number(it.quantity || p.quantity || 1);
+        const image = it.image || p.image || '';
+        const price = Number(it.price || p.price || 0);
+        selectedProducts.push({ name, variant, quantity, image, price });
+      });
+    }
+
+    // If no structured array was found, parse from description summary:
+    // e.g. "PRO Plan [Bi-Weekly - 10% OFF] - (White Fox Full Charge (Qty:2), Killa Cold Mint (16mg) (Qty:4))"
+    if (selectedProducts.length === 0 && subItem?.productTitle) {
+      const rawTitle: string = subItem.productTitle;
+      const match = rawTitle.match(/\(([^)]+)\)$/);
+      if (match && match[1]) {
+        const itemsPart = match[1];
+        const parts = itemsPart.split(/,\s*(?=[^()]*\()/);
+        parts.forEach(part => {
+          const trimmed = part.trim();
+          if (!trimmed) return;
+          const qtyMatch = trimmed.match(/^(.*?)\s*\(Qty:\s*(\d+)\)$/i);
+          if (qtyMatch) {
+            const fullItemName = qtyMatch[1].trim();
+            const qty = parseInt(qtyMatch[2], 10) || 1;
+            let name = fullItemName;
+            let variant = 'Standard';
+            const varMatch = fullItemName.match(/^(.*?)\s*\((.*?)\)$/);
+            if (varMatch) {
+              name = varMatch[1].trim();
+              variant = varMatch[2].trim();
+            } else if (fullItemName.includes(' - ')) {
+              const split = fullItemName.split(' - ');
+              name = split[0].trim();
+              variant = split.slice(1).join(' - ').trim();
+            }
+            selectedProducts.push({ name, variant, quantity: qty });
+          } else {
+            selectedProducts.push({ name: trimmed, variant: 'Standard', quantity: 1 });
+          }
+        });
+      }
+    }
+
+    details = {
+      ...details,
+      planName,
+      frequency,
+      frequencyDiscount,
+      paymentStatus: order.paymentStatus || details.paymentStatus || 'Paid',
+      lastPaymentDate: details.lastPaymentDate || baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      nextPaymentDate: details.nextPaymentDate || nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      selectedProducts
+    };
 
     if (isCancelled) {
       details.status = 'Cancelled';
@@ -538,10 +610,37 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           ) : isSubOrder(order) ? (
                             <span className="inline-flex items-center gap-1 text-[8.5px] bg-indigo-600 text-white font-black px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
                               <RefreshCw className="w-2.5 h-2.5" />
-                              Subscription ({getSubscriptionDetails(order).planName})
+                              {getSubscriptionDetails(order).planName}
                             </span>
                           ) : null}
                         </div>
+
+                        {/* If subscription order, display selected products with variant name below the plan name */}
+                        {isSubOrder(order) && (() => {
+                          const subDetails = getSubscriptionDetails(order);
+                          if (!subDetails.selectedProducts || subDetails.selectedProducts.length === 0) return null;
+                          return (
+                            <div className="mt-2 bg-indigo-50/80 border border-indigo-100 rounded-lg p-2 max-w-xs shadow-2xs space-y-1">
+                              <div className="text-[9px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1">
+                                <Package className="w-3 h-3 text-indigo-600" />
+                                Selected Box Products:
+                              </div>
+                              <div className="space-y-0.5">
+                                {subDetails.selectedProducts.map((p: any, pIdx: number) => (
+                                  <div key={pIdx} className="flex justify-between items-center text-[10px] text-slate-700 font-semibold gap-1">
+                                    <span className="truncate text-slate-850">
+                                      • {p.name} {p.variant && p.variant !== 'Standard' ? <span className="text-indigo-600 font-extrabold">({p.variant})</span> : ''}
+                                    </span>
+                                    <span className="shrink-0 bg-white border border-indigo-200 px-1.5 py-0.2 rounded font-black text-slate-900 text-[9px]">
+                                      × {p.quantity}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {Array.isArray(order.tags) && order.tags.includes('Withdrawal Requested') && (
                           <span className="inline-block text-[8.5px] bg-rose-50 text-rose-700 border border-rose-150 uppercase font-black px-1.5 py-0.5 rounded mt-1 animate-pulse select-none">
                             Withdrawal Pending
@@ -827,6 +926,32 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                         )}
                       </div>
                     </div>
+
+                    {/* Selected Products & Variants Breakdown */}
+                    {subDetails.selectedProducts && subDetails.selectedProducts.length > 0 && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 rounded-xl p-3.5 space-y-2 mt-2">
+                        <div className="flex items-center justify-between text-[11px] font-black text-indigo-300 uppercase tracking-wider">
+                          <span className="flex items-center gap-1.5">
+                            <Package className="w-3.5 h-3.5 text-indigo-400" />
+                            Selected Plan Products & Variants ({subDetails.selectedProducts.reduce((sum: number, p: any) => sum + (p.quantity || 1), 0)} Total Cans):
+                          </span>
+                          <span className="text-emerald-400 text-[10px] font-bold">Included in {subDetails.planName}</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                          {subDetails.selectedProducts.map((p: any, pIdx: number) => (
+                            <div key={pIdx} className="flex items-center justify-between bg-slate-900/90 border border-slate-700/60 p-2.5 rounded-lg text-xs">
+                              <div className="min-w-0 pr-2">
+                                <p className="font-extrabold text-white text-xs truncate">{p.name}</p>
+                                <p className="text-[10px] text-indigo-300 font-bold">Variant: {p.variant || 'Standard'}</p>
+                              </div>
+                              <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-full shrink-0">
+                                × {p.quantity}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -1055,13 +1180,33 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                             </div>
                             <div className="min-w-0">
                               <p className="font-extrabold text-xs text-slate-900 uppercase tracking-tight hover:text-indigo-600 transition-colors truncate">
-                                {item.productTitle}
+                                {isSubscriptionItem ? (subDetails?.planName || item.productTitle) : item.productTitle}
                               </p>
                               <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold mt-0.5">
-                                <span>{variantLabel}</span>
+                                <span>{isSubscriptionItem ? `${subDetails?.frequency} (${subDetails?.frequencyDiscount} OFF)` : variantLabel}</span>
                                 <span>•</span>
                                 <span>{skuLabel}</span>
                               </div>
+                              {isSubscriptionItem && subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 && (
+                                <div className="mt-2 bg-indigo-50/80 border border-indigo-100 rounded-lg p-2 text-left space-y-1">
+                                  <div className="text-[9px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1">
+                                    <Package className="w-3 h-3 text-indigo-600" />
+                                    Selected Products & Variants:
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                    {subDetails.selectedProducts.map((p: any, pIdx: number) => (
+                                      <div key={pIdx} className="flex justify-between items-center text-[10px] text-slate-700 font-semibold bg-white border border-indigo-100/80 px-2 py-1 rounded shadow-2xs">
+                                        <span className="truncate text-slate-850">
+                                          {p.name} {p.variant && p.variant !== 'Standard' ? <span className="text-indigo-600 font-extrabold">({p.variant})</span> : ''}
+                                        </span>
+                                        <span className="shrink-0 font-black text-indigo-700 text-[9px] ml-1 bg-indigo-50 px-1 rounded">
+                                          ×{p.quantity}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
 

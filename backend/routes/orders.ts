@@ -36,15 +36,27 @@ export async function saveSingleOrder(orderData: any) {
   let subscriptionDetails = orderData.subscriptionDetails || existingOrder?.subscriptionDetails || null;
 
   if (isSubscription && !subscriptionDetails) {
-    let planName = subItem?.subscriptionPlan || 'LITE Plan';
-    let frequency = subItem?.subscriptionFrequency || '';
-    let frequencyDiscount = subItem?.frequencyDiscount || '';
-
+    let planName = subItem?.subscriptionPlan || (orderData as any).subPlan || (orderData as any).subscriptionPlan || '';
+    const rawPlan = (subItem?.subscriptionPlan || (orderData as any).subPlan || (orderData as any).subscriptionPlan || '').toLowerCase();
     const title = (subItem?.productTitle || '').toLowerCase();
-    if (title.includes('core')) planName = 'CORE Plan';
-    else if (title.includes('pro')) planName = 'PRO Plan';
-    else if (title.includes('ultimate')) planName = 'ULTIMATE Plan';
-    else if (title.includes('lite')) planName = 'LITE Plan';
+    const prodId = (subItem?.productId || '').toLowerCase();
+
+    if (rawPlan.includes('ultimate') || title.startsWith('ultimate') || title.includes('ultimate plan') || prodId.includes('ultimate')) {
+      planName = 'ULTIMATE Plan';
+    } else if (rawPlan.includes('pro') || title.startsWith('pro') || title.includes('pro plan') || prodId.includes('pro')) {
+      planName = 'PRO Plan';
+    } else if (rawPlan.includes('core') || title.startsWith('core') || title.includes('core plan') || prodId.includes('core')) {
+      planName = 'CORE Plan';
+    } else if (rawPlan.includes('lite') || title.startsWith('lite') || title.includes('lite plan') || prodId.includes('lite')) {
+      planName = 'LITE Plan';
+    } else if (subItem?.subscriptionPlan) {
+      planName = subItem.subscriptionPlan;
+    } else {
+      planName = 'PRO Plan';
+    }
+
+    let frequency = subItem?.subscriptionFrequency || (orderData as any).subscriptionFrequency || '';
+    let frequencyDiscount = subItem?.frequencyDiscount || (orderData as any).frequencyDiscount || '';
 
     if (!frequency) {
       if (title.includes('next day') || title.includes('1 day')) {
@@ -79,11 +91,15 @@ export async function saveSingleOrder(orderData: any) {
       nextDate.setDate(baseDate.getDate() + 30);
     }
 
+    const subItems = subItem?.subscriptionItems || subItem?.items || (orderData as any).subscriptionItems || [];
+
     subscriptionDetails = {
       planName,
       frequency,
       frequencyDiscount,
       paymentStatus: 'Paid',
+      items: subItems,
+      selectedProducts: subItems,
       lastPaymentDate: baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
       nextPaymentDate: nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     };

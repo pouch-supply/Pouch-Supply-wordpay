@@ -1220,15 +1220,31 @@ export default function App() {
     const listSummary = items.map(i => {
       const vendorName = i.product.vendor || '';
       const productTitle = i.product.title || '';
+      const variantName = (i as any).variantName || (i as any).variant || i.product.concreteVariantName || (i.product as any).variant;
       let cleanTitle = productTitle;
       if (vendorName && productTitle.toLowerCase().startsWith(vendorName.toLowerCase())) {
         cleanTitle = productTitle.substring(vendorName.length).trim();
       }
-      return `${cleanTitle} (Qty:${i.quantity})`;
+      const variantSuffix = (variantName && variantName !== 'Standard') ? ` (${variantName})` : '';
+      return `${cleanTitle}${variantSuffix} (Qty:${i.quantity})`;
     }).join(', ');
 
     const freqDiscountPct = (frequency === 'Next Day (Test)' || frequency === 'Next Day') ? 10 : (frequency === 'Weekly' ? 5 : (frequency === 'One Month' ? 12 : 10));
     const desc = `${packName} [${frequency} - ${freqDiscountPct}% OFF] - (${listSummary})`;
+
+    const structuredSubItems = items.map(i => {
+      const p = i.product;
+      const vName = (i as any).variantName || (i as any).variant || p.concreteVariantName || (p as any).variant || 'Standard';
+      return {
+        productId: p.id,
+        productTitle: p.title,
+        variantName: vName,
+        variant: vName,
+        quantity: i.quantity,
+        price: p.price,
+        image: p.image || (i as any).image || PLACEHOLDER_IMAGE
+      };
+    });
 
     const now = new Date();
     const nextPaymentDate = new Date(now);
@@ -1255,6 +1271,7 @@ export default function App() {
         subscriptionPlan: packName,
         subscriptionFrequency: frequency,
         frequencyDiscount: `${freqDiscountPct}%`,
+        subscriptionItems: structuredSubItems,
         nextPaymentDate: nextPaymentDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
       } as any
     ]);

@@ -416,20 +416,38 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       customerName: customerName || 'Valued Customer',
       customerEmail: (customerEmail || 'customer@pouch-supply.com').toLowerCase().trim(),
       destination: destination || address || 'United Kingdom',
-      items: Array.isArray(items) ? items.map((it: any) => ({
-        productId: it.productId || it.id || 'prod',
-        productTitle: it.productTitle || it.title || 'Product',
-        price: typeof it.price === 'number' ? it.price : parseFloat(it.price) || 0,
-        quantity: typeof it.quantity === 'number' ? it.quantity : parseInt(it.quantity) || 1,
-        image: it.image || '',
-        variant: it.variant || it.concreteVariantName || it.strength || it.flavour || 'Standard',
-        sku: it.sku || it.concreteVariantId || it.productId || 'SKU-GENERIC',
-        vendor: it.vendor || '',
-        isSubscription: Boolean(it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack')))),
-        subscriptionPlan: it.subscriptionPlan || 'LITE Plan',
-        subscriptionFrequency: it.subscriptionFrequency || '1day',
-        frequencyDiscount: it.frequencyDiscount || '10%'
-      })) : [],
+      items: Array.isArray(items) ? items.map((it: any) => {
+        let planName = it.subscriptionPlan || '';
+        const rawPlan = (it.subscriptionPlan || '').toLowerCase();
+        const title = (it.productTitle || it.title || '').toLowerCase();
+        const prodId = (it.productId || it.id || '').toLowerCase();
+        if (!planName) {
+          if (rawPlan.includes('ultimate') || title.startsWith('ultimate') || title.includes('ultimate plan') || prodId.includes('ultimate')) {
+            planName = 'ULTIMATE Plan';
+          } else if (rawPlan.includes('pro') || title.startsWith('pro') || title.includes('pro plan') || prodId.includes('pro')) {
+            planName = 'PRO Plan';
+          } else if (rawPlan.includes('core') || title.startsWith('core') || title.includes('core plan') || prodId.includes('core')) {
+            planName = 'CORE Plan';
+          } else if (rawPlan.includes('lite') || title.startsWith('lite') || title.includes('lite plan') || prodId.includes('lite')) {
+            planName = 'LITE Plan';
+          }
+        }
+        return {
+          productId: it.productId || it.id || 'prod',
+          productTitle: it.productTitle || it.title || 'Product',
+          price: typeof it.price === 'number' ? it.price : parseFloat(it.price) || 0,
+          quantity: typeof it.quantity === 'number' ? it.quantity : parseInt(it.quantity) || 1,
+          image: it.image || '',
+          variant: it.variant || it.concreteVariantName || it.strength || it.flavour || 'Standard',
+          sku: it.sku || it.concreteVariantId || it.productId || 'SKU-GENERIC',
+          vendor: it.vendor || '',
+          isSubscription: Boolean(it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack')))),
+          subscriptionPlan: planName || it.subscriptionPlan || 'PRO Plan',
+          subscriptionFrequency: it.subscriptionFrequency || 'Bi-Weekly',
+          frequencyDiscount: it.frequencyDiscount || '10%',
+          subscriptionItems: it.subscriptionItems || it.items || []
+        };
+      }) : [],
       total: effectiveTotal,
       subtotal: typeof reqSubtotal === 'number' ? reqSubtotal : (effectiveTotal > effectiveShippingCost ? Number((effectiveTotal - effectiveShippingCost).toFixed(2)) : effectiveTotal),
       shippingCost: effectiveShippingCost,

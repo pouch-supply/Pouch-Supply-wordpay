@@ -40,6 +40,8 @@ export interface Product {
   updatedAt?: string;
   strength?: string;
   flavour?: string;
+  variant?: string;
+  concreteVariantName?: string;
   isVariantCard?: boolean;
   concreteVariantId?: string;
   parentSlug?: string;
