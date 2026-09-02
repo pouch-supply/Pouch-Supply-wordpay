@@ -8,6 +8,7 @@ import { Order } from '../../types';
 import { parseOrderTime } from '../../utils';
 import { RoyalMailOrderActions } from './RoyalMailOrderActions';
 import SubscriptionIcon from '../SubscriptionIcon';
+import { extractSubscriptionDetails, parseSubscriptionProducts } from '../../utils/subscriptionParser';
 
 const PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&q=80&w=300";
 
@@ -93,149 +94,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
 
   // Helper to extract subscription metadata and selected products for detailed display
   const getSubscriptionDetails = (order: Order) => {
-    const isCancelled = isSubscriptionCancelled(order);
-    let details: any = order.subscriptionDetails ? { ...order.subscriptionDetails } : {};
-
-    const subItem = order.items?.find((i: any) => 
-      i.isSubscription || 
-      i.vendor === 'Subscription Pack' || 
-      (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('plan') || i.productTitle.toLowerCase().includes('pack'))) ||
-      (i.productId && (i.productId.startsWith('sub-pack') || i.productId.includes('sub-pack')))
-    ) as any;
-
-    // 1. Accurately resolve plan name
-    let planName = details.planName || subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '';
-    const rawPlan = (subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '').toLowerCase();
-    const title = (subItem?.productTitle || '').toLowerCase();
-    const prodId = (subItem?.productId || '').toLowerCase();
-
-    if (rawPlan.includes('ultimate') || title.startsWith('ultimate') || title.includes('ultimate plan') || prodId.includes('ultimate')) {
-      planName = 'ULTIMATE Plan';
-    } else if (rawPlan.includes('pro') || title.startsWith('pro') || title.includes('pro plan') || prodId.includes('pro')) {
-      planName = 'PRO Plan';
-    } else if (rawPlan.includes('core') || title.startsWith('core') || title.includes('core plan') || prodId.includes('core')) {
-      planName = 'CORE Plan';
-    } else if (rawPlan.includes('lite') || title.startsWith('lite') || title.includes('lite plan') || prodId.includes('lite')) {
-      planName = 'LITE Plan';
-    } else if (details.planName) {
-      const p = String(details.planName).toLowerCase();
-      if (p.includes('ultimate')) planName = 'ULTIMATE Plan';
-      else if (p.includes('pro')) planName = 'PRO Plan';
-      else if (p.includes('core')) planName = 'CORE Plan';
-      else if (p.includes('lite')) planName = 'LITE Plan';
-      else planName = details.planName;
-    } else if (subItem?.subscriptionPlan) {
-      planName = subItem.subscriptionPlan;
-    } else {
-      planName = 'PRO Plan';
-    }
-
-    // 2. Frequency & discount
-    let frequency = details.frequency || subItem?.subscriptionFrequency || (order as any).subscriptionFrequency || '';
-    let frequencyDiscount = details.frequencyDiscount || subItem?.frequencyDiscount || (order as any).frequencyDiscount || '';
-
-    if (!frequency) {
-      if (title.includes('next day') || title.includes('1 day')) {
-        frequency = 'Next Day (Test)';
-      } else if (title.includes('weekly') && !title.includes('bi')) {
-        frequency = 'Weekly';
-      } else if (title.includes('bi-weekly') || title.includes('by weekly') || title.includes('2 week')) {
-        frequency = 'Bi-Weekly';
-      } else if (title.includes('month') || title.includes('one month')) {
-        frequency = 'One Month';
-      } else {
-        frequency = 'Bi-Weekly';
-      }
-    }
-
-    if (!frequencyDiscount) {
-      if (frequency.includes('Next Day')) frequencyDiscount = '10%';
-      else if (frequency === 'Weekly') frequencyDiscount = '5%';
-      else if (frequency === 'One Month') frequencyDiscount = '12%';
-      else frequencyDiscount = '10%';
-    }
-
-    const baseDate = order.createdAt ? new Date(order.createdAt) : new Date();
-    const nextDate = new Date(baseDate);
-    if (frequency.includes('Next Day')) {
-      nextDate.setDate(baseDate.getDate() + 1);
-    } else if (frequency === 'Weekly') {
-      nextDate.setDate(baseDate.getDate() + 7);
-    } else if (frequency === 'Bi-Weekly') {
-      nextDate.setDate(baseDate.getDate() + 14);
-    } else {
-      nextDate.setDate(baseDate.getDate() + 30);
-    }
-
-    // 3. Extract selected products with variant names
-    const selectedProducts: { name: string; variant: string; quantity: number; image?: string; price?: number }[] = [];
-
-    const rawItems = subItem?.subscriptionItems || subItem?.items || details.items || details.selectedProducts || (order as any).subscriptionItems;
-    if (Array.isArray(rawItems) && rawItems.length > 0) {
-      rawItems.forEach((it: any) => {
-        const p = it.product || it;
-        const name = p.title || p.productTitle || p.name || it.productTitle || 'Pouch Product';
-        const variant = it.variantName || it.variant || p.concreteVariantName || p.variant || (it as any).strength || (it as any).flavour || 'Standard';
-        const quantity = Number(it.quantity || p.quantity || 1);
-        const image = it.image || p.image || '';
-        const price = Number(it.price || p.price || 0);
-        selectedProducts.push({ name, variant, quantity, image, price });
-      });
-    }
-
-    // If no structured array was found, parse from description summary:
-    // e.g. "PRO Plan [Bi-Weekly - 10% OFF] - (White Fox Full Charge (Qty:2), Killa Cold Mint (16mg) (Qty:4))"
-    if (selectedProducts.length === 0 && subItem?.productTitle) {
-      const rawTitle: string = subItem.productTitle;
-      const match = rawTitle.match(/\(([^)]+)\)$/);
-      if (match && match[1]) {
-        const itemsPart = match[1];
-        const parts = itemsPart.split(/,\s*(?=[^()]*\()/);
-        parts.forEach(part => {
-          const trimmed = part.trim();
-          if (!trimmed) return;
-          const qtyMatch = trimmed.match(/^(.*?)\s*\(Qty:\s*(\d+)\)$/i);
-          if (qtyMatch) {
-            const fullItemName = qtyMatch[1].trim();
-            const qty = parseInt(qtyMatch[2], 10) || 1;
-            let name = fullItemName;
-            let variant = 'Standard';
-            const varMatch = fullItemName.match(/^(.*?)\s*\((.*?)\)$/);
-            if (varMatch) {
-              name = varMatch[1].trim();
-              variant = varMatch[2].trim();
-            } else if (fullItemName.includes(' - ')) {
-              const split = fullItemName.split(' - ');
-              name = split[0].trim();
-              variant = split.slice(1).join(' - ').trim();
-            }
-            selectedProducts.push({ name, variant, quantity: qty });
-          } else {
-            selectedProducts.push({ name: trimmed, variant: 'Standard', quantity: 1 });
-          }
-        });
-      }
-    }
-
-    details = {
-      ...details,
-      planName,
-      frequency,
-      frequencyDiscount,
-      paymentStatus: order.paymentStatus || details.paymentStatus || 'Paid',
-      lastPaymentDate: details.lastPaymentDate || baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      nextPaymentDate: details.nextPaymentDate || nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      selectedProducts
-    };
-
-    if (isCancelled) {
-      details.status = 'Cancelled';
-      details.isCancelled = true;
-      details.cancelledAt = order.subscriptionCancelledAt || details.cancelledAt;
-      details.cancellationReason = order.subscriptionCancellationReason || details.cancellationReason || 'Customer cancelled via account portal';
-    }
-
-    return details;
+    return extractSubscriptionDetails(order);
   };
 
   const handleExecuteRefund = async () => {

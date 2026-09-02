@@ -91,7 +91,71 @@ export async function saveSingleOrder(orderData: any) {
       nextDate.setDate(baseDate.getDate() + 30);
     }
 
-    const subItems = subItem?.subscriptionItems || subItem?.items || (orderData as any).subscriptionItems || [];
+    const rawSubItems = subItem?.subscriptionItems || subItem?.items || (orderData as any).subscriptionItems || [];
+    let subItems = rawSubItems;
+
+    // If subItems array is empty, parse from title description
+    if ((!subItems || subItems.length === 0) && subItem?.productTitle) {
+      const rawTitle: string = subItem.productTitle.trim();
+      let itemsSummary = '';
+      if (rawTitle.includes(' - (')) {
+        const start = rawTitle.indexOf(' - (') + 4;
+        const end = rawTitle.lastIndexOf(')');
+        itemsSummary = end > start ? rawTitle.substring(start, end) : rawTitle.substring(start);
+      } else if (rawTitle.includes(' - ')) {
+        const dashParts = rawTitle.split(' - ');
+        itemsSummary = dashParts.slice(1).join(' - ').trim();
+        if (itemsSummary.startsWith('(') && itemsSummary.endsWith(')')) {
+          itemsSummary = itemsSummary.slice(1, -1);
+        }
+      }
+
+      if (itemsSummary) {
+        const parts: string[] = [];
+        let cur = '';
+        let depth = 0;
+        for (let i = 0; i < itemsSummary.length; i++) {
+          const c = itemsSummary[i];
+          if (c === '(') depth++;
+          else if (c === ')') depth--;
+          if (c === ',' && depth === 0) {
+            if (cur.trim()) parts.push(cur.trim());
+            cur = '';
+          } else {
+            cur += c;
+          }
+        }
+        if (cur.trim()) parts.push(cur.trim());
+
+        const parsedProducts: any[] = [];
+        parts.forEach(part => {
+          const trimmed = part.trim();
+          if (!trimmed) return;
+          let qty = 1;
+          let cleanPart = trimmed;
+          const qtyMatch = cleanPart.match(/\(Qty\s*:\s*(\d+)\)/i) || cleanPart.match(/\bx\s*(\d+)\b/i);
+          if (qtyMatch) {
+            qty = parseInt(qtyMatch[1], 10) || 1;
+            cleanPart = cleanPart.replace(/\(Qty\s*:\s*(\d+)\)/i, '').replace(/\bx\s*(\d+)\b/i, '').trim();
+          }
+          let name = cleanPart;
+          let variant = 'Standard';
+          const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
+          if (varMatch && varMatch[1] && varMatch[2]) {
+            name = varMatch[1].trim();
+            variant = varMatch[2].trim();
+          } else if (cleanPart.includes(' - ')) {
+            const split = cleanPart.split(' - ');
+            name = split[0].trim();
+            variant = split.slice(1).join(' - ').trim();
+          }
+          parsedProducts.push({ name, variant, quantity: qty });
+        });
+        if (parsedProducts.length > 0) {
+          subItems = parsedProducts;
+        }
+      }
+    }
 
     subscriptionDetails = {
       planName,

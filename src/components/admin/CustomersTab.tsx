@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Search, Download, Upload, Plus, Eye, User, Mail, MapPin, Package, ShoppingBag, X, Check, ArrowRight, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Order } from '../../types';
+import { extractSubscriptionDetails } from '../../utils/subscriptionParser';
 
 interface CustomerItem {
   id: string;
@@ -55,86 +56,7 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
 
   // Helper to extract subscription metadata
   const getSubscriptionDetails = (order: Order) => {
-    let details: any = order.subscriptionDetails ? { ...order.subscriptionDetails } : {};
-
-    const subItem = order.items?.find((i: any) => 
-      i.isSubscription || 
-      i.vendor === 'Subscription Pack' || 
-      (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('plan') || i.productTitle.toLowerCase().includes('pack'))) ||
-      (i.productId && (i.productId.startsWith('sub-pack') || i.productId.includes('sub-pack')))
-    ) as any;
-
-    let planName = details.planName || subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '';
-    const rawPlan = (subItem?.subscriptionPlan || (order as any).subPlan || (order as any).subscriptionPlan || '').toLowerCase();
-    const title = (subItem?.productTitle || '').toLowerCase();
-    const prodId = (subItem?.productId || '').toLowerCase();
-
-    if (rawPlan.includes('ultimate') || title.startsWith('ultimate') || title.includes('ultimate plan') || prodId.includes('ultimate')) {
-      planName = 'ULTIMATE Plan';
-    } else if (rawPlan.includes('pro') || title.startsWith('pro') || title.includes('pro plan') || prodId.includes('pro')) {
-      planName = 'PRO Plan';
-    } else if (rawPlan.includes('core') || title.startsWith('core') || title.includes('core plan') || prodId.includes('core')) {
-      planName = 'CORE Plan';
-    } else if (rawPlan.includes('lite') || title.startsWith('lite') || title.includes('lite plan') || prodId.includes('lite')) {
-      planName = 'LITE Plan';
-    } else if (details.planName) {
-      const p = String(details.planName).toLowerCase();
-      if (p.includes('ultimate')) planName = 'ULTIMATE Plan';
-      else if (p.includes('pro')) planName = 'PRO Plan';
-      else if (p.includes('core')) planName = 'CORE Plan';
-      else if (p.includes('lite')) planName = 'LITE Plan';
-      else planName = details.planName;
-    } else if (subItem?.subscriptionPlan) {
-      planName = subItem.subscriptionPlan;
-    } else {
-      planName = 'PRO Plan';
-    }
-
-    let frequency = details.frequency || subItem?.subscriptionFrequency || '';
-    let frequencyDiscount = details.frequencyDiscount || subItem?.frequencyDiscount || '';
-
-    if (!frequency) {
-      if (title.includes('next day') || title.includes('1 day')) {
-        frequency = 'Next Day (Test)';
-      } else if (title.includes('weekly') && !title.includes('bi')) {
-        frequency = 'Weekly';
-      } else if (title.includes('bi-weekly') || title.includes('by weekly') || title.includes('2 week')) {
-        frequency = 'Bi-Weekly';
-      } else if (title.includes('month') || title.includes('one month')) {
-        frequency = 'One Month';
-      } else {
-        frequency = 'Bi-Weekly';
-      }
-    }
-
-    if (!frequencyDiscount) {
-      if (frequency.includes('Next Day')) frequencyDiscount = '10%';
-      else if (frequency === 'Weekly') frequencyDiscount = '5%';
-      else if (frequency === 'One Month') frequencyDiscount = '12%';
-      else frequencyDiscount = '10%';
-    }
-
-    const baseDate = order.createdAt ? new Date(order.createdAt) : new Date();
-    const nextDate = new Date(baseDate);
-    if (frequency.includes('Next Day')) {
-      nextDate.setDate(baseDate.getDate() + 1);
-    } else if (frequency === 'Weekly') {
-      nextDate.setDate(baseDate.getDate() + 7);
-    } else if (frequency === 'Bi-Weekly') {
-      nextDate.setDate(baseDate.getDate() + 14);
-    } else {
-      nextDate.setDate(baseDate.getDate() + 30);
-    }
-
-    return {
-      ...details,
-      planName,
-      frequency,
-      frequencyDiscount,
-      paymentStatus: order.paymentStatus || details.paymentStatus || 'Paid',
-      lastPaymentDate: details.lastPaymentDate || baseDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      nextPaymentDate: details.nextPaymentDate || nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-    };
+    return extractSubscriptionDetails(order);
   };
 
   // Check if customer's subscription was cancelled
@@ -391,24 +313,51 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
                   {latestSubOrder ? (() => {
                     const subDetails = getSubscriptionDetails(latestSubOrder);
                     return (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs pt-1">
-                        <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Plan Name</span>
-                          <strong className="text-white text-xs font-black">{subDetails.planName}</strong>
+                      <div className="space-y-2.5 pt-1">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                          <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Plan Name</span>
+                            <strong className="text-white text-xs font-black">{subDetails.planName}</strong>
+                          </div>
+                          <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Frequency</span>
+                            <strong className="text-white text-xs font-black">{subDetails.frequency}</strong>
+                            <span className="text-[9px] text-emerald-400 font-bold block">({subDetails.frequencyDiscount} OFF)</span>
+                          </div>
+                          <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Payment Status</span>
+                            <strong className="text-emerald-400 text-xs font-black">{subDetails.paymentStatus}</strong>
+                          </div>
+                          <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Next Billing</span>
+                            <strong className="text-amber-300 text-xs font-black">{subDetails.nextPaymentDate}</strong>
+                          </div>
                         </div>
-                        <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Frequency</span>
-                          <strong className="text-white text-xs font-black">{subDetails.frequency}</strong>
-                          <span className="text-[9px] text-emerald-400 font-bold block">({subDetails.frequencyDiscount} OFF)</span>
-                        </div>
-                        <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Payment Status</span>
-                          <strong className="text-emerald-400 text-xs font-black">{subDetails.paymentStatus}</strong>
-                        </div>
-                        <div className="bg-slate-800/90 p-2.5 rounded-xl border border-slate-700/80">
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block mb-0.5">Next Billing</span>
-                          <strong className="text-amber-300 text-xs font-black">{subDetails.nextPaymentDate}</strong>
-                        </div>
+
+                        {/* Selected Box Products List with Variants */}
+                        {subDetails.selectedProducts && subDetails.selectedProducts.length > 0 && (
+                          <div className="bg-slate-800/95 border border-slate-700 rounded-xl p-3 text-left space-y-1.5 shadow-2xs">
+                            <div className="text-[9.5px] font-black text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                              <Package className="w-3.5 h-3.5 text-indigo-400" />
+                              Client Selected Box Products ({subDetails.selectedProducts.reduce((sum: number, p: any) => sum + (p.quantity || 1), 0)} Cans):
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
+                              {subDetails.selectedProducts.map((p: any, pIdx: number) => (
+                                <div key={pIdx} className="flex justify-between items-center text-[10.5px] text-slate-200 bg-slate-900/90 border border-slate-700 px-2.5 py-1.5 rounded-lg">
+                                  <div className="min-w-0 pr-1.5">
+                                    <p className="font-extrabold text-white truncate leading-tight">{p.name}</p>
+                                    <p className="text-[9px] text-indigo-300 font-bold mt-0.5">
+                                      Variant: <span className="text-amber-300 font-extrabold">{p.variant || 'Standard'}</span>
+                                    </p>
+                                  </div>
+                                  <span className="shrink-0 font-black text-amber-300 text-[10px] ml-1 bg-slate-800 border border-slate-650 px-2 py-0.5 rounded-md">
+                                    × {p.quantity}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })() : (
