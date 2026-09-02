@@ -1214,38 +1214,39 @@ export default function App() {
   // Add customized subscription pack package directly to cart
   const handleAddSubBoxToCart = (
     packName: string, 
-    items: { product: Product; quantity: number }[], 
+    items: { product: Product; quantity: number; brand?: string; vendor?: string; variantName?: string; variant?: string }[], 
     frequency: string,
     flatPrice: number
   ) => {
-    const listSummary = items.map(i => {
-      const vendorName = i.product.vendor || '';
-      const productTitle = i.product.title || '';
-      const variantName = (i as any).variantName || (i as any).variant || i.product.concreteVariantName || (i.product as any).variant;
-      let cleanTitle = productTitle;
-      if (vendorName && productTitle.toLowerCase().startsWith(vendorName.toLowerCase())) {
-        cleanTitle = productTitle.substring(vendorName.length).trim();
-      }
-      const variantSuffix = (variantName && variantName !== 'Standard') ? ` (${variantName})` : '';
-      return `${cleanTitle}${variantSuffix} (Qty:${i.quantity})`;
-    }).join(', ');
-
-    const freqDiscountPct = (frequency === 'Next Day (Test)' || frequency === 'Next Day') ? 10 : (frequency === 'Weekly' ? 5 : (frequency === 'One Month' ? 12 : 10));
-    const desc = `${packName} [${frequency} - ${freqDiscountPct}% OFF] - (${listSummary})`;
-
     const structuredSubItems = items.map(i => {
       const p = i.product;
+      const brand = (i.brand || i.vendor || p.vendor || (p as any).brand || '').trim();
+      let cleanTitle = (p.title || (i as any).productTitle || '').trim();
+      if (brand && cleanTitle.toLowerCase().startsWith(brand.toLowerCase())) {
+        cleanTitle = cleanTitle.substring(brand.length).replace(/^[\s—–-]+/, '').trim();
+      }
       const vName = (i as any).variantName || (i as any).variant || p.concreteVariantName || (p as any).variant || 'Standard';
+      const formattedLabel = `${brand ? `${brand} — ` : ''}${cleanTitle} — ${vName} (Qty:${i.quantity})`;
+
       return {
+        brand: brand,
+        vendor: brand,
         productId: p.id,
-        productTitle: p.title,
+        productTitle: cleanTitle,
+        name: cleanTitle,
         variantName: vName,
         variant: vName,
         quantity: i.quantity,
         price: p.price,
-        image: p.image || (i as any).image || PLACEHOLDER_IMAGE
+        image: p.image || (i as any).image || PLACEHOLDER_IMAGE,
+        formattedLabel
       };
     });
+
+    const listSummary = structuredSubItems.map(i => i.formattedLabel).join(', ');
+
+    const freqDiscountPct = (frequency === 'Next Day (Test)' || frequency === 'Next Day') ? 10 : (frequency === 'Weekly' ? 5 : (frequency === 'One Month' ? 12 : 10));
+    const desc = `${packName} [${frequency} - ${freqDiscountPct}% OFF] - (${listSummary})`;
 
     const now = new Date();
     const nextPaymentDate = new Date(now);

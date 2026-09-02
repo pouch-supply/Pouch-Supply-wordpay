@@ -1,16 +1,22 @@
-import { getPlanSlug } from './planImages';
+import { getPlanSlug, getPlanImage } from './planImages';
 
 export interface SubscriptionProductItem {
-  name: string;
-  variant: string;
+  brand?: string;
+  vendor?: string;
+  name: string; // Product Name (e.g. "5.2 mg", "9 mg", "Freeze Max")
+  productTitle?: string;
+  variant: string; // Variant Name (e.g. "Watermelon Ice", "Wild Cherry", "Standard")
+  variantName?: string;
   quantity: number;
   image?: string;
   price?: number;
+  formattedLabel?: string; // e.g. "77 — 5.2 mg — Watermelon Ice (Qty:1)"
 }
 
 export interface ExtractedSubscriptionDetails {
   planName: string;
   planSlug: 'lite' | 'core' | 'pro' | 'ultimate';
+  planImage: string;
   frequency: string;
   frequencyDiscount: string;
   paymentStatus: string;
@@ -21,6 +27,55 @@ export interface ExtractedSubscriptionDetails {
   cancelledAt?: string;
   cancellationReason?: string;
   selectedProducts: SubscriptionProductItem[];
+}
+
+const KNOWN_BRANDS = [
+  '77', 'SNU', 'CUBA', 'KILLA', 'PABLO', 'VELO', 'WHITE FOX', 'ZYN', 
+  'XQS', 'NORDIC SPIRIT', 'CLEW', 'FUMI', 'FEDRS', 'GRANT', 'ICE', 
+  'LOOP', 'KURWA', 'DZRT', 'SIBERIA', 'SKRUF', 'DOPE', 'CHAPO', 
+  'HIT', 'VOLT', 'FIX', 'STRNG', 'ACE', 'THUNDER'
+];
+
+/**
+ * Normalizes and formats a single subscription product representation
+ */
+export function formatSubscriptionItemDisplay(item: {
+  brand?: string;
+  vendor?: string;
+  name?: string;
+  productTitle?: string;
+  variant?: string;
+  variantName?: string;
+  quantity?: number;
+}): string {
+  const brand = (item.brand || item.vendor || '').trim();
+  let name = (item.name || item.productTitle || 'Product').trim();
+  let variant = (item.variant || item.variantName || 'Standard').trim();
+  const qty = Number(item.quantity || 1);
+
+  // If name contains brand at start, remove it so brand is not duplicated
+  if (brand && name.toLowerCase().startsWith(brand.toLowerCase())) {
+    name = name.substring(brand.length).replace(/^[\s—–-]+/, '').trim();
+  }
+
+  // If variant is embedded in name in parentheses e.g. "5.2 mg (Watermelon Ice)"
+  const titleVarMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
+  if (titleVarMatch && titleVarMatch[1] && titleVarMatch[2] && (!variant || variant === 'Standard')) {
+    name = titleVarMatch[1].trim();
+    variant = titleVarMatch[2].trim();
+  }
+
+  const parts: string[] = [];
+  if (brand) parts.push(brand);
+  if (name) parts.push(name);
+  if (variant && variant !== 'Standard') {
+    parts.push(variant);
+  } else if (brand && (!variant || variant === 'Standard')) {
+    parts.push('Standard');
+  }
+
+  const mainLabel = parts.join(' — ');
+  return `${mainLabel} (Qty:${qty})`;
 }
 
 /**
@@ -40,22 +95,37 @@ export function parseSubscriptionProducts(order: any, subItem?: any): Subscripti
   if (Array.isArray(rawItems) && rawItems.length > 0) {
     rawItems.forEach((it: any) => {
       const p = it.product || it;
-      const rawName = p.title || p.productTitle || p.name || it.productTitle || it.title || 'Product';
-      
+      let rawName = p.title || p.productTitle || p.name || it.productTitle || it.title || 'Product';
+      let rawBrand = (it.brand || it.vendor || p.vendor || p.brand || '').trim();
       let variant = (it as any).variantName || (it as any).variant || (p as any).concreteVariantName || (p as any).variant || (it as any).strength || (it as any).flavour || (p as any).strength || (p as any).flavour || '';
-      
+
+      // Check if rawName starts with known brand if brand is missing
+      if (!rawBrand) {
+        for (const kb of KNOWN_BRANDS) {
+          if (rawName.toLowerCase().startsWith(kb.toLowerCase())) {
+            rawBrand = kb;
+            break;
+          }
+        }
+      }
+
+      // If rawName starts with rawBrand, strip brand from name
       let name = rawName;
-      // If variant is empty, extract from title if formatted like "VELO Freeze Max (14mg)"
+      if (rawBrand && name.toLowerCase().startsWith(rawBrand.toLowerCase())) {
+        name = name.substring(rawBrand.length).replace(/^[\s—–-]+/, '').trim();
+      }
+
+      // If variant is empty, check if it's formatted like "5.2 mg (Watermelon Ice)" or "5.2 mg — Watermelon Ice"
       if (!variant || variant === 'Standard') {
-        const titleMatch = rawName.match(/^(.*?)\s*\(([^)]+)\)$/);
+        const titleMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
         if (titleMatch && titleMatch[1] && titleMatch[2] && !titleMatch[2].toLowerCase().includes('qty:')) {
           name = titleMatch[1].trim();
           variant = titleMatch[2].trim();
-        } else if (rawName.includes(' - ')) {
-          const split = rawName.split(' - ');
+        } else if (name.includes(' — ') || name.includes(' - ')) {
+          const split = name.split(/\s*(?:—|–|-)\s*/);
           if (split.length > 1) {
             name = split[0].trim();
-            variant = split.slice(1).join(' - ').trim();
+            variant = split.slice(1).join(' — ').trim();
           }
         }
       }
@@ -66,7 +136,25 @@ export function parseSubscriptionProducts(order: any, subItem?: any): Subscripti
       const image = it.image || p.image || '';
       const price = Number(it.price || p.price || 0);
 
-      results.push({ name, variant, quantity, image, price });
+      const formattedLabel = formatSubscriptionItemDisplay({
+        brand: rawBrand,
+        name,
+        variant,
+        quantity
+      });
+
+      results.push({ 
+        brand: rawBrand,
+        vendor: rawBrand,
+        name, 
+        productTitle: name,
+        variant, 
+        variantName: variant,
+        quantity, 
+        image, 
+        price,
+        formattedLabel
+      });
     });
 
     if (results.length > 0) return results;
@@ -74,9 +162,8 @@ export function parseSubscriptionProducts(order: any, subItem?: any): Subscripti
 
   // 2. Second priority: Parse from subscription productTitle description summary
   // Example formats:
-  // "PRO Plan [Bi-Weekly - 10% OFF] - (VELO Freeze Max (14mg) (Qty:5), ZYN Cool Mint (6mg) (Qty:5))"
-  // "PRO Plan (10 Cans) - (White Fox Full Charge (Qty:2), Killa Cold Mint (16mg) (Qty:8))"
-  // "CORE Plan - (FUMI Spicy Cola (8mg) (Qty:4), VELO Ruby Berry (6mg) (Qty:4))"
+  // "PRO Plan [Bi-Weekly - 10% OFF] - (77 — 5.2 mg — Watermelon Ice (Qty:1), SNU — 9 mg — Wild Cherry (Qty:1))"
+  // "PRO Plan [Bi-Weekly - 10% OFF] - (9 mg (Wild Cherry) (Qty:1), 10.9 mg (Freezing Peppermint) (Qty:1))"
   const rawTitle: string = (subItem?.productTitle || order?.items?.[0]?.productTitle || '').trim();
   if (!rawTitle) return results;
 
@@ -96,7 +183,7 @@ export function parseSubscriptionProducts(order: any, subItem?: any): Subscripti
   }
 
   if (itemsSummary) {
-    // Split by comma outside parentheses so "(14mg)" inside variant does not split
+    // Split by comma outside parentheses so nested tags do not split
     const parts: string[] = [];
     let cur = '';
     let depth = 0;
@@ -127,24 +214,69 @@ export function parseSubscriptionProducts(order: any, subItem?: any): Subscripti
         cleanPart = cleanPart.replace(/\(Qty\s*:\s*(\d+)\)/i, '').replace(/\bx\s*(\d+)\b/i, '').replace(/\*\s*(\d+)\b/, '').trim();
       }
 
-      // Extract variant from remaining string e.g. "VELO Freeze Max (14mg)" or "Cuba Black - 43mg"
+      let brand = '';
       let name = cleanPart;
       let variant = 'Standard';
 
-      const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
-      if (varMatch && varMatch[1] && varMatch[2]) {
-        name = varMatch[1].trim();
-        variant = varMatch[2].trim();
-      } else if (cleanPart.includes(' - ')) {
-        const split = cleanPart.split(' - ');
-        name = split[0].trim();
-        variant = split.slice(1).join(' - ').trim();
+      // Check if separated by " — " or " - " (e.g. "77 — 5.2 mg — Watermelon Ice")
+      if (cleanPart.includes(' — ') || cleanPart.includes(' – ') || (cleanPart.includes(' - ') && !cleanPart.includes(')-('))) {
+        const segments = cleanPart.split(/\s*(?:—|–|-)\s*/);
+        if (segments.length >= 3) {
+          brand = segments[0].trim();
+          name = segments[1].trim();
+          variant = segments.slice(2).join(' — ').trim();
+        } else if (segments.length === 2) {
+          // Check if first segment is known brand
+          const firstSeg = segments[0].trim();
+          const isBrand = KNOWN_BRANDS.some(kb => kb.toLowerCase() === firstSeg.toLowerCase());
+          if (isBrand) {
+            brand = firstSeg;
+            name = segments[1].trim();
+            // Check if name has variant in parentheses e.g. "5.2 mg (Watermelon Ice)"
+            const nestedMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
+            if (nestedMatch && nestedMatch[1] && nestedMatch[2]) {
+              name = nestedMatch[1].trim();
+              variant = nestedMatch[2].trim();
+            }
+          } else {
+            name = segments[0].trim();
+            variant = segments[1].trim();
+          }
+        }
+      } else {
+        // Formats like "9 mg (Wild Cherry)" or "77 5.2 mg (Watermelon Ice)"
+        const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
+        if (varMatch && varMatch[1] && varMatch[2]) {
+          name = varMatch[1].trim();
+          variant = varMatch[2].trim();
+        }
+
+        // Check if name starts with known brand
+        for (const kb of KNOWN_BRANDS) {
+          if (name.toLowerCase().startsWith(kb.toLowerCase())) {
+            brand = kb;
+            name = name.substring(kb.length).replace(/^[\s—–-]+/, '').trim();
+            break;
+          }
+        }
       }
 
-      results.push({
+      const formattedLabel = formatSubscriptionItemDisplay({
+        brand,
         name,
-        variant: variant || 'Standard',
+        variant,
         quantity: qty
+      });
+
+      results.push({
+        brand: brand || undefined,
+        vendor: brand || undefined,
+        name: name || 'Product',
+        productTitle: name || 'Product',
+        variant: variant || 'Standard',
+        variantName: variant || 'Standard',
+        quantity: qty,
+        formattedLabel
       });
     });
   }
@@ -174,6 +306,8 @@ export function extractSubscriptionDetails(order: any): ExtractedSubscriptionDet
   else if (planSlug === 'pro') planName = 'PRO Plan';
   else if (planSlug === 'core') planName = 'CORE Plan';
   else if (planSlug === 'lite') planName = 'LITE Plan';
+
+  const planImage = getPlanImage(planName, details.planImage || subItem?.image || (order.items && order.items[0]?.image));
 
   // 2. Resolve frequency and discount
   const title = (subItem?.productTitle || '').toLowerCase();
@@ -213,7 +347,7 @@ export function extractSubscriptionDetails(order: any): ExtractedSubscriptionDet
     nextDate.setDate(baseDate.getDate() + 30);
   }
 
-  // 3. Extract selected products with variant names
+  // 3. Extract selected products with brand, name, variant, and quantities
   const selectedProducts = parseSubscriptionProducts(order, subItem);
 
   const isCancelled = 
@@ -226,6 +360,7 @@ export function extractSubscriptionDetails(order: any): ExtractedSubscriptionDet
     ...details,
     planName,
     planSlug,
+    planImage,
     frequency,
     frequencyDiscount,
     paymentStatus: order.paymentStatus || details.paymentStatus || 'Paid',

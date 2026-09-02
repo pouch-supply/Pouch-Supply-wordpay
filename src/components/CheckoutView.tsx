@@ -12,6 +12,8 @@ import AgeGate, { AgeGateHandle } from './AgeGate';
 import { calculateDiscountAmount, calculateVolumePrice } from '../utils';
 import { resolveDiscountCode } from '../utils/discountUtils';
 import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed, trackSubscriptionStarted } from '../utils/klaviyo';
+import { getPlanImage, getPlanSlug } from '../utils/planImages';
+import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
 
 interface CheckoutViewProps {
   cartItems: CartItem[];
@@ -426,13 +428,33 @@ export default function CheckoutView({
           address: `${addressLine}, ${city}, ${postcode}, ${country}`,
           total: 0,
           discountApplied: currentDiscount,
-          items: cartItems.map(item => ({
-            productId: item.productId,
-            productTitle: item.productTitle,
-            price: item.price,
-            quantity: item.quantity,
-            image: item.image
-          })),
+          items: cartItems.map(item => {
+            let planName = (item as any).subscriptionPlan || '';
+            const titleLower = (item.productTitle || '').toLowerCase();
+            if (!planName) {
+              if (titleLower.includes('ultimate')) planName = 'ULTIMATE Plan';
+              else if (titleLower.includes('pro')) planName = 'PRO Plan';
+              else if (titleLower.includes('core')) planName = 'CORE Plan';
+              else if (titleLower.includes('lite')) planName = 'LITE Plan';
+              else if (item.isSubscription) planName = 'PRO Plan';
+            }
+            return {
+              productId: item.productId,
+              productTitle: item.productTitle,
+              price: item.price,
+              quantity: item.quantity,
+              image: item.image || '',
+              variant: (item as any).variant || (item as any).concreteVariantName || (item as any).strength || (item as any).flavour || 'Standard',
+              sku: (item as any).sku || (item as any).concreteVariantId || item.productId || 'SKU-001',
+              vendor: item.vendor || '',
+              isSubscription: Boolean(item.isSubscription || (item.productId && (item.productId.startsWith('sub-pack') || item.productId.includes('sub-pack')))),
+              subscriptionPlan: planName || (item as any).subscriptionPlan || 'PRO Plan',
+              subscriptionFrequency: (item as any).subscriptionFrequency || 'Bi-Weekly',
+              frequencyDiscount: (item as any).frequencyDiscount || '10%',
+              subscriptionItems: (item as any).subscriptionItems || [],
+              total: Number((item.price * item.quantity).toFixed(2))
+            };
+          }),
           gatewayTxId: `CREDIT-${Date.now()}`,
           gatewayAuthCode: 'CREDIT-AUTH',
           cardBrand: 'Store Credit',
@@ -1074,26 +1096,73 @@ export default function CheckoutView({
             </h3>
 
             {/* Product items */}
-            <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto pr-2">
-              {cartItems.map((item, idx) => (
-                <div key={idx} className="py-3 flex items-center gap-3.5 text-xs">
-                  {item.productId && (item.productId.startsWith('sub-pack-') || item.productId.includes('sub-pack')) ? (
-                    <SubscriptionIcon planName={item.productTitle} className="!w-12 !h-12 rounded-lg" />
-                  ) : (
-                    <img
-                      src={item.image}
-                      alt={item.productTitle}
-                      className="w-12 h-12 object-cover rounded-lg bg-slate-50 border border-slate-100"
-                      referrerPolicy="no-referrer"
-                    />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-extrabold text-slate-800 text-[11px]">{item.productTitle}</h4>
-                    <p className="text-slate-400 text-[10px] font-bold">Qty: {item.quantity} × £{item.price.toFixed(2)}</p>
+            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto pr-2">
+              {cartItems.map((item, idx) => {
+                const isSubPack = Boolean(
+                  item.isSubscription ||
+                  (item.productId && (item.productId.startsWith('sub-pack-') || item.productId.includes('sub-pack'))) ||
+                  item.vendor === 'Subscription Pack' ||
+                  (item.productTitle && item.productTitle.toLowerCase().includes('subscription') && item.productTitle.toLowerCase().includes('plan'))
+                );
+
+                const subProducts = isSubPack ? parseSubscriptionProducts(null, item) : [];
+                const planSlug = getPlanSlug(item.subscriptionPlan || item.productTitle);
+                const planImg = getPlanImage(item.subscriptionPlan || item.productTitle, item.image);
+                const displayPlanName = item.subscriptionPlan || (
+                  planSlug === 'ultimate' ? 'ULTIMATE Plan' :
+                  planSlug === 'pro' ? 'PRO Plan' :
+                  planSlug === 'core' ? 'CORE Plan' : 'LITE Plan'
+                );
+
+                return (
+                  <div key={idx} className="py-3 flex items-start gap-3.5 text-xs">
+                    {isSubPack ? (
+                      <div className="relative shrink-0 w-12 h-12 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 shadow-2xs">
+                        <img
+                          src={planImg}
+                          alt={displayPlanName}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute top-0.5 left-0.5 bg-slate-900/90 text-white text-[7.5px] font-black px-1 rounded uppercase">
+                          {planSlug}
+                        </div>
+                      </div>
+                    ) : (
+                      <img
+                        src={item.image}
+                        alt={item.productTitle}
+                        className="w-12 h-12 object-cover rounded-lg bg-slate-50 border border-slate-100 shrink-0"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-extrabold text-slate-800 text-[11px] leading-tight">
+                        {isSubPack ? displayPlanName : item.productTitle}
+                      </h4>
+                      {isSubPack && item.subscriptionFrequency && (
+                        <p className="text-[9.5px] font-bold text-indigo-600 mt-0.5">
+                          {item.subscriptionFrequency} {item.frequencyDiscount ? `[${item.frequencyDiscount} OFF]` : ''}
+                        </p>
+                      )}
+                      {isSubPack && subProducts.length > 0 && (
+                        <div className="mt-1.5 space-y-0.5">
+                          {subProducts.map((p, pIdx) => (
+                            <p key={pIdx} className="text-[10px] text-slate-600 leading-tight">
+                              • {p.brand ? <span className="font-bold text-slate-900">{p.brand} — </span> : null}
+                              <span className="font-medium text-slate-800">{p.name}</span>
+                              {p.variant && p.variant !== 'Standard' ? <span className="text-indigo-600"> — {p.variant}</span> : null}
+                              <span className="text-slate-400 font-bold"> (Qty:{p.quantity || 1})</span>
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-slate-400 text-[10px] font-bold mt-1">Qty: {item.quantity} × £{item.price.toFixed(2)}</p>
+                    </div>
+                    <span className="font-black text-slate-800 text-[11px] shrink-0">£{getItemTotal(item).toFixed(2)}</span>
                   </div>
-                  <span className="font-black text-slate-800 text-[11px]">£{getItemTotal(item).toFixed(2)}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Store Credit */}

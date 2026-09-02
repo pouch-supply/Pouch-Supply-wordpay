@@ -94,6 +94,13 @@ export async function saveSingleOrder(orderData: any) {
     const rawSubItems = subItem?.subscriptionItems || subItem?.items || (orderData as any).subscriptionItems || [];
     let subItems = rawSubItems;
 
+    const KNOWN_BRANDS = [
+      '77', 'SNU', 'CUBA', 'KILLA', 'PABLO', 'VELO', 'WHITE FOX', 'ZYN', 
+      'XQS', 'NORDIC SPIRIT', 'CLEW', 'FUMI', 'FEDRS', 'GRANT', 'ICE', 
+      'LOOP', 'KURWA', 'DZRT', 'SIBERIA', 'SKRUF', 'DOPE', 'CHAPO', 
+      'HIT', 'VOLT', 'FIX', 'STRNG', 'ACE', 'THUNDER'
+    ];
+
     // If subItems array is empty, parse from title description
     if ((!subItems || subItems.length === 0) && subItem?.productTitle) {
       const rawTitle: string = subItem.productTitle.trim();
@@ -138,23 +145,98 @@ export async function saveSingleOrder(orderData: any) {
             qty = parseInt(qtyMatch[1], 10) || 1;
             cleanPart = cleanPart.replace(/\(Qty\s*:\s*(\d+)\)/i, '').replace(/\bx\s*(\d+)\b/i, '').trim();
           }
+
+          let brand = '';
           let name = cleanPart;
           let variant = 'Standard';
-          const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
-          if (varMatch && varMatch[1] && varMatch[2]) {
-            name = varMatch[1].trim();
-            variant = varMatch[2].trim();
-          } else if (cleanPart.includes(' - ')) {
-            const split = cleanPart.split(' - ');
-            name = split[0].trim();
-            variant = split.slice(1).join(' - ').trim();
+
+          if (cleanPart.includes(' — ') || cleanPart.includes(' – ') || (cleanPart.includes(' - ') && !cleanPart.includes(')-('))) {
+            const segments = cleanPart.split(/\s*(?:—|–|-)\s*/);
+            if (segments.length >= 3) {
+              brand = segments[0].trim();
+              name = segments[1].trim();
+              variant = segments.slice(2).join(' — ').trim();
+            } else if (segments.length === 2) {
+              const firstSeg = segments[0].trim();
+              const isBrand = KNOWN_BRANDS.some(kb => kb.toLowerCase() === firstSeg.toLowerCase());
+              if (isBrand) {
+                brand = firstSeg;
+                name = segments[1].trim();
+                const nestedMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
+                if (nestedMatch && nestedMatch[1] && nestedMatch[2]) {
+                  name = nestedMatch[1].trim();
+                  variant = nestedMatch[2].trim();
+                }
+              } else {
+                name = segments[0].trim();
+                variant = segments[1].trim();
+              }
+            }
+          } else {
+            const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
+            if (varMatch && varMatch[1] && varMatch[2]) {
+              name = varMatch[1].trim();
+              variant = varMatch[2].trim();
+            }
+
+            for (const kb of KNOWN_BRANDS) {
+              if (name.toLowerCase().startsWith(kb.toLowerCase())) {
+                brand = kb;
+                name = name.substring(kb.length).replace(/^[\s—–-]+/, '').trim();
+                break;
+              }
+            }
           }
-          parsedProducts.push({ name, variant, quantity: qty });
+
+          const formattedLabel = `${brand ? `${brand} — ` : ''}${name} — ${variant} (Qty:${qty})`;
+
+          parsedProducts.push({ 
+            brand: brand || undefined,
+            vendor: brand || undefined,
+            name, 
+            productTitle: name,
+            variant, 
+            variantName: variant,
+            quantity: qty,
+            formattedLabel
+          });
         });
         if (parsedProducts.length > 0) {
           subItems = parsedProducts;
         }
       }
+    } else if (Array.isArray(subItems) && subItems.length > 0) {
+      subItems = subItems.map((it: any) => {
+        const rawBrand = (it.brand || it.vendor || it.product?.vendor || '').trim();
+        let rawName = (it.name || it.productTitle || it.product?.title || it.title || 'Product').trim();
+        let brand = rawBrand;
+        if (!brand) {
+          for (const kb of KNOWN_BRANDS) {
+            if (rawName.toLowerCase().startsWith(kb.toLowerCase())) {
+              brand = kb;
+              break;
+            }
+          }
+        }
+        if (brand && rawName.toLowerCase().startsWith(brand.toLowerCase())) {
+          rawName = rawName.substring(brand.length).replace(/^[\s—–-]+/, '').trim();
+        }
+        const variant = (it.variant || it.variantName || it.product?.concreteVariantName || (it.product as any)?.variant || 'Standard').trim();
+        const qty = Number(it.quantity || 1);
+        const formattedLabel = `${brand ? `${brand} — ` : ''}${rawName} — ${variant} (Qty:${qty})`;
+        return {
+          brand: brand || undefined,
+          vendor: brand || undefined,
+          name: rawName,
+          productTitle: rawName,
+          variant,
+          variantName: variant,
+          quantity: qty,
+          image: it.image || it.product?.image || '',
+          price: it.price || it.product?.price || 0,
+          formattedLabel
+        };
+      });
     }
 
     subscriptionDetails = {

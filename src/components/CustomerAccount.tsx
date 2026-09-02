@@ -7,6 +7,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
 import SubscriptionIcon from './SubscriptionIcon';
 import { useRecaptcha } from '../hooks/useRecaptcha';
+import { getPlanImage, getPlanSlug } from '../utils/planImages';
+import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
 import { 
   User, LogIn, Heart, PlusCircle, Trash2, MapPin, Package, ShoppingBag, 
   Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
@@ -3965,22 +3967,74 @@ export default function CustomerAccount({
                       (item as any).vendor === 'Subscription Pack'
                     );
 
+                    const subDetails = (selectedOrderDetails as any).subscriptionDetails;
+                    const planSlug = getPlanSlug(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan);
+                    const planImg = getPlanImage(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan, prodImage);
+                    const displayTitle = subDetails?.planName || (item as any).subscriptionPlan || item.productTitle;
+                    const subProducts = isSubscriptionItem ? (subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 ? subDetails.selectedProducts : parseSubscriptionProducts(subDetails, item)) : [];
+
                     return (
-                      <div key={idx} className="flex gap-3 items-center justify-between p-3">
-                        <div className="flex gap-2.5 items-center min-w-0">
-                          {isSubscriptionItem ? (
-                            <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-slate-100 bg-slate-50">
-                              <SubscriptionIcon planName={item.productTitle} className="!w-full !h-full" />
+                      <div key={idx} className="p-3.5 space-y-2">
+                        <div className="flex gap-3 items-start justify-between">
+                          <div className="flex gap-2.5 items-start min-w-0">
+                            {isSubscriptionItem ? (
+                              <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 border border-slate-200 bg-slate-50 relative shadow-2xs">
+                                <img
+                                  src={planImg}
+                                  alt={displayTitle}
+                                  className="w-full h-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                />
+                                <div className="absolute top-0.5 left-0.5 bg-slate-900/90 text-white text-[7px] font-black px-1 rounded uppercase">
+                                  {planSlug}
+                                </div>
+                              </div>
+                            ) : prodImage ? (
+                              <img src={prodImage} className="w-12 h-12 object-cover rounded-xl bg-slate-50 border border-slate-100 shrink-0" alt="" referrerPolicy="no-referrer" />
+                            ) : null}
+                            <div className="min-w-0">
+                              <p className="font-extrabold text-[#071d37] text-xs leading-tight">{displayTitle}</p>
+                              {isSubscriptionItem && (
+                                <span className="inline-block mt-0.5 text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-150 px-1.5 py-0.5 rounded">
+                                  {subDetails?.frequency || (item as any).subscriptionFrequency || 'Bi-Weekly'} ({subDetails?.frequencyDiscount || (item as any).frequencyDiscount || '10%'} OFF)
+                                </span>
+                              )}
+                              <p className="text-slate-400 text-[10px] mt-0.5 font-bold">Qty: {item.quantity}</p>
                             </div>
-                          ) : prodImage ? (
-                            <img src={prodImage} className="w-10 h-10 object-cover rounded-xl bg-slate-50 border border-slate-100 shrink-0" alt="" referrerPolicy="no-referrer" />
-                          ) : null}
-                          <div className="min-w-0">
-                            <p className="font-bold text-[#071d37] truncate">{item.productTitle}</p>
-                            <p className="text-slate-400 text-[10px]">Qty: {item.quantity}</p>
                           </div>
+                          <p className="font-extrabold text-slate-850 text-xs">£{(Number((item.price || 0) * (item.quantity || 1))).toFixed(2)}</p>
                         </div>
-                        <p className="font-extrabold text-slate-850">£{(Number((item.price || 0) * (item.quantity || 1))).toFixed(2)}</p>
+
+                        {/* Itemized selection for subscription boxes */}
+                        {isSubscriptionItem && subProducts && subProducts.length > 0 && (
+                          <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 space-y-1">
+                            <p className="text-[9.5px] font-black uppercase tracking-wider text-slate-600 flex items-center gap-1">
+                              <Package className="w-3 h-3 text-indigo-600" />
+                              Selected Box Items ({subProducts.reduce((sum: number, p: any) => sum + (p.quantity || 1), 0)} Cans):
+                            </p>
+                            <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                              {subProducts.map((p: any, pIdx: number) => {
+                                const brand = p.brand || p.vendor || '';
+                                const name = p.name || p.productTitle || '';
+                                const variant = p.variant || p.variantName || 'Standard';
+                                const qty = p.quantity || 1;
+                                const formatted = p.formattedLabel || formatSubscriptionItemDisplay(p);
+                                return (
+                                  <div key={pIdx} className="text-[10px] bg-white border border-slate-200/60 px-2 py-1 rounded flex justify-between items-center text-slate-700 font-medium">
+                                    <span className="truncate pr-1">
+                                      {brand && <strong className="text-slate-900 font-bold">{brand} — </strong>}
+                                      <span>{name}</span>
+                                      {variant && variant !== 'Standard' && <span className="text-indigo-600 font-semibold"> — {variant}</span>}
+                                    </span>
+                                    <span className="text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-150 px-1 rounded shrink-0">
+                                      Qty:{qty}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

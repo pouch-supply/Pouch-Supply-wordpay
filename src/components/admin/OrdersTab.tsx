@@ -8,7 +8,8 @@ import { Order } from '../../types';
 import { parseOrderTime } from '../../utils';
 import { RoyalMailOrderActions } from './RoyalMailOrderActions';
 import SubscriptionIcon from '../SubscriptionIcon';
-import { extractSubscriptionDetails, parseSubscriptionProducts } from '../../utils/subscriptionParser';
+import { extractSubscriptionDetails, parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../../utils/subscriptionParser';
+import { getPlanImage, getPlanSlug } from '../../utils/planImages';
 
 const PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&q=80&w=300";
 
@@ -1027,17 +1028,27 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                         isSubOrder(selectedOrder)
                       );
                       const subDetails = getSubscriptionDetails(selectedOrder);
+                      const planSlug = getPlanSlug(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan);
+                      const planImage = getPlanImage(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan, item.image);
+                      const displayPlanTitle = subDetails?.planName || (item as any).subscriptionPlan || item.productTitle || 'Subscription Plan';
+                      const selectedBoxItems = isSubscriptionItem ? (subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 ? subDetails.selectedProducts : parseSubscriptionProducts(subDetails, item)) : [];
 
                       return (
                         <div key={idx} className="py-4 flex justify-between items-start gap-4">
-                          <div className="flex items-start gap-3 min-w-0">
-                            <div className="w-14 h-14 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center p-1 relative shrink-0 overflow-hidden shadow-2xs">
+                          <div className="flex items-start gap-3 min-w-0 flex-1">
+                            <div className="w-16 h-16 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center relative shrink-0 overflow-hidden shadow-2xs">
                               {isSubscriptionItem ? (
-                                <SubscriptionIcon
-                                  planName={item.productTitle || (item as any).subscriptionPlan || subDetails?.planName || 'Plan'}
-                                  imageUrl={item.image}
-                                  className="!w-full !h-full rounded-lg"
-                                />
+                                <div className="w-full h-full relative">
+                                  <img
+                                    src={planImage}
+                                    alt={displayPlanTitle}
+                                    className="w-full h-full object-cover"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                  <div className="absolute top-1 left-1 bg-slate-900/90 text-white text-[7.5px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                    {planSlug}
+                                  </div>
+                                </div>
                               ) : (
                                 <img
                                   src={item.image || PLACEHOLDER_IMAGE}
@@ -1047,15 +1058,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                 />
                               )}
                             </div>
-                            <div className="min-w-0">
-                              <p className="font-extrabold text-xs text-slate-900 uppercase tracking-tight hover:text-indigo-600 transition-colors truncate">
-                                {isSubscriptionItem ? (subDetails?.planName || item.productTitle) : item.productTitle}
+                            <div className="min-w-0 flex-1">
+                              <p className="font-extrabold text-sm text-slate-900 tracking-tight">
+                                {isSubscriptionItem ? displayPlanTitle : item.productTitle}
                               </p>
                               
                               <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 font-bold mt-1">
                                 {isSubscriptionItem ? (
                                   <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-md font-extrabold">
-                                    {subDetails?.frequency} ({subDetails?.frequencyDiscount} OFF)
+                                    {subDetails?.frequency || (item as any).subscriptionFrequency || 'Bi-Weekly'} ({subDetails?.frequencyDiscount || (item as any).frequencyDiscount || '10%'} OFF)
                                   </span>
                                 ) : (
                                   variantLabel && variantLabel !== 'Standard' ? (
@@ -1070,35 +1081,58 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                 <span className="text-slate-400 font-mono text-[9.5px]">{skuLabel}</span>
                               </div>
 
-                              {/* Subscription Box: List of Chosen Products & Variants */}
-                              {isSubscriptionItem && subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 && (
-                                <div className="mt-2.5 bg-indigo-50/90 border border-indigo-150 rounded-xl p-3 text-left space-y-2 shadow-2xs">
-                                  <div className="text-[9.5px] font-black text-indigo-900 uppercase tracking-wider flex items-center justify-between">
+                              {/* Subscription Box: List of Chosen Products with Brand, Product Name, Variant Name & Quantity */}
+                              {isSubscriptionItem && selectedBoxItems && selectedBoxItems.length > 0 && (
+                                <div className="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-3 text-left space-y-2 shadow-2xs">
+                                  <div className="text-[10px] font-black text-slate-800 uppercase tracking-wider flex items-center justify-between border-b border-slate-200/80 pb-1.5">
                                     <span className="flex items-center gap-1.5">
                                       <Package className="w-3.5 h-3.5 text-indigo-600" />
-                                      Client Selected Box Products ({subDetails.selectedProducts.reduce((sum: number, p: any) => sum + (p.quantity || 1), 0)} Cans):
+                                      Client Selected Box Products ({selectedBoxItems.reduce((sum: number, p: any) => sum + (p.quantity || 1), 0)} Cans):
                                     </span>
-                                    <span className="text-indigo-600 font-extrabold text-[9px] bg-white px-2 py-0.5 rounded-md border border-indigo-100">
-                                      {subDetails.planName}
+                                    <span className="text-indigo-700 font-extrabold text-[9.5px] bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
+                                      {displayPlanTitle}
                                     </span>
                                   </div>
                                   
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
-                                    {subDetails.selectedProducts.map((p: any, pIdx: number) => (
-                                      <div key={pIdx} className="flex justify-between items-center text-[10.5px] text-slate-800 font-semibold bg-white border border-indigo-100/90 px-2.5 py-1.5 rounded-lg shadow-3xs">
-                                        <div className="min-w-0 pr-1.5">
-                                          <p className="font-extrabold text-slate-900 truncate leading-tight">
-                                            {p.name}
-                                          </p>
-                                          <p className="text-[9px] text-indigo-600 font-bold mt-0.5">
-                                            Variant: <span className="text-indigo-950 font-extrabold">{p.variant || 'Standard'}</span>
-                                          </p>
+                                  <div className="space-y-1.5 pt-0.5">
+                                    {selectedBoxItems.map((p: any, pIdx: number) => {
+                                      const brand = p.brand || p.vendor || '';
+                                      const name = p.name || p.productTitle || '';
+                                      const variant = p.variant || p.variantName || 'Standard';
+                                      const qty = p.quantity || 1;
+                                      const formatted = p.formattedLabel || formatSubscriptionItemDisplay(p);
+
+                                      return (
+                                        <div key={pIdx} className="flex justify-between items-center text-xs text-slate-800 font-semibold bg-white border border-slate-200/80 px-2.5 py-1.5 rounded-lg shadow-3xs">
+                                          <div className="min-w-0 pr-2">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <span className="text-slate-400 font-mono text-[10px] font-bold">{pIdx + 1}.</span>
+                                              {brand && (
+                                                <span className="bg-slate-900 text-white font-black text-[9.5px] px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                                  {brand}
+                                                </span>
+                                              )}
+                                              <span className="font-extrabold text-slate-900 text-xs">
+                                                {name}
+                                              </span>
+                                              {variant && variant !== 'Standard' && (
+                                                <span className="bg-indigo-50 border border-indigo-150 text-indigo-800 font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1">
+                                                  <span className="text-[8.5px] text-indigo-500 uppercase">Variant:</span> {variant}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <p className="text-[9.5px] text-slate-500 font-mono mt-0.5">
+                                              {formatted}
+                                            </p>
+                                          </div>
+                                          <div className="shrink-0 text-right pl-2">
+                                            <span className="font-black text-indigo-900 text-xs bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md">
+                                              Qty: {qty}
+                                            </span>
+                                          </div>
                                         </div>
-                                        <span className="shrink-0 font-black text-indigo-800 text-[10px] ml-1 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md">
-                                          × {p.quantity}
-                                        </span>
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
                                   </div>
                                 </div>
                               )}

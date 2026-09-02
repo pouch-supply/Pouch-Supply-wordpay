@@ -260,12 +260,14 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
         ? prod.concreteVariants?.find(v => v.id === variantId) 
         : null;
 
-      const variantName = variant ? variant.name : 'Standard';
+      const variantName = variant ? variant.name : (prod.flavour || prod.variant || 'Standard');
+      const brandName = (prod.vendor || (prod as any).brand || '').trim();
 
       const finalProduct: Product = {
         ...prod,
         id: variant ? variant.id : prod.id,
         title: prod.title,
+        vendor: brandName,
         concreteVariantName: variantName,
         variant: variantName,
         price: variant ? variant.price : prod.price,
@@ -277,6 +279,8 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
       return { 
         product: finalProduct, 
         quantity,
+        brand: brandName,
+        vendor: brandName,
         productId: prod.id,
         productTitle: prod.title,
         variantName: variantName,

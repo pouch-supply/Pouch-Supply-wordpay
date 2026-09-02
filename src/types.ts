@@ -367,6 +367,10 @@ export interface CartItem {
   quantity: number;
   vendor: string;
   isSubscription?: boolean;
+  subscriptionPlan?: string;
+  subscriptionFrequency?: string;
+  frequencyDiscount?: string;
+  subscriptionItems?: any[];
   variant?: string;
   sku?: string;
 }
