@@ -1472,7 +1472,7 @@ export default function CustomerAccount({
 
   const handleAddProductToSub = (product: Product) => {
     const currentItems = [...(custState.subItems || [])];
-    const totalCansSelected = currentItems.reduce((sum: number, item: any) => sum + item.quantity, 0);
+    const totalCansSelected = currentItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0);
     const capacity = custState.subCansCount || 8;
     
     if (totalCansSelected >= capacity) {
@@ -1480,16 +1480,30 @@ export default function CustomerAccount({
       return;
     }
     
+    const rawBrand = (product.vendor || (product as any).brand || '').trim();
+    const rawVariant = product.variant || product.concreteVariantName || product.flavour || product.strength || 'Standard';
+
     const existingIndex = currentItems.findIndex((item: any) => item.productId === product.id);
     if (existingIndex > -1) {
-      currentItems[existingIndex].quantity += 1;
+      currentItems[existingIndex].quantity = (Number(currentItems[existingIndex].quantity) || 1) + 1;
+      currentItems[existingIndex].brand = currentItems[existingIndex].brand || rawBrand;
+      currentItems[existingIndex].variant = currentItems[existingIndex].variant || rawVariant;
+      currentItems[existingIndex].variantName = currentItems[existingIndex].variantName || rawVariant;
     } else {
       currentItems.push({
         productId: product.id,
+        id: product.id,
         title: product.title,
+        name: product.title,
+        productTitle: product.title,
+        brand: rawBrand,
+        vendor: rawBrand,
+        variant: rawVariant,
+        variantName: rawVariant,
         quantity: 1,
         image: product.image,
-        price: product.price
+        price: product.price,
+        formattedLabel: `${rawBrand ? rawBrand + ' — ' : ''}${product.title}${rawVariant && rawVariant !== 'Standard' ? ' — ' + rawVariant : ''} (Qty:1)`
       });
     }
     updateCustState({ ...custState, subItems: currentItems });
@@ -1501,19 +1515,31 @@ export default function CustomerAccount({
     const oldItemIndex = updatedItems.findIndex((item: any) => item.productId === oldProductId);
     
     if (oldItemIndex === -1) return;
-    const oldQty = updatedItems[oldItemIndex].quantity;
+    const oldQty = Number(updatedItems[oldItemIndex].quantity) || 1;
+    const rawBrand = (newProduct.vendor || (newProduct as any).brand || '').trim();
+    const rawVariant = newProduct.variant || newProduct.concreteVariantName || newProduct.flavour || newProduct.strength || 'Standard';
     
     if (existingIndex > -1) {
       if (existingIndex === oldItemIndex) return; // same product, no-op
-      updatedItems[existingIndex].quantity += oldQty;
+      updatedItems[existingIndex].quantity = (Number(updatedItems[existingIndex].quantity) || 1) + oldQty;
+      updatedItems[existingIndex].brand = updatedItems[existingIndex].brand || rawBrand;
+      updatedItems[existingIndex].variant = updatedItems[existingIndex].variant || rawVariant;
       updatedItems = updatedItems.filter((item: any) => item.productId !== oldProductId);
     } else {
       updatedItems[oldItemIndex] = {
         productId: newProduct.id,
+        id: newProduct.id,
         title: newProduct.title,
+        name: newProduct.title,
+        productTitle: newProduct.title,
+        brand: rawBrand,
+        vendor: rawBrand,
+        variant: rawVariant,
+        variantName: rawVariant,
         quantity: oldQty,
         image: newProduct.image,
-        price: newProduct.price
+        price: newProduct.price,
+        formattedLabel: `${rawBrand ? rawBrand + ' — ' : ''}${newProduct.title}${rawVariant && rawVariant !== 'Standard' ? ' — ' + rawVariant : ''} (Qty:${oldQty})`
       };
     }
     updateCustState({ ...custState, subItems: updatedItems });

@@ -331,25 +331,43 @@ router.post("/update-plan", async (req: Request, res: Response) => {
       try {
         const storedOrders: any[] = (await fetchResource("orders")) || [];
         const updatedOrders = storedOrders.map((o: any) => {
-          if (String(o.customerEmail || "").toLowerCase().trim() === emailClean && Array.isArray(o.items)) {
-            const hasSubItem = o.items.some((i: any) => i.isSubscription || i.subscriptionPlan);
+          const isCustomerOrder = String(o.customerEmail || "").toLowerCase().trim() === emailClean;
+          if (isCustomerOrder && Array.isArray(o.items)) {
+            const hasSubItem = o.items.some((i: any) => i.isSubscription || i.subscriptionPlan) ||
+              Boolean(o.subscriptionDetails) ||
+              (Array.isArray(o.tags) && o.tags.some((t: any) => String(t).toLowerCase().includes('subscription')));
+
             if (hasSubItem) {
               const updatedItems = o.items.map((i: any) => {
-                if (i.isSubscription || i.subscriptionPlan) {
+                const isSub = i.isSubscription || i.subscriptionPlan || (Array.isArray(o.tags) && o.tags.some((t: any) => String(t).toLowerCase().includes('subscription')));
+                if (isSub) {
                   return {
                     ...i,
                     subscriptionPlan: finalPlanName,
                     subscriptionFrequency: finalInterval,
-                    price: finalAmount,
-                    selectedFlavors: finalItems
+                    price: finalAmount > 0 ? finalAmount : i.price,
+                    selectedProducts: finalItems,
+                    selectedFlavors: finalItems,
+                    subscriptionItems: finalItems,
+                    items: finalItems
                   };
                 }
                 return i;
               });
+
               return {
                 ...o,
                 items: updatedItems,
-                total: finalAmount
+                subscriptionDetails: {
+                  ...(o.subscriptionDetails || {}),
+                  planName: finalPlanName,
+                  frequency: finalInterval,
+                  items: finalItems,
+                  selectedProducts: finalItems,
+                  subItems: finalItems,
+                  lastSwappedAt: new Date().toISOString()
+                },
+                total: finalAmount > 0 ? finalAmount : o.total
               };
             }
           }

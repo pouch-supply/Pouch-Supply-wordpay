@@ -85,12 +85,40 @@ export function parseSubscriptionProducts(order: any, subItem?: any): Subscripti
   const results: SubscriptionProductItem[] = [];
 
   // 1. First priority: Check if structured items already exist in subItem or order
-  const rawItems = 
+  let rawItems = 
+    subItem?.selectedProducts ||
+    subItem?.selectedFlavors ||
     subItem?.subscriptionItems || 
+    subItem?.subItems ||
     subItem?.items || 
-    order?.subscriptionDetails?.items || 
     order?.subscriptionDetails?.selectedProducts || 
-    order?.subscriptionItems;
+    order?.subscriptionDetails?.items || 
+    order?.subscriptionDetails?.subItems || 
+    order?.selectedProducts ||
+    order?.subscriptionItems ||
+    order?.customer?.subItems ||
+    order?.customer?.data?.subItems;
+
+  if (!rawItems && Array.isArray(order?.items)) {
+    for (const it of order.items) {
+      if (Array.isArray(it?.selectedProducts) && it.selectedProducts.length > 0) {
+        rawItems = it.selectedProducts;
+        break;
+      }
+      if (Array.isArray(it?.selectedFlavors) && it.selectedFlavors.length > 0) {
+        rawItems = it.selectedFlavors;
+        break;
+      }
+      if (Array.isArray(it?.subscriptionItems) && it.subscriptionItems.length > 0) {
+        rawItems = it.subscriptionItems;
+        break;
+      }
+      if (Array.isArray(it?.items) && it.items.length > 0) {
+        rawItems = it.items;
+        break;
+      }
+    }
+  }
 
   if (Array.isArray(rawItems) && rawItems.length > 0) {
     rawItems.forEach((it: any) => {
