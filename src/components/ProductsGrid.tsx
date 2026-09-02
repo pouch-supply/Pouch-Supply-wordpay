@@ -430,9 +430,6 @@ export default function ProductsGrid({
               <span className="text-sm">🇪🇺</span> EU Official Supplier
             </span>
             <span className="flex items-center gap-1.5 text-slate-600">
-              <span className="text-sm">🇸🇪</span> Fresh Scandinavian Stock
-            </span>
-            <span className="flex items-center gap-1.5 text-slate-600">
               <span className="text-sm">🚚</span> Royal Mail Tracked Delivery
             </span>
           </div>
@@ -456,7 +453,7 @@ export default function ProductsGrid({
           <div className="flex-1 flex flex-col justify-between space-y-6">
             <div className="space-y-3">
               <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-none">
-                Shop Nicotine Pouches
+                Shop Pouches
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 font-medium">
                 Over 150+ premium flavours from the world's leading brands.
@@ -1036,24 +1033,11 @@ export default function ProductsGrid({
                             );
                           })()}
 
-                          {/* Volume Tiers Quick Indicator */}
-                          <div className="flex items-center gap-1 text-[8.5px] font-bold text-slate-500 bg-slate-50 p-1.5 rounded-lg border border-slate-150">
-                            <span className="text-slate-700 font-extrabold shrink-0">Bundles:</span>
-                            <span className={`px-1 rounded ${localQty === 5 ? 'bg-indigo-600 text-white font-extrabold' : 'text-slate-600'}`}>5=£23.50</span>
-                            <span>•</span>
-                            <span className={`px-1 rounded ${localQty === 10 ? 'bg-indigo-600 text-white font-extrabold' : 'text-slate-600'}`}>10=£42.00</span>
-                            <span>•</span>
-                            <span className={`px-1 rounded ${localQty === 20 ? 'bg-indigo-600 text-white font-extrabold' : 'text-slate-600'}`}>20=£77.00</span>
-                          </div>
+                          
 
                         </div>
 
-                        {/* Delivery quality badges list */}
-                        <div className="flex flex-wrap gap-x-3 gap-y-1 py-1.5 border-t border-b border-slate-100 text-[8.5px] text-slate-400 font-bold">
-                          <span className="flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-slate-350" /> Official Stock</span>
-                          <span className="flex items-center gap-1"><Zap className="h-3 w-3 text-slate-350" /> Ships Today</span>
-                          <span className="flex items-center gap-1"><Award className="h-3 w-3 text-slate-350" /> Lab Tested</span>
-                        </div>
+                        
 
                         {/* Quantity selection & Action CTA Row */}
                         <div className="flex items-center justify-between gap-2.5 pt-2">
