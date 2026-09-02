@@ -1031,7 +1031,20 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       const planSlug = getPlanSlug(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan);
                       const planImage = getPlanImage(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan, item.image);
                       const displayPlanTitle = subDetails?.planName || (item as any).subscriptionPlan || item.productTitle || 'Subscription Plan';
-                      const selectedBoxItems = isSubscriptionItem ? (subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 ? subDetails.selectedProducts : parseSubscriptionProducts(subDetails, item)) : [];
+                      const selectedBoxItems = isSubscriptionItem 
+                        ? (subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 
+                            ? subDetails.selectedProducts 
+                            : parseSubscriptionProducts(selectedOrder, item)) 
+                        : [];
+
+                      let finalSkuLabel = (item as any).sku;
+                      if (isSubscriptionItem) {
+                        if (!finalSkuLabel || (finalSkuLabel.toLowerCase().includes('lite') && planSlug !== 'lite')) {
+                          finalSkuLabel = `SUB-${planSlug.toUpperCase()}-BOX`;
+                        }
+                      } else if (!finalSkuLabel) {
+                        finalSkuLabel = isKupanac ? '010401015' : `SKU-${item.productId || idx + 1}`;
+                      }
 
                       return (
                         <div key={idx} className="py-4 flex justify-between items-start gap-4">
@@ -1078,7 +1091,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                   )
                                 )}
                                 <span className="text-slate-300">•</span>
-                                <span className="text-slate-400 font-mono text-[9.5px]">{skuLabel}</span>
+                                <span className="text-slate-400 font-mono text-[9.5px]">{finalSkuLabel}</span>
                               </div>
 
                               {/* Subscription Box: List of Chosen Products with Brand, Product Name, Variant Name & Quantity */}
