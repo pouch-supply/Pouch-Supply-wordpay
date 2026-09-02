@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import OrderWithdrawalModal from './components/OrderWithdrawalModal';
 import { cleanMediaUrl } from './utils/mediaUtils';
+import { getPlanImage } from './utils/planImages';
 import { 
   initializeKlaviyo,
   initKlaviyo, 
@@ -1264,7 +1265,7 @@ export default function App() {
         productId: `sub-pack-${Date.now()}`,
         productTitle: desc,
         price: flatPrice,
-        image: PLACEHOLDER_IMAGE,
+        image: getPlanImage(packName),
         quantity: 1,
         vendor: 'Subscription Pack',
         isSubscription: true,

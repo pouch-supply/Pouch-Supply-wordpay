@@ -1146,7 +1146,16 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   <div className="divide-y divide-slate-100 border-t border-b border-slate-100">
                     {selectedOrder.items.map((item, idx) => {
                       const isKupanac = item.productTitle?.toLowerCase().includes('kupanac');
-                      const variantLabel = (item as any).variant || (item as any).flavour || (item as any).strength || (isKupanac ? 'M / Green' : 'Standard');
+                      
+                      // Extract chosen variant for normal products
+                      let explicitVariant = (item as any).variantName || (item as any).variant || (item as any).selectedVariant?.name || (item as any).flavour || (item as any).strength || '';
+                      if (!explicitVariant && item.productTitle) {
+                        const titleMatch = item.productTitle.match(/\(([^)]+)\)$/);
+                        if (titleMatch && titleMatch[1] && !titleMatch[1].toLowerCase().includes('qty:')) {
+                          explicitVariant = titleMatch[1].trim();
+                        }
+                      }
+                      const variantLabel = explicitVariant || (isKupanac ? 'M / Green' : 'Standard');
                       const skuLabel = (item as any).sku || (isKupanac ? '010401015' : `SKU-${item.productId || idx + 1}`);
                       
                       const isSubscriptionItem = Boolean(
@@ -1161,12 +1170,13 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       const subDetails = getSubscriptionDetails(selectedOrder);
 
                       return (
-                        <div key={idx} className="py-4 flex justify-between items-center gap-4">
-                          <div className="flex items-center gap-3 min-w-0">
+                        <div key={idx} className="py-4 flex justify-between items-start gap-4">
+                          <div className="flex items-start gap-3 min-w-0">
                             <div className="w-14 h-14 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center p-1 relative shrink-0 overflow-hidden shadow-2xs">
                               {isSubscriptionItem ? (
                                 <SubscriptionIcon
                                   planName={item.productTitle || (item as any).subscriptionPlan || subDetails?.planName || 'Plan'}
+                                  imageUrl={item.image}
                                   className="!w-full !h-full rounded-lg"
                                 />
                               ) : (
@@ -1182,25 +1192,51 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                               <p className="font-extrabold text-xs text-slate-900 uppercase tracking-tight hover:text-indigo-600 transition-colors truncate">
                                 {isSubscriptionItem ? (subDetails?.planName || item.productTitle) : item.productTitle}
                               </p>
-                              <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold mt-0.5">
-                                <span>{isSubscriptionItem ? `${subDetails?.frequency} (${subDetails?.frequencyDiscount} OFF)` : variantLabel}</span>
-                                <span>•</span>
-                                <span>{skuLabel}</span>
+                              
+                              <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 font-bold mt-1">
+                                {isSubscriptionItem ? (
+                                  <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-md font-extrabold">
+                                    {subDetails?.frequency} ({subDetails?.frequencyDiscount} OFF)
+                                  </span>
+                                ) : (
+                                  variantLabel && variantLabel !== 'Standard' ? (
+                                    <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-md font-extrabold flex items-center gap-1">
+                                      <span className="text-[9px] text-indigo-500 uppercase">Variant:</span> {variantLabel}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">Standard Variant</span>
+                                  )
+                                )}
+                                <span className="text-slate-300">•</span>
+                                <span className="text-slate-400 font-mono text-[9.5px]">{skuLabel}</span>
                               </div>
+
+                              {/* Subscription Box: List of Chosen Products & Variants */}
                               {isSubscriptionItem && subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 && (
-                                <div className="mt-2 bg-indigo-50/80 border border-indigo-100 rounded-lg p-2 text-left space-y-1">
-                                  <div className="text-[9px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1">
-                                    <Package className="w-3 h-3 text-indigo-600" />
-                                    Selected Products & Variants:
+                                <div className="mt-2.5 bg-indigo-50/90 border border-indigo-150 rounded-xl p-3 text-left space-y-2 shadow-2xs">
+                                  <div className="text-[9.5px] font-black text-indigo-900 uppercase tracking-wider flex items-center justify-between">
+                                    <span className="flex items-center gap-1.5">
+                                      <Package className="w-3.5 h-3.5 text-indigo-600" />
+                                      Client Selected Box Products ({subDetails.selectedProducts.reduce((sum: number, p: any) => sum + (p.quantity || 1), 0)} Cans):
+                                    </span>
+                                    <span className="text-indigo-600 font-extrabold text-[9px] bg-white px-2 py-0.5 rounded-md border border-indigo-100">
+                                      {subDetails.planName}
+                                    </span>
                                   </div>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                  
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
                                     {subDetails.selectedProducts.map((p: any, pIdx: number) => (
-                                      <div key={pIdx} className="flex justify-between items-center text-[10px] text-slate-700 font-semibold bg-white border border-indigo-100/80 px-2 py-1 rounded shadow-2xs">
-                                        <span className="truncate text-slate-850">
-                                          {p.name} {p.variant && p.variant !== 'Standard' ? <span className="text-indigo-600 font-extrabold">({p.variant})</span> : ''}
-                                        </span>
-                                        <span className="shrink-0 font-black text-indigo-700 text-[9px] ml-1 bg-indigo-50 px-1 rounded">
-                                          ×{p.quantity}
+                                      <div key={pIdx} className="flex justify-between items-center text-[10.5px] text-slate-800 font-semibold bg-white border border-indigo-100/90 px-2.5 py-1.5 rounded-lg shadow-3xs">
+                                        <div className="min-w-0 pr-1.5">
+                                          <p className="font-extrabold text-slate-900 truncate leading-tight">
+                                            {p.name}
+                                          </p>
+                                          <p className="text-[9px] text-indigo-600 font-bold mt-0.5">
+                                            Variant: <span className="text-indigo-950 font-extrabold">{p.variant || 'Standard'}</span>
+                                          </p>
+                                        </div>
+                                        <span className="shrink-0 font-black text-indigo-800 text-[10px] ml-1 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md">
+                                          × {p.quantity}
                                         </span>
                                       </div>
                                     ))}
