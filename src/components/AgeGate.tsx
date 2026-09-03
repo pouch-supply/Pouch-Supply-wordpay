@@ -6,6 +6,25 @@ import { trackAgeVerified } from "../utils/klaviyo";
 const AGE_APPROVED_STORAGE_KEY = "agechecked-approved";
 const AGE_VERIFIED_STORAGE_KEY = "ageVerified";
 const AGE_APPROVED_AT_STORAGE_KEY = "agechecked-verified-at";
+// Approvals older than this are treated as expired so a stale flag can't silently re-approve a new attempt
+const AGE_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+function hasValidStoredApproval(): boolean {
+  if (typeof window === "undefined") return false;
+  const storedApproved = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
+  const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
+  if (storedApproved !== "true" && storedVerified !== "true") return false;
+
+  const verifiedAt = window.localStorage.getItem(AGE_APPROVED_AT_STORAGE_KEY);
+  const verifiedAtMs = verifiedAt ? Date.parse(verifiedAt) : NaN;
+  if (Number.isFinite(verifiedAtMs) && Date.now() - verifiedAtMs > AGE_VERIFICATION_TTL_MS) {
+    window.localStorage.removeItem(AGE_APPROVED_STORAGE_KEY);
+    window.localStorage.removeItem(AGE_VERIFIED_STORAGE_KEY);
+    window.localStorage.removeItem(AGE_APPROVED_AT_STORAGE_KEY);
+    return false;
+  }
+  return true;
+}
 
 export interface AgeCheckedResponse {
   avstatus?: {
@@ -104,12 +123,9 @@ export interface AgeGateHandle {
 export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = false, onApprovedChange, customerData }, ref) => {
   const [approved, setApproved] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
-    const storedApproved = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-    const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
     const params = new URLSearchParams(window.location.search);
     return (
-      storedApproved === "true" ||
-      storedVerified === "true" ||
+      hasValidStoredApproval() ||
       params.get("agechecked") === "approved" ||
       params.get("approved") === "true" ||
       isApprovedStatus(params.get("status"))
@@ -287,13 +303,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
   // Query server status endpoint directly
   const pollServerStatus = useCallback(async (refToTest?: string, idToTest?: string, emailToTest?: string): Promise<boolean> => {
-    if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
-      if (stored === "true" || storedVerified === "true") {
-        markApproved();
-        return true;
-      }
+    if (typeof window !== "undefined" && hasValidStoredApproval()) {
+      markApproved();
+      return true;
     }
 
     const refParam = refToTest || currentReference || customerData?.reference || "";
@@ -333,12 +345,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const storedApproved = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-    const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
     const params = new URLSearchParams(window.location.search);
     const isApprovedFromParam =
-      storedApproved === "true" ||
-      storedVerified === "true" ||
+      hasValidStoredApproval() ||
       params.get("agechecked") === "approved" ||
       params.get("approved") === "true" ||
       isApprovedStatus(params.get("status")) ||
@@ -363,9 +372,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (typeof window === "undefined" || approved) return;
 
     const handleVisibilityOrFocus = () => {
-      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
-      if (stored === "true" || storedVerified === "true") {
+      if (hasValidStoredApproval()) {
         markApproved();
         return;
       }
@@ -378,9 +385,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
     const intervalMs = isVerifying ? 700 : 1400;
     const intervalId = window.setInterval(async () => {
-      const stored = window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY);
-      const storedVerified = window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY);
-      if (stored === "true" || storedVerified === "true") {
+      if (hasValidStoredApproval()) {
         markApproved();
         return;
       }
@@ -538,6 +543,18 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   const resetApproval = () => {
     if (typeof window === "undefined") return;
 
+    // Clear the server-side persisted record too, otherwise the next verification attempt
+    // will be silently re-approved from the previously stored reference/email/agecheckid.
+    fetch("/api/agechecked/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reference: currentReference || customerData?.reference,
+        email: customerData?.email,
+        agecheckid: agecheckId
+      })
+    }).catch(() => {});
+
     window.localStorage.removeItem(AGE_APPROVED_STORAGE_KEY);
     window.localStorage.removeItem(AGE_VERIFIED_STORAGE_KEY);
     window.localStorage.removeItem(AGE_APPROVED_AT_STORAGE_KEY);
@@ -556,10 +573,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (typeof window === "undefined") return approved;
 
     // Check localStorage immediately
-    if (
-      window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
-      window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
-    ) {
+    if (hasValidStoredApproval()) {
       setApproved(true);
       return true;
     }
@@ -668,10 +682,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }
 
         pollingTimerRef.current = window.setInterval(async () => {
-          if (
-            window.localStorage.getItem(AGE_APPROVED_STORAGE_KEY) === "true" ||
-            window.localStorage.getItem(AGE_VERIFIED_STORAGE_KEY) === "true"
-          ) {
+          if (hasValidStoredApproval()) {
             if (pollingTimerRef.current) {
               window.clearInterval(pollingTimerRef.current);
               pollingTimerRef.current = null;

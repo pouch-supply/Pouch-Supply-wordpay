@@ -99,6 +99,8 @@ function buildPayloads(secretKey: string, body: Record<string, any>) {
 
 // In-memory verification cache for active session references, emails, and agecheck IDs
 const verifiedSessions = new Map<string, { approved: boolean; agecheckid: string; email?: string; timestamp: number }>();
+// Approvals older than this are treated as expired so re-testing/re-verifying can't be short-circuited indefinitely
+const AGE_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Helper to record approval across in-memory cache and PostgreSQL database
 async function persistAgeVerification(keys: (string | undefined | null)[], agecheckid: string, email?: string, metadata?: Record<string, any>) {
@@ -198,7 +200,9 @@ async function checkAgeVerificationDb(keys: (string | undefined | null)[]): Prom
 
     if (records.length > 0) {
       const data = records[0].data as any;
-      if (data && (data.approved === true || data.verified === true)) {
+      const verifiedAtMs = data?.verifiedAt ? Date.parse(data.verifiedAt) : NaN;
+      const isExpired = Number.isFinite(verifiedAtMs) && (Date.now() - verifiedAtMs) > AGE_VERIFICATION_TTL_MS;
+      if (data && (data.approved === true || data.verified === true) && !isExpired) {
         return { approved: true, agecheckid: data.agecheckid || records[0].itemId };
       }
     }
@@ -211,7 +215,9 @@ async function checkAgeVerificationDb(keys: (string | undefined | null)[]): Prom
       });
       if (customer && customer.data && typeof customer.data === 'object') {
         const custData = customer.data as Record<string, any>;
-        if (custData.ageVerified === true || custData.ageChecked === true) {
+        const verifiedAtMs = custData.ageVerifiedAt ? Date.parse(custData.ageVerifiedAt) : NaN;
+        const isExpired = Number.isFinite(verifiedAtMs) && (Date.now() - verifiedAtMs) > AGE_VERIFICATION_TTL_MS;
+        if ((custData.ageVerified === true || custData.ageChecked === true) && !isExpired) {
           return { approved: true, agecheckid: custData.ageCheckId || `AC-${customer.id}` };
         }
       }
@@ -320,20 +326,34 @@ router.get("/status", async (req: Request, res: Response) => {
   const agecheckid = String(req.query.agecheckid || "").trim();
   const email = String(req.query.email || "").toLowerCase().trim();
 
-  // 1. Check in-memory verified cache
+  // 1. Check in-memory verified cache (expired entries are discarded, not treated as approved)
+  const isCacheEntryExpired = (data: { timestamp: number }) => (Date.now() - data.timestamp) > AGE_VERIFICATION_TTL_MS;
+
   if (reference && verifiedSessions.has(reference)) {
     const data = verifiedSessions.get(reference)!;
-    return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    if (isCacheEntryExpired(data)) {
+      verifiedSessions.delete(reference);
+    } else {
+      return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    }
   }
 
   if (agecheckid && verifiedSessions.has(agecheckid)) {
     const data = verifiedSessions.get(agecheckid)!;
-    return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    if (isCacheEntryExpired(data)) {
+      verifiedSessions.delete(agecheckid);
+    } else {
+      return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    }
   }
 
   if (email && verifiedSessions.has(email)) {
     const data = verifiedSessions.get(email)!;
-    return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    if (isCacheEntryExpired(data)) {
+      verifiedSessions.delete(email);
+    } else {
+      return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    }
   }
 
   // 2. Check PostgreSQL database persistence
@@ -403,6 +423,50 @@ router.post("/approve", async (req: Request, res: Response) => {
   }
 
   return res.status(400).json({ success: false, approved: false, message: "Verification not completed." });
+});
+
+// POST /api/agechecked/reset - Clears a persisted approval so re-verification can be tested/forced
+router.post("/reset", async (req: Request, res: Response) => {
+  const { reference, email, agecheckid } = req.body || {};
+  const normalizedEmail = email ? String(email).toLowerCase().trim() : undefined;
+  const keys = [reference, agecheckid, normalizedEmail].filter(
+    (k): k is string => Boolean(k && typeof k === "string" && k.trim())
+  );
+
+  for (const key of keys) {
+    verifiedSessions.delete(key.trim());
+  }
+
+  try {
+    if (keys.length > 0) {
+      await prisma.storeResource.deleteMany({
+        where: { resource: "age_verification", itemId: { in: keys } }
+      });
+    }
+
+    if (normalizedEmail) {
+      const existingCustomer = await prisma.customer.findUnique({ where: { email: normalizedEmail } });
+      if (existingCustomer) {
+        const currentData = (existingCustomer.data && typeof existingCustomer.data === 'object') ? (existingCustomer.data as Record<string, any>) : {};
+        await prisma.customer.update({
+          where: { email: normalizedEmail },
+          data: {
+            data: {
+              ...currentData,
+              ageVerified: false,
+              ageChecked: false,
+              ageCheckId: null,
+              ageVerifiedAt: null
+            }
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[AgeChecked] Reset error:", err);
+  }
+
+  return res.json({ success: true });
 });
 
 // GET /api/agechecked/demo-portal - Interactive AgeChecked ID Scanner & Verification Portal
