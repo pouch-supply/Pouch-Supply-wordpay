@@ -197,10 +197,25 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       window.clearInterval(pollingTimerRef.current);
       pollingTimerRef.current = null;
     }
-    if (windowRef.current && !windowRef.current.closed) {
-      try {
-        windowRef.current.close();
-      } catch (_e) {}
+    // Retry closing the popup a few times - a close() call issued right as the
+    // provider's page is mid-navigation/redirect can silently no-op the first time.
+    const winToClose = windowRef.current;
+    if (winToClose) {
+      let attempts = 0;
+      const tryClose = () => {
+        attempts += 1;
+        try {
+          if (!winToClose.closed) {
+            winToClose.close();
+          }
+        } catch (_e) {}
+        if (!winToClose.closed && attempts < 6) {
+          window.setTimeout(tryClose, 250);
+        } else {
+          windowRef.current = null;
+        }
+      };
+      tryClose();
     }
 
     // 3. Update React states
@@ -641,8 +656,8 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           windowRef.current = newWin;
           newWin.focus();
         } else {
-          // Fallback if browser blocked popup
-          window.open(rawRedirectUrl, "_blank");
+          // Fallback if browser blocked popup - still track the reference so it can auto-close
+          windowRef.current = window.open(rawRedirectUrl, "_blank");
         }
 
         setStatusMessage("AgeChecked 18+ verification in progress. Please complete verification in the opened window or on your phone.");
@@ -803,7 +818,10 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
                   type="button"
                   onClick={() => {
                     const newWin = window.open(activePortalUrl, "AgeCheckedPortal", "width=840,height=760,resizable=yes,scrollbars=yes");
-                    if (newWin) newWin.focus();
+                    if (newWin) {
+                      windowRef.current = newWin;
+                      newWin.focus();
+                    }
                   }}
                   className="text-[11px] font-bold text-sky-700 hover:text-sky-900 underline flex items-center gap-1 cursor-pointer"
                 >
