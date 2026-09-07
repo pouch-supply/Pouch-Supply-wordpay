@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Customer, Product, Order, Discount } from '../types';
 import { getWishlistProductTitle } from '../utils/mediaUtils';
-import { parseOrderTime } from '../utils';
-import { formatLoyaltyCouponCode, getCustomerPrefix } from '../utils/discountUtils';
+import { parseOrderTime, calculateDiscountAmount } from '../utils';
+import { formatLoyaltyCouponCode, getCustomerPrefix, resolveDiscountCode } from '../utils/discountUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
 import SubscriptionIcon from './SubscriptionIcon';
@@ -16,6 +16,28 @@ import {
   CheckCircle2, AlertTriangle, Play, Pause, ChevronDown, CheckCircle, Tag, LifeBuoy,
   Layout, LogOut, Plus, RotateCcw, Send, Mail, Loader2, ExternalLink
 } from 'lucide-react';
+
+/**
+ * Subscription plan tiers offered on the Account page.
+ *
+ * Single source of truth for the tier cards, the order summary and the
+ * checkout payload — the prices used to be written inline in the JSX only,
+ * so nothing else could compute a total from them.
+ */
+export const ACCOUNT_SUB_PLANS = [
+  { id: 'lite', name: 'LITE', cans: 6, price: 27.99, discount: '5% OFF', badge: 'Starter', popular: false },
+  { id: 'core', name: 'CORE', cans: 8, price: 35.99, discount: '10% OFF', badge: 'Most Popular', popular: true },
+  { id: 'pro', name: 'PRO', cans: 10, price: 40.99, discount: '12% OFF', badge: 'Extra Value', popular: false },
+  { id: 'ultimate', name: 'ULTIMATE', cans: 12, price: 46.99, discount: '15% OFF', badge: 'Best Value', popular: false }
+] as const;
+
+export const FREE_SHIPPING_THRESHOLD = 40;
+export const STANDARD_DELIVERY_COST = 2.99;
+
+export function getAccountPlanLabel(planId?: string): string {
+  const tier = ACCOUNT_SUB_PLANS.find(p => p.id === planId);
+  return tier ? `${tier.name} (${tier.cans} Canisters)` : 'CORE (8 Canisters)';
+}
 
 interface CustomerAccountProps {
   customers: Customer[];
@@ -123,6 +145,17 @@ export default function CustomerAccount({
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [planSaveFeedback, setPlanSaveFeedback] = useState<string | null>(null);
   const [subActionToast, setSubActionToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  // Promo / referral code for the Account-page subscription purchase. Resolved
+  // with the same resolveDiscountCode helper the checkout uses, so DB codes,
+  // loyalty milestone coupons and customer referral codes all behave
+  // identically in both places.
+  const [subPromoInput, setSubPromoInput] = useState('');
+  const [subPromoDiscount, setSubPromoDiscount] = useState<Discount | null>(null);
+  const [subPromoError, setSubPromoError] = useState('');
+  const [subPromoSuccess, setSubPromoSuccess] = useState('');
+  const [isSubscribing, setIsSubscribing] = useState(false);
+  const [subCheckoutError, setSubCheckoutError] = useState<string | null>(null);
 
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnType, setReturnType] = useState<'Return' | 'Refund' | 'Exchange'>('Return');
@@ -678,6 +711,169 @@ export default function CustomerAccount({
     });
   };
 
+  // ---------------------------------------------------------------------
+  // Account-page subscription checkout
+  //
+  // Mirrors CheckoutView: resolve a promo/referral code, apply it to the plan
+  // price, add delivery, then hand off to the same Worldpay Hosted Payment
+  // Page session endpoint. The item is flagged isSubscription so the backend
+  // creates the recurring agreement with a stored credential.
+  // ---------------------------------------------------------------------
+  const selectedPlanTier =
+    ACCOUNT_SUB_PLANS.find(p => p.id === custState?.subPlan) ||
+    ACCOUNT_SUB_PLANS.find(p => p.id === 'core')!;
+
+  const subPlanPrice = Number(custState?.subPrice ?? selectedPlanTier.price) || selectedPlanTier.price;
+
+  // calculateDiscountAmount expects cart items; the plan is a single line item.
+  const subPseudoCart = [
+    {
+      productId: `sub-pack-${selectedPlanTier.id}`,
+      productTitle: `${selectedPlanTier.name} Subscription Box`,
+      price: subPlanPrice,
+      quantity: 1,
+      isSubscription: true
+    } as any
+  ];
+
+  const subDiscountValue = calculateDiscountAmount(subPromoDiscount, subPseudoCart, subPlanPrice);
+  const subAfterDiscount = Math.max(subPlanPrice - subDiscountValue, 0);
+  const subQualifiesFreeShipping =
+    subAfterDiscount >= FREE_SHIPPING_THRESHOLD ||
+    subPromoDiscount?.type === 'Free shipping' ||
+    subPromoDiscount?.details?.toLowerCase().includes('free shipping') ||
+    subPromoDiscount?.details?.toLowerCase().includes('free royal mail');
+  const subDeliveryCost = subQualifiesFreeShipping ? 0 : STANDARD_DELIVERY_COST;
+  const subFinalTotal = Number((subAfterDiscount + subDeliveryCost).toFixed(2));
+
+  const handleApplySubPromo = () => {
+    setSubPromoError('');
+    setSubPromoSuccess('');
+
+    const res = resolveDiscountCode(
+      subPromoInput,
+      discounts || [],
+      customers || [],
+      loggedInCustomer,
+      subPseudoCart,
+      subPlanPrice
+    );
+
+    if (res.success && res.discount) {
+      setSubPromoDiscount(res.discount);
+      setSubPromoSuccess(res.message || `Discount code "${res.discount.title}" applied!`);
+    } else {
+      setSubPromoDiscount(null);
+      setSubPromoError(res.error || 'Invalid or expired discount code.');
+    }
+  };
+
+  const handleRemoveSubPromo = () => {
+    setSubPromoDiscount(null);
+    setSubPromoInput('');
+    setSubPromoError('');
+    setSubPromoSuccess('');
+  };
+
+  const handleSubscribeAndPay = async () => {
+    if (!loggedInCustomer?.email || !custState) return;
+
+    setIsSubscribing(true);
+    setSubCheckoutError(null);
+
+    try {
+      const generatedOrderId = `PS${Math.floor(Math.random() * 90000 + 10000)}`;
+      const planLabel = getAccountPlanLabel(selectedPlanTier.id);
+      const frequency = custState.subFrequency || 'Bi-Weekly';
+
+      const destination =
+        (Array.isArray(loggedInCustomer.addresses) && loggedInCustomer.addresses[0]) ||
+        custState.address ||
+        '';
+
+      if (!destination) {
+        setSubCheckoutError(
+          'Please add a delivery address in the Delivery Addresses tab before subscribing.'
+        );
+        setIsSubscribing(false);
+        return;
+      }
+
+      const selectedItems = Array.isArray(custState.subItems) ? custState.subItems : [];
+
+      const lineItem = {
+        productId: `sub-pack-${selectedPlanTier.id}`,
+        productTitle: `${planLabel} [${frequency} - ${selectedPlanTier.discount}]`,
+        price: subPlanPrice,
+        quantity: 1,
+        image: getPlanImage(selectedPlanTier.name),
+        variant: `${selectedPlanTier.cans} Canisters`,
+        sku: `SUB-${selectedPlanTier.id.toUpperCase()}`,
+        vendor: 'Subscription Pack',
+        isSubscription: true,
+        subscriptionPlan: `${selectedPlanTier.name} Plan`,
+        subscriptionFrequency: frequency,
+        frequencyDiscount: selectedPlanTier.discount,
+        subscriptionItems: selectedItems,
+        total: subPlanPrice
+      };
+
+      const sessionPayload = {
+        orderId: generatedOrderId,
+        amount: subFinalTotal.toFixed(2),
+        total: subFinalTotal,
+        subtotal: Number(subAfterDiscount.toFixed(2)),
+        shippingCost: Number(subDeliveryCost.toFixed(2)),
+        deliveryCost: Number(subDeliveryCost.toFixed(2)),
+        deliveryMethod: 'Royal Mail Tracked 24/48',
+        customerName: loggedInCustomer.name || 'Valued Customer',
+        customerEmail: loggedInCustomer.email,
+        destination,
+        items: [lineItem],
+        discountApplied: subPromoDiscount,
+        storeCreditApplied: 0
+      };
+
+      // Mirrors checkout so the success screen can recover the order details.
+      localStorage.setItem(
+        `ps_pending_order_${generatedOrderId}`,
+        JSON.stringify(sessionPayload)
+      );
+
+      const sessionRes = await fetch('/api/worldpay/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sessionPayload)
+      });
+
+      const sessionData = await sessionRes.json().catch(() => ({} as any));
+
+      if (sessionRes.ok && sessionData.redirectUrl) {
+        const url = sessionData.redirectUrl as string;
+        if (window.self !== window.top) {
+          try {
+            window.open(url, '_blank', 'noopener,noreferrer');
+          } catch (_e) {
+            window.location.href = url;
+          }
+        } else {
+          window.location.href = url;
+        }
+        return;
+      }
+
+      throw new Error(
+        sessionData.message ||
+          sessionData.error ||
+          'The payment gateway is currently unavailable. Please try again shortly.'
+      );
+    } catch (err: any) {
+      setSubCheckoutError(err?.message || 'Unable to start the subscription payment.');
+    } finally {
+      setIsSubscribing(false);
+    }
+  };
+
   const handleSaveSubscriptionPlan = async () => {
     if (!loggedInCustomer?.email || !custState) return;
     setIsSavingPlan(true);
@@ -686,7 +882,7 @@ export default function CustomerAccount({
       const payload = {
         customerEmail: loggedInCustomer.email,
         subPlan: custState.subPlan,
-        planName: custState.subPlan === 'lite' ? 'LITE (6 Canisters)' : custState.subPlan === 'core' ? 'CORE (8 Canisters)' : custState.subPlan === 'pro' ? 'PRO (10 Canisters)' : custState.subPlan === 'ultimate' ? 'ULTIMATE (12 Canisters)' : (custState.subPlan || 'CORE (8 Canisters)'),
+        planName: getAccountPlanLabel(custState.subPlan),
         subPrice: custState.subPrice,
         amount: custState.subPrice,
         subFrequency: custState.subFrequency,
@@ -707,7 +903,13 @@ export default function CustomerAccount({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({} as any));
+
+      // The response used to be ignored entirely, and the catch block reported
+      // success — so a failed save still told the customer it had worked.
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || `Save failed (${res.status})`);
+      }
 
       setPlanSaveFeedback('Subscription plan & box updated successfully!');
       setSubActionToast({
@@ -718,8 +920,10 @@ export default function CustomerAccount({
     } catch (err: any) {
       console.warn('Save subscription error:', err);
       setSubActionToast({
-        type: 'success',
-        message: 'Subscription plan updated locally and saved to your account.'
+        type: 'error',
+        message: err?.message
+          ? `Could not save your subscription plan: ${err.message}`
+          : 'Could not save your subscription plan. Please try again.'
       });
     } finally {
       setIsSavingPlan(false);
@@ -2824,12 +3028,7 @@ export default function CustomerAccount({
                             Choose Subscription Plan Tier
                           </label>
                           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-                            {[
-                              { id: 'lite', name: 'LITE', cans: 6, price: 27.99, discount: '5% OFF', badge: 'Starter' },
-                              { id: 'core', name: 'CORE', cans: 8, price: 35.99, discount: '10% OFF', badge: 'Most Popular', popular: true },
-                              { id: 'pro', name: 'PRO', cans: 10, price: 40.99, discount: '12% OFF', badge: 'Extra Value' },
-                              { id: 'ultimate', name: 'ULTIMATE', cans: 12, price: 46.99, discount: '15% OFF', badge: 'Best Value' }
-                            ].map(tier => {
+                            {ACCOUNT_SUB_PLANS.map(tier => {
                               const isSelected = custState.subPlan === tier.id || (!custState.subPlan && tier.id === 'core');
                               return (
                                 <div
@@ -2877,6 +3076,125 @@ export default function CustomerAccount({
                             })}
                           </div>
                         </div>
+
+                        {/* Promo / Referral Code + Subscribe & Pay */}
+                        {custState.subStatus !== 'Cancelled' && (
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 space-y-4">
+                            <div className="space-y-2">
+                              <label className="block text-[11px] font-black text-[#071d37] uppercase tracking-wider">
+                                Promo or Referral Code
+                              </label>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={subPromoInput}
+                                  onChange={(e) => setSubPromoInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleApplySubPromo();
+                                    }
+                                  }}
+                                  placeholder="Enter code"
+                                  disabled={Boolean(subPromoDiscount)}
+                                  className="flex-1 text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] bg-white outline-none uppercase disabled:bg-slate-100 disabled:text-slate-500"
+                                />
+                                {subPromoDiscount ? (
+                                  <button
+                                    type="button"
+                                    onClick={handleRemoveSubPromo}
+                                    className="px-4 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-extrabold text-xs uppercase tracking-wider rounded-xl cursor-pointer transition-colors"
+                                  >
+                                    Remove
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={handleApplySubPromo}
+                                    className="px-4 bg-[#071d37] hover:bg-[#0c2e56] text-white font-extrabold text-xs uppercase tracking-wider rounded-xl cursor-pointer transition-colors"
+                                  >
+                                    Apply
+                                  </button>
+                                )}
+                              </div>
+                              {subPromoError && (
+                                <p className="text-[11px] font-bold text-rose-600 flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                  {subPromoError}
+                                </p>
+                              )}
+                              {subPromoSuccess && (
+                                <p className="text-[11px] font-bold text-emerald-700 flex items-center gap-1.5">
+                                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                  {subPromoSuccess}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Order summary */}
+                            <div className="space-y-1.5 pt-3 border-t border-slate-200">
+                              <div className="flex justify-between text-xs font-semibold text-slate-600">
+                                <span>{getAccountPlanLabel(selectedPlanTier.id)}</span>
+                                <span className="text-[#071d37] font-bold">£{subPlanPrice.toFixed(2)}</span>
+                              </div>
+
+                              {subDiscountValue > 0 && (
+                                <div className="flex justify-between text-xs font-semibold text-emerald-700">
+                                  <span>Discount ({subPromoDiscount?.title})</span>
+                                  <span>-£{subDiscountValue.toFixed(2)}</span>
+                                </div>
+                              )}
+
+                              <div className="flex justify-between text-xs font-semibold text-slate-600">
+                                <span>Delivery</span>
+                                <span className={subDeliveryCost === 0 ? 'text-emerald-600 font-black' : 'text-[#071d37] font-bold'}>
+                                  {subDeliveryCost === 0 ? 'FREE' : `£${subDeliveryCost.toFixed(2)}`}
+                                </span>
+                              </div>
+
+                              <div className="flex justify-between items-baseline pt-2 border-t border-slate-200">
+                                <span className="text-xs font-black text-[#071d37] uppercase tracking-wider">
+                                  Total due today
+                                </span>
+                                <span className="text-lg font-black text-[#071d37]">£{subFinalTotal.toFixed(2)}</span>
+                              </div>
+
+                              <p className="text-[10px] text-slate-400 font-semibold pt-0.5">
+                                Renews {(custState.subFrequency || 'Bi-Weekly').toLowerCase()}. Cancel anytime from this page.
+                              </p>
+                            </div>
+
+                            {subCheckoutError && (
+                              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-[11px] font-bold text-rose-700 flex items-start gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                                <span>{subCheckoutError}</span>
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={handleSubscribeAndPay}
+                              disabled={isSubscribing}
+                              className="w-full bg-[#dfa047] hover:bg-[#c98d38] disabled:opacity-60 text-white font-black text-xs uppercase tracking-wider py-3 rounded-xl transition-all cursor-pointer shadow-xs flex items-center justify-center gap-2"
+                            >
+                              {isSubscribing ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  <span>Redirecting to secure payment…</span>
+                                </>
+                              ) : (
+                                <>
+                                  <CreditCard className="w-4 h-4" />
+                                  <span>Subscribe &amp; Pay £{subFinalTotal.toFixed(2)}</span>
+                                </>
+                              )}
+                            </button>
+
+                            <p className="text-[10px] text-slate-400 text-center font-semibold">
+                              Secure payment via Worldpay. Your card is stored for automatic renewals.
+                            </p>
+                          </div>
+                        )}
 
                         {/* Frequency & Details Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100">

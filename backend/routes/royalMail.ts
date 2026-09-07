@@ -9,8 +9,9 @@ import {
   getRoyalMailTracking,
   syncRoyalMailOrderStatus,
   createReturnLabel as createRoyalMailReturnLabel,
-  generateShippingLabelHtml,
-  generateRoyalMailTrackingNumber
+  getRoyalMailLabelForOrder,
+  dispatchRoyalMailShipment,
+  requireApiKey
 } from "../services/royalMailService";
 import {
   createOrder,
@@ -24,7 +25,28 @@ import {
   RoyalMailError,
   RoyalMailOrderPayload
 } from "../../src/lib/royalMail";
-import { fetchResource } from "../../serverDb";
+
+/**
+ * Maps a Royal Mail failure onto an HTTP response. Live-only integration: a
+ * failure is reported as a failure, never smoothed over with a local fallback.
+ */
+function sendRoyalMailError(res: Response, error: any, fallbackMessage: string) {
+  console.error(`[Royal Mail] ${fallbackMessage}:`, error);
+  if (error instanceof RoyalMailError) {
+    return res.status(error.status || 502).json({
+      success: false,
+      error: error.message,
+      message: error.message,
+      status: error.status,
+      details: error.details
+    });
+  }
+  return res.status(400).json({
+    success: false,
+    error: error?.message || fallbackMessage,
+    message: error?.message || fallbackMessage
+  });
+}
 
 const router = Router();
 
@@ -147,11 +169,7 @@ router.post("/create-order", async (req: Request, res: Response) => {
 // GET /api/royalmail/orders - Fetch orders from Royal Mail
 router.get("/orders", async (req: Request, res: Response) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const params = req.query as Record<string, string>;
     const data = await getOrders(apiKey, params);
     res.json({ success: true, data });
@@ -163,11 +181,7 @@ router.get("/orders", async (req: Request, res: Response) => {
 // GET /api/royalmail/orders/:reference - Get specific order
 router.get("/orders/:reference", async (req: Request, res: Response) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const data = await getOrderByReference(req.params.reference, apiKey);
     res.json({ success: true, data });
   } catch (err: any) {
@@ -178,11 +192,7 @@ router.get("/orders/:reference", async (req: Request, res: Response) => {
 // DELETE /api/royalmail/orders/:reference - Delete specific order
 router.delete("/orders/:reference", async (req: Request, res: Response) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const data = await cancelOrder(req.params.reference, apiKey);
     res.json({ success: true, data });
   } catch (err: any) {
@@ -193,11 +203,7 @@ router.delete("/orders/:reference", async (req: Request, res: Response) => {
 // GET /api/royalmail/version - Get API version
 router.get("/version", async (_req: Request, res: Response) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const data = await getApiVersion(apiKey);
     res.json({ success: true, version: data });
   } catch (err: any) {
@@ -241,8 +247,7 @@ router.post("/create-shipment", async (req: Request, res: Response) => {
 
     res.json(result);
   } catch (err: any) {
-    console.error("[RoyalMail Router] Create shipment error:", err);
-    res.status(500).json({ error: err.message || "Failed to create Royal Mail shipment" });
+    return sendRoyalMailError(res, err, "Failed to create Royal Mail shipment");
   }
 });
 
@@ -267,55 +272,48 @@ router.post("/rates", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/royalmail/label/:orderId/html - Printable Label HTML View
-router.get("/label/:orderId/html", async (req: Request, res: Response) => {
+// GET /api/royalmail/label/:orderId/order-pdf - Official postage label for a store order.
+// The previous /label/:orderId/html endpoint rendered a hand-drawn HTML label
+// with a CSS "barcode". Royal Mail cannot scan that, so it has been removed in
+// favour of the genuine PDF issued by Click & Drop.
+router.get("/label/:orderId/order-pdf", async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
-    const settings = await getRoyalMailSettings();
-    const orders: any[] = (await fetchResource("orders")) || [];
-    const order = orders.find((o: any) => String(o.id) === String(orderId));
+    const includeReturnsLabel = req.query.includeReturnsLabel === "true";
+    const includeCN = req.query.includeCN === "true";
 
-    if (!order) {
-      return res.status(404).send("Order not found");
-    }
-
-    const trackingNumber = order.trackingNumber || order.trackingId || generateRoyalMailTrackingNumber();
-    const rawAddr = order.data?.address || order.destination || '';
-    const recipient = {
-      fullName: order.customerName,
-      addressLine1: typeof rawAddr === 'object' ? (rawAddr.addressLine1 || rawAddr.street) : String(rawAddr),
-      city: typeof rawAddr === 'object' ? (rawAddr.city || 'London') : 'London',
-      postcode: typeof rawAddr === 'object' ? (rawAddr.postcode || 'EC1A 1BB') : 'EC1A 1BB',
-      countryCode: 'GB',
-      email: order.customerEmail
-    };
-
-    const labelHtml = generateShippingLabelHtml({
-      trackingNumber,
-      orderId: String(order.id),
-      serviceCode: order.data?.royalMail?.serviceCode || settings.defaultServiceCode || 'TPS24',
-      serviceName: order.carrier || 'Royal Mail Tracked 24',
-      recipient,
-      sender: settings.senderAddress,
-      weightGrams: settings.defaultWeightGrams || 350,
-      date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    const { pdf, royalMailOrderId } = await getRoyalMailLabelForOrder(String(orderId), {
+      includeReturnsLabel,
+      includeCN
     });
 
-    res.setHeader("Content-Type", "text/html");
-    res.send(labelHtml);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="royal-mail-${royalMailOrderId}.pdf"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(Buffer.from(pdf));
   } catch (err: any) {
-    res.status(500).send("Error generating label: " + err.message);
+    return sendRoyalMailError(res, err, "Unable to retrieve the Royal Mail label");
   }
 });
 
-// GET /api/royalmail/track/:trackingNumber - Track shipment
+// PUT /api/royalmail/dispatch-order/:orderId - Mark a store order as despatched
+router.put("/dispatch-order/:orderId", async (req: Request, res: Response) => {
+  try {
+    const result = await dispatchRoyalMailShipment(String(req.params.orderId));
+    return res.json(result);
+  } catch (err: any) {
+    return sendRoyalMailError(res, err, "Unable to mark the order as despatched");
+  }
+});
+
+// GET /api/royalmail/track/:trackingNumber - Track shipment (live Click & Drop)
 router.get("/track/:trackingNumber", async (req: Request, res: Response) => {
   try {
     const { trackingNumber } = req.params;
     const trackingInfo = await getRoyalMailTracking(trackingNumber);
     res.json(trackingInfo);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Tracking lookup failed" });
+    return sendRoyalMailError(res, err, "Tracking lookup failed");
   }
 });
 
@@ -326,35 +324,42 @@ router.post("/sync-status/:orderId", async (req: Request, res: Response) => {
     const result = await syncRoyalMailOrderStatus(orderId);
     res.json(result);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to sync order status" });
+    return sendRoyalMailError(res, err, "Failed to sync order status");
   }
 });
 
-// POST /api/royalmail/cancel-shipment - Cancel shipment
+// POST /api/royalmail/cancel-shipment - Cancel shipment in Click & Drop
 router.post("/cancel-shipment", async (req: Request, res: Response) => {
   try {
     const { orderId, royalMailOrderId } = req.body;
     if (!orderId) {
-      return res.status(400).json({ error: "orderId is required" });
+      return res.status(400).json({ success: false, error: "orderId is required" });
     }
     const result = await cancelRoyalMailShipment(String(orderId), royalMailOrderId);
     res.json(result);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to cancel shipment" });
+    return sendRoyalMailError(res, err, "Failed to cancel shipment");
   }
 });
 
-// POST /api/royalmail/create-return-label - Return label
+// POST /api/royalmail/create-return-label - Official Royal Mail pre-paid returns label (PDF)
 router.post("/create-return-label", async (req: Request, res: Response) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {
-      return res.status(400).json({ error: "orderId is required" });
+      return res.status(400).json({ success: false, error: "orderId is required" });
     }
     const result = await createRoyalMailReturnLabel(String(orderId));
-    res.json(result);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="royal-mail-returns-${result.royalMailOrderId}.pdf"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(Buffer.from(result.pdf));
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to generate return label" });
+    return sendRoyalMailError(res, err, "Failed to retrieve the returns label");
   }
 });
 

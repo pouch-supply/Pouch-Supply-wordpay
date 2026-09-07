@@ -7,12 +7,75 @@ import {
   sendOutForDeliveryEmail,
   sendDeliveredEmail,
   sendOrderCancelledEmail,
-  sendOrderRefundedEmail,
-  sendAdminNewOrderNotification
+  sendOrderRefundedEmail
 } from "../services/emailService";
-import { trackPurchaseCompleted, trackOrderRefunded } from "../services/klaviyoService";
+import { trackPurchaseCompleted, trackOrderRefunded, trackOrderShipped } from "../services/klaviyoService";
 
 const router = Router();
+
+/**
+ * Order lifecycle notifications.
+ *
+ * `saveSingleOrder` is the ONLY place that sends order emails or fires Klaviyo
+ * order events. Callers (checkout, the subscription worker, Royal Mail, the
+ * admin routes) just persist the order and let the transition decide what to
+ * send. Sending from the call sites as well is what previously produced
+ * duplicate confirmations and admin notifications.
+ *
+ * Every dispatch is recorded in `data.notificationsSent` and is only ever sent
+ * once per order, so a retried webhook, a callback racing the verify-payment
+ * call, or a restarted worker cannot re-notify the customer.
+ */
+type OrderNotificationKey =
+  | 'order_confirmation'
+  | 'order_processing'
+  | 'order_shipped'
+  | 'out_for_delivery'
+  | 'order_delivered'
+  | 'order_cancelled'
+  | 'order_refunded';
+
+const FULFILLMENT_NOTIFICATION: Record<string, OrderNotificationKey> = {
+  Processing: 'order_processing',
+  Shipped: 'order_shipped',
+  'Out for Delivery': 'out_for_delivery',
+  Delivered: 'order_delivered',
+  Cancelled: 'order_cancelled'
+};
+
+function dispatchOrderNotification(key: OrderNotificationKey, order: any, context: any = {}) {
+  const label = `[Orders Trigger] ${key} for ${order.id}`;
+  const fail = (e: any) => console.warn(`${label} failed:`, e?.message || e);
+
+  switch (key) {
+    case 'order_confirmation':
+      // sendOrderConfirmationEmail also notifies the admin address internally,
+      // so no separate admin call belongs here.
+      sendOrderConfirmationEmail(order).catch(fail);
+      trackPurchaseCompleted(order).catch(fail);
+      break;
+    case 'order_processing':
+      sendOrderProcessingEmail(order).catch(fail);
+      break;
+    case 'order_shipped':
+      sendOrderShippedEmail(order, order.trackingNumber, order.carrier).catch(fail);
+      trackOrderShipped(order, order.trackingNumber, order.carrier).catch(fail);
+      break;
+    case 'out_for_delivery':
+      sendOutForDeliveryEmail(order).catch(fail);
+      break;
+    case 'order_delivered':
+      sendDeliveredEmail(order).catch(fail);
+      break;
+    case 'order_cancelled':
+      sendOrderCancelledEmail(order, context.reason || 'Order cancelled by store administrator').catch(fail);
+      break;
+    case 'order_refunded':
+      sendOrderRefundedEmail(order, context.refundAmount ?? order.total, context.reason).catch(fail);
+      trackOrderRefunded(order, context.refundAmount ?? order.total).catch(fail);
+      break;
+  }
+}
 
 export async function saveSingleOrder(orderData: any) {
   const id = String(orderData.id || orderData.orderId || `PS${Math.floor(Math.random() * 90000 + 10000)}`);
@@ -290,9 +353,72 @@ export async function saveSingleOrder(orderData: any) {
       deliveryCost: orderData.deliveryCost ?? existingOrder?.data?.deliveryCost,
       subtotal: orderData.subtotal ?? existingOrder?.data?.subtotal,
       address: orderData.address || existingOrder?.data?.address,
-      paymentMethod: orderData.paymentMethod || existingOrder?.data?.paymentMethod
+      paymentMethod: orderData.paymentMethod || existingOrder?.data?.paymentMethod,
+      // Merge rather than overwrite: a caller passing its own `data` block must
+      // not be able to wipe the record of what has already been emailed.
+      notificationsSent: {
+        ...(existingOrder?.data?.notificationsSent || {}),
+        ...(orderData?.data?.notificationsSent || {})
+      }
     }
   };
+
+  // ------------------------------------------------------------------
+  // Decide which notifications this save should produce.
+  //
+  // This runs BEFORE persisting so the "already sent" marks are written in the
+  // same save. A concurrent save for the same order then reads those marks and
+  // sends nothing, which is what makes the flow safe against the Worldpay
+  // callback and verify-payment call racing each other.
+  // ------------------------------------------------------------------
+  const alreadySent: Record<string, string> = formattedOrder.data.notificationsSent || {};
+  const pending: Array<{ key: OrderNotificationKey; context: any }> = [];
+
+  const queue = (key: OrderNotificationKey, context: any = {}) => {
+    if (alreadySent[key]) {
+      console.log(`[Orders Trigger] Skipping ${key} for ${id} — already sent at ${alreadySent[key]}.`);
+      return;
+    }
+    if (pending.some(p => p.key === key)) return;
+    pending.push({ key, context });
+  };
+
+  try {
+    const isNewOrder = !existingOrder;
+    const paymentJustPaid = existingOrder?.paymentStatus !== 'Paid' && formattedOrder.paymentStatus === 'Paid';
+
+    // 1. Payment succeeded (on creation or on a later transition to Paid)
+    if (formattedOrder.paymentStatus === 'Paid' && (isNewOrder || paymentJustPaid)) {
+      queue('order_confirmation');
+    }
+
+    // 2. Fulfillment status transition
+    const previousFulfillment = existingOrder?.fulfillmentStatus;
+    if (existingOrder && previousFulfillment !== formattedOrder.fulfillmentStatus) {
+      console.log(
+        `[Orders Trigger] Fulfillment status changed for ${id}: ${previousFulfillment} -> ${formattedOrder.fulfillmentStatus}`
+      );
+      const key = FULFILLMENT_NOTIFICATION[formattedOrder.fulfillmentStatus];
+      if (key) {
+        queue(key, { reason: orderData.reason || orderData.cancellationReason });
+      }
+    }
+
+    // 3. Refund transition
+    if (existingOrder && existingOrder.paymentStatus !== 'Refunded' && formattedOrder.paymentStatus === 'Refunded') {
+      queue('order_refunded', {
+        refundAmount: orderData.refundAmount ?? formattedOrder.total,
+        reason: orderData.refundReason || orderData.reason
+      });
+    }
+  } catch (triggerErr) {
+    console.warn('[Orders Trigger] Error deciding automated notifications:', triggerErr);
+  }
+
+  const dispatchedAt = new Date().toISOString();
+  for (const item of pending) {
+    formattedOrder.data.notificationsSent[item.key] = dispatchedAt;
+  }
 
   // Try Prisma first
   try {
@@ -320,43 +446,10 @@ export async function saveSingleOrder(orderData: any) {
     console.error('[Orders Router] StoreResource save error:', resourceErr);
   }
 
-  // Trigger Automatic Emails & Klaviyo Events on creation or status transition
-  try {
-    const isNewOrder = !existingOrder;
-    const paymentStatusJustPaid = (existingOrder?.paymentStatus !== 'Paid') && (formattedOrder.paymentStatus === 'Paid');
-    
-    // 1. Order Payment Succeeded or New Order Placed
-    if ((formattedOrder.paymentStatus === 'Paid' || isNewOrder) && (isNewOrder || paymentStatusJustPaid)) {
-      console.log(`[Orders Trigger] Dispatching Order Confirmation & Klaviyo Purchase for ${id}`);
-      sendOrderConfirmationEmail(formattedOrder).catch(e => console.warn('Order confirmation email fail:', e));
-      trackPurchaseCompleted(formattedOrder).catch(e => console.warn('Klaviyo purchase track fail:', e));
-    }
-
-    // 2. Fulfillment Status Transition
-    if (existingOrder && existingOrder.fulfillmentStatus !== formattedOrder.fulfillmentStatus) {
-      const newStatus = formattedOrder.fulfillmentStatus;
-      console.log(`[Orders Trigger] Fulfillment status changed for ${id}: ${existingOrder.fulfillmentStatus} -> ${newStatus}`);
-      if (newStatus === 'Processing') {
-        sendOrderProcessingEmail(formattedOrder).catch(e => console.warn('Order processing email fail:', e));
-      } else if (newStatus === 'Shipped') {
-        sendOrderShippedEmail(formattedOrder, formattedOrder.trackingNumber, formattedOrder.carrier).catch(e => console.warn('Order shipped email fail:', e));
-      } else if (newStatus === 'Out for Delivery') {
-        sendOutForDeliveryEmail(formattedOrder).catch(e => console.warn('Out for delivery email fail:', e));
-      } else if (newStatus === 'Delivered') {
-        sendDeliveredEmail(formattedOrder).catch(e => console.warn('Order delivered email fail:', e));
-      } else if (newStatus === 'Cancelled') {
-        sendOrderCancelledEmail(formattedOrder, orderData.reason || 'Order cancelled by store administrator').catch(e => console.warn('Order cancelled email fail:', e));
-      }
-    }
-
-    // 3. Refund Transition
-    if (existingOrder && existingOrder.paymentStatus !== 'Refunded' && formattedOrder.paymentStatus === 'Refunded') {
-      console.log(`[Orders Trigger] Refund processed for ${id}`);
-      sendOrderRefundedEmail(formattedOrder, formattedOrder.total, orderData.refundReason).catch(e => console.warn('Order refund email fail:', e));
-      trackOrderRefunded(formattedOrder, formattedOrder.total).catch(e => console.warn('Klaviyo refund track fail:', e));
-    }
-  } catch (triggerErr) {
-    console.warn('[Orders Trigger] Error dispatching automated notifications:', triggerErr);
+  // Now that the marks are persisted, actually send.
+  for (const item of pending) {
+    console.log(`[Orders Trigger] Dispatching ${item.key} for ${id}`);
+    dispatchOrderNotification(item.key, formattedOrder, item.context);
   }
 
   return formattedOrder;
@@ -485,13 +578,22 @@ router.post("/:id/cancel", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Order is already cancelled or refunded." });
     }
 
-    // Update status
-    order.fulfillmentStatus = "Cancelled";
-    order.cancellationReason = reason || "Customer requested cancellation";
-    order.cancelledAt = new Date().toISOString();
+    // Build a patch instead of mutating `order`. fetchResource hands back the
+    // cached object itself, so mutating it in place would make saveSingleOrder
+    // see the NEW status as the previous one and skip the transition emails.
+    const cancellationReason = reason || "Customer requested cancellation";
+    const patch: any = {
+      ...order,
+      fulfillmentStatus: "Cancelled",
+      paymentStatus: "Refunded",
+      cancellationReason,
+      cancelledAt: new Date().toISOString(),
+      reason: cancellationReason,
+      refundAmount: order.total,
+      refundReason: `Cancellation refund (${refundMethod === "store_credit" ? "Store Credit" : "Original Payment"})`
+    };
 
     if (refundMethod === "store_credit") {
-      order.paymentStatus = "Refunded";
       // Add store credit to customer account
       try {
         const customersList: any[] = (await fetchResource("customers")) || [];
@@ -506,19 +608,14 @@ router.post("/:id/cancel", async (req: Request, res: Response) => {
       }
     } else {
       // Process refund via Worldpay Payment Gateway if transaction ID is attached
-      order.paymentStatus = "Refunded";
       if (order.worldpayTxId || order.gatewayTxId) {
         try {
-          const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-          await fetch(`${appUrl}/api/worldpay/refund`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              orderId: order.id,
-              amount: order.total,
-              reason: `Customer cancellation: ${reason || "Changed mind"}`,
-              transactionId: order.worldpayTxId || order.gatewayTxId
-            })
+          const { refundWorldpayPayment } = await import("../services/worldpayRefund");
+          await refundWorldpayPayment({
+            order,
+            amount: order.total,
+            reason: `Customer cancellation: ${reason || "Changed mind"}`,
+            transactionId: order.worldpayTxId || order.gatewayTxId
           });
         } catch (wpErr) {
           console.warn("[Cancel Order] Worldpay refund trigger notice:", wpErr);
@@ -526,19 +623,18 @@ router.post("/:id/cancel", async (req: Request, res: Response) => {
       }
     }
 
-    order.returnRequest = {
+    patch.returnRequest = {
       type: "Cancellation",
-      reason: reason || "Customer requested cancellation",
+      reason: cancellationReason,
       refundMethod,
       status: "Completed",
       requestedAt: new Date().toISOString()
     };
 
-    const updatedOrder = await saveSingleOrder(order);
-
-    // Send Resend Emails
-    sendOrderCancelledEmail(updatedOrder, reason).catch(e => console.warn("Cancel email error:", e));
-    sendOrderRefundedEmail(updatedOrder, updatedOrder.total, `Cancellation refund (${refundMethod === "store_credit" ? "Store Credit" : "Original Payment"})`).catch(e => console.warn("Refund email error:", e));
+    // saveSingleOrder emits the cancellation and refund notifications from the
+    // status transition — sending them here as well is what produced the
+    // duplicate cancellation emails.
+    const updatedOrder = await saveSingleOrder(patch);
 
     res.json({ success: true, message: "Order successfully cancelled and refund initiated.", order: updatedOrder });
   } catch (err: any) {
@@ -576,15 +672,19 @@ router.post("/:id/return-request", async (req: Request, res: Response) => {
       requestedAt: new Date().toISOString()
     };
 
-    order.returnRequest = returnRequest;
-    if (!Array.isArray(order.tags)) order.tags = [];
-    if (!order.tags.includes(`${type} Requested`)) {
-      order.tags.push(`${type} Requested`);
+    const existingTags = Array.isArray(order.tags) ? [...order.tags] : [];
+    if (!existingTags.includes(`${type} Requested`)) {
+      existingTags.push(`${type} Requested`);
     }
 
-    const updatedOrder = await saveSingleOrder(order);
+    const updatedOrder = await saveSingleOrder({
+      ...order,
+      returnRequest,
+      tags: existingTags
+    });
 
-    // Send notification email
+    // A return/exchange request is an acknowledgement rather than a lifecycle
+    // status change, so it has no transition to hang off and is sent directly.
     try {
       if (type === "Exchange") {
         const { sendOrderExchangedEmail } = await import("../services/emailService");
@@ -620,51 +720,77 @@ router.post("/:id/admin-action", async (req: Request, res: Response) => {
     const order = currentOrders[foundIdx];
     const amountToRefund = typeof refundAmount === "number" ? refundAmount : (order.total || 0);
 
+    // Patch rather than mutate — see the note in the cancel route.
+    const patch: any = { ...order };
+    let runExchangeEmail = false;
+
     if (action === "approve_return" || action === "process_refund") {
-      order.paymentStatus = "Refunded";
+      patch.paymentStatus = "Refunded";
+      patch.refundAmount = amountToRefund;
+      patch.refundReason = reason || "Refund processed by store administrator";
       if (order.returnRequest) {
-        order.returnRequest.status = "Completed";
-        order.returnRequest.processedAt = new Date().toISOString();
+        patch.returnRequest = {
+          ...order.returnRequest,
+          status: "Completed",
+          processedAt: new Date().toISOString()
+        };
       }
 
-      // Execute actual payment provider refund via Worldpay Endpoint
+      // Execute the actual payment provider refund.
       if (order.worldpayTxId || order.gatewayTxId) {
         try {
-          const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-          await fetch(`${appUrl}/api/worldpay/refund`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              orderId: order.id,
-              amount: amountToRefund,
-              reason: reason || "Admin processed refund",
-              transactionId: order.worldpayTxId || order.gatewayTxId
-            })
+          const { refundWorldpayPayment } = await import("../services/worldpayRefund");
+          const refundResult = await refundWorldpayPayment({
+            order,
+            amount: amountToRefund,
+            reason: reason || "Admin processed refund",
+            transactionId: order.worldpayTxId || order.gatewayTxId
           });
+          patch.refundDetails = {
+            refundRef: refundResult.refundRef,
+            amount: refundResult.amount,
+            reason: reason || "Admin processed refund",
+            gatewayContacted: refundResult.gatewayContacted,
+            gatewayMessage: refundResult.message,
+            refundedAt: new Date().toISOString()
+          };
         } catch (wpErr) {
           console.warn("[Admin Action] Worldpay refund trigger notice:", wpErr);
         }
       }
-
-      sendOrderRefundedEmail(order, amountToRefund, reason || "Refund processed by store administrator").catch(e => console.warn("Refund email fail:", e));
+      // The refund email is emitted by the Paid -> Refunded transition in
+      // saveSingleOrder; sending it here too duplicated it.
 
     } else if (action === "complete_exchange") {
-      order.fulfillmentStatus = "Exchanged" as any;
+      patch.fulfillmentStatus = "Exchanged";
       if (order.returnRequest) {
-        order.returnRequest.status = "Completed";
-        order.returnRequest.completedAt = new Date().toISOString();
+        patch.returnRequest = {
+          ...order.returnRequest,
+          status: "Completed",
+          completedAt: new Date().toISOString()
+        };
       }
-      const { sendOrderExchangedEmail } = await import("../services/emailService");
-      sendOrderExchangedEmail(order, "Exchange replacement item dispatched", reason || "Exchange approved").catch(e => console.warn("Exchange email fail:", e));
+      runExchangeEmail = true;
 
     } else if (action === "decline_return") {
       if (order.returnRequest) {
-        order.returnRequest.status = "Declined";
-        order.returnRequest.declinedReason = reason || "Request declined by administrator";
+        patch.returnRequest = {
+          ...order.returnRequest,
+          status: "Declined",
+          declinedReason: reason || "Request declined by administrator"
+        };
       }
     }
 
-    const updatedOrder = await saveSingleOrder(order);
+    const updatedOrder = await saveSingleOrder(patch);
+
+    // 'Exchanged' is not one of the tracked lifecycle statuses, so this one
+    // still has to be sent explicitly.
+    if (runExchangeEmail) {
+      const { sendOrderExchangedEmail } = await import("../services/emailService");
+      sendOrderExchangedEmail(updatedOrder, "Exchange replacement item dispatched", reason || "Exchange approved")
+        .catch(e => console.warn("Exchange email fail:", e));
+    }
     res.json({ success: true, message: `Admin action '${action}' processed successfully.`, order: updatedOrder });
   } catch (err: any) {
     console.error("[Orders Router] Admin Action Error:", err);

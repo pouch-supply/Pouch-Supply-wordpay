@@ -2,6 +2,12 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../../src/lib/prisma';
 import { fetchResource, saveResource } from '../../serverDb';
+import {
+  extractRecurringAuthorizationHref,
+  extractSchemeReference,
+  isPlaceholderCredential
+} from '../services/worldpaySubscription';
+import { calculateNextBillingDate, normalizeBillingInterval } from '../services/subscriptionCron';
 
 const router = Router();
 
@@ -38,9 +44,14 @@ function getEnvironmentConfig() {
     authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
   }
 
+  // Honour WORLDPAY_ENVIRONMENT instead of always claiming "live" — the admin
+  // config panel reports this, and it previously showed a sandbox setup as live.
+  const environment = String(process.env.WORLDPAY_ENVIRONMENT || 'live').toLowerCase();
+  const isTestMode = environment === 'test' || environment === 'sandbox';
+
   return {
-    isTestMode: false,
-    environment: 'live',
+    isTestMode,
+    environment,
     entity,
     username,
     password,
@@ -100,6 +111,50 @@ function extractWorldpayRedirectUrl(responseBody: any): string | null {
   return null;
 }
 
+/**
+ * Looks a payment up with Worldpay after the shopper returns from the Hosted
+ * Payment Page.
+ *
+ * The browser redirect carries no payment detail, so for a subscription order
+ * this query is the only opportunity to capture the scheme transaction
+ * reference Worldpay issued for the stored card. Without it there is nothing to
+ * present on the recurring charges, which is why renewals never took money.
+ */
+async function fetchWorldpayPaymentDetails(transactionReference: string): Promise<any | null> {
+  const cfg = getEnvironmentConfig();
+  if (!cfg.authHeader || !cfg.entity) return null;
+
+  try {
+    const response = await fetch(`${cfg.baseUrl}/paymentQueries/payments`, {
+      method: 'POST',
+      headers: {
+        Authorization: cfg.authHeader,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'WP-CorrelationId': crypto.randomUUID ? crypto.randomUUID() : `q-${Date.now()}`
+      },
+      body: JSON.stringify({
+        transactionReference,
+        merchant: { entity: cfg.entity }
+      })
+    });
+
+    if (!response.ok) {
+      console.warn(
+        `[Worldpay Query] Payment lookup for ${transactionReference} returned HTTP ${response.status}.`
+      );
+      return null;
+    }
+
+    const data: any = await response.json().catch(() => null);
+    // The query API returns a collection; the payment itself is the first entry.
+    return data?._embedded?.payments?.[0] || data?.payments?.[0] || data || null;
+  } catch (err: any) {
+    console.warn(`[Worldpay Query] Payment lookup failed for ${transactionReference}:`, err?.message);
+    return null;
+  }
+}
+
 // Helper to save and load pending checkouts persistently
 async function savePendingCheckout(orderId: string, payload: PendingCheckout) {
   pendingCheckoutsMap.set(orderId, payload);
@@ -143,6 +198,9 @@ async function saveVerifiedOrder(
     cardLast4?: string;
     paymentMethod?: string;
     webhookEventId?: string;
+    /** Raw Worldpay response, used to recover the stored-credential references. */
+    gatewayResponse?: any;
+    schemeReference?: string | null;
     pendingData?: PendingCheckout;
     customerName?: string;
     customerEmail?: string;
@@ -159,6 +217,30 @@ async function saveVerifiedOrder(
 ) {
   const pending = details.pendingData || await getPendingCheckout(orderId);
   const { saveSingleOrder } = await import('./orders');
+
+  // The shopper's browser return (/callback) and the client-side
+  // /verify-payment call both land here for the same payment. Without this
+  // guard the second one creates a SECOND subscription for the same order —
+  // with its own id and schedule — so the customer gets billed twice per cycle.
+  try {
+    const existingOrders: any[] = (await fetchResource('orders')) || [];
+    const already = existingOrders.find((o: any) => String(o.id) === String(orderId));
+    if (already && already.paymentStatus === 'Paid') {
+      console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid — skipping duplicate creation.`);
+      return already;
+    }
+  } catch (_e) {}
+
+  try {
+    const existingSubs: any[] = (await fetchResource('subscriptions')) || [];
+    const dupeSub = existingSubs.find((s: any) => String(s.sourceOrderId || '') === String(orderId));
+    if (dupeSub) {
+      console.log(
+        `[Worldpay Order] A subscription (${dupeSub.id}) already exists for order ${orderId} — not creating another.`
+      );
+      return (await fetchResource('orders')).find((o: any) => String(o.id) === String(orderId)) || null;
+    }
+  } catch (_e) {}
 
   const customerName = pending?.customerName || details.customerName || 'Valued Customer';
   const rawEmail = pending?.customerEmail || details.customerEmail || 'customer@pouch-supply.com';
@@ -194,26 +276,38 @@ async function saveVerifiedOrder(
     try {
       const planName = subItem.productTitle || subItem.title || 'Pouch Supply Subscription';
       const planId = subItem.productId || 'sub-pack-core';
-      const rawFrequency = (subItem.subscriptionFrequency || subItem.frequency || subItem.billingInterval || pending?.items?.find((i: any) => i.isSubscription)?.subscriptionFrequency || '1day').toString().toLowerCase();
-      
-      let billingInterval = '1day';
-      if (rawFrequency.includes('day') || rawFrequency.includes('1') || rawFrequency === 'next day (test)') {
-        billingInterval = '1day';
-      } else if (rawFrequency.includes('week') && !rawFrequency.includes('bi')) {
-        billingInterval = 'weekly';
-      } else if (rawFrequency.includes('bi') || rawFrequency.includes('14')) {
-        billingInterval = 'bi-weekly';
-      } else if (rawFrequency.includes('month') || rawFrequency.includes('30')) {
-        billingInterval = 'month';
-      } else {
-        billingInterval = rawFrequency;
-      }
+      const rawFrequency = (
+        subItem.subscriptionFrequency ||
+        subItem.frequency ||
+        subItem.billingInterval ||
+        pending?.items?.find((i: any) => i.isSubscription)?.subscriptionFrequency ||
+        'month'
+      ).toString();
 
-      const { calculateNextBillingDate } = await import('../services/subscriptionCron');
+      // Single shared normaliser. The old inline ladder matched `includes('day')`
+      // first, so "14 days"/"7 days"/"30 days" all became daily billing, and
+      // `includes('1')` turned "1 Month" into a daily plan too.
+      const billingInterval = normalizeBillingInterval(rawFrequency);
       const nextBillingDate = calculateNextBillingDate(billingInterval, new Date());
 
-      const recurringHref = `https://access.worldpay.com/payments/recurring/wp-${details.transactionId || orderId}`;
-      const schemeReference = `SCHEME-${details.transactionId || orderId}`;
+      // Stored-credential references may ONLY come from Worldpay. Earlier builds
+      // manufactured them from the order id, which produced a URL that resolves
+      // to nothing — every recurring charge then failed and was masked by a
+      // simulated "authorized" response, so subscriptions silently took no money.
+      const recurringHref = extractRecurringAuthorizationHref(details.gatewayResponse) || null;
+      const schemeReference =
+        extractSchemeReference(details.gatewayResponse) ||
+        (details.schemeReference && !isPlaceholderCredential(details.schemeReference)
+          ? details.schemeReference
+          : null);
+
+      if (!recurringHref && !schemeReference) {
+        console.warn(
+          `[Worldpay Order] Subscription for order ${orderId} has no Worldpay stored-credential reference. ` +
+            `Recurring renewals cannot be charged until the initial payment returns a scheme transaction reference ` +
+            `(the Hosted Payment Page must be created with a customer agreement).`
+        );
+      }
 
       // CRITICAL: Ensure the recurring subscription charge includes both the plan items and the initial shipping fee
       const subAmount = total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2));
@@ -223,6 +317,9 @@ async function saveVerifiedOrder(
 
       const subData = {
         id: subId,
+        // Links the subscription back to the order that created it so a repeated
+        // callback for the same payment can be recognised as a duplicate.
+        sourceOrderId: String(orderId),
         customerId: customerEmail,
         customerEmail,
         customerName,
@@ -330,11 +427,15 @@ async function saveVerifiedOrder(
   // Clear pending memory store
   pendingCheckoutsMap.delete(orderId);
 
-  // Auto-create Royal Mail Click & Drop shipment if enabled
+  // Auto-create a Royal Mail Click & Drop shipment only when the store has
+  // explicitly opted in. Registering a shipment here marks the order Shipped
+  // immediately, so the dispatch email went out seconds after the order
+  // confirmation for an order nobody had packed yet.
   try {
     const { getRoyalMailSettings, createRoyalMailShipment } = await import('../services/royalMailService');
     const rmSettings = await getRoyalMailSettings();
-    if (rmSettings.enabled && (rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY)) {
+    const hasKey = Boolean(rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY);
+    if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
       console.log(`[Worldpay Order] Auto-registering Click & Drop shipment with Royal Mail for order #${orderId}`);
       createRoyalMailShipment(orderId, {
         serviceCode: rmSettings.defaultServiceCode || 'TPS24',
@@ -500,15 +601,32 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       .trim()
       .slice(0, 40) || 'Scott Kivlin';
 
+    // If the basket contains a subscription item, the Hosted Payment Page must
+    // be created with a customer agreement. That is what makes Worldpay store
+    // the credential and return a scheme transaction reference, which is the
+    // only thing that lets later renewals be charged without the shopper.
+    const hasSubscriptionItem = Array.isArray(items) && items.some((it: any) =>
+      it?.isSubscription ||
+      (it?.productId && String(it.productId).includes('sub-pack'))
+    );
+
     const body: Record<string, unknown> = {
       transactionReference,
-      merchant: { 
+      merchant: {
         entity: cfg.entity
       },
       narrative: { line1: cleanNarrative },
       value: { currency: 'GBP', amount: priceNum },
       description: cleanDescription,
       billingAddressName: cleanBillingName,
+      ...(hasSubscriptionItem
+        ? {
+            customerAgreement: {
+              type: 'subscription',
+              storedCardUsage: 'first'
+            }
+          }
+        : {}),
       resultURLs: {
         successURL: successReturnUrl,
         pendingURL: pendingReturnUrl,
@@ -632,14 +750,20 @@ router.post('/verify-payment', async (req: Request, res: Response) => {
       };
     }
 
-    const effectiveTxId = transactionId || txId || `WP-${Date.now().toString().slice(-6)}`;
-    const effectiveAuthCode = authCode || 'AUTH-SUCCESS-OK';
+    // Confirm with Worldpay directly instead of trusting the client-reported
+    // status, and pick up the stored-credential reference while we are there.
+    const gatewayResponse = req.body.worldpayResponse || (await fetchWorldpayPaymentDetails(orderId));
+
+    const effectiveTxId =
+      transactionId || txId || gatewayResponse?.id || `WP-${Date.now().toString().slice(-6)}`;
+    const effectiveAuthCode = authCode || gatewayResponse?.authorizationCode || 'AUTH-SUCCESS-OK';
 
     // Persist verified order into Prisma DB and StoreResource
     const savedOrder = await saveVerifiedOrder(orderId, {
       transactionId: effectiveTxId,
       authCode: effectiveAuthCode,
-      cardBrand: cardBrand || 'Worldpay Card',
+      cardBrand: cardBrand || gatewayResponse?.paymentInstrument?.card?.brand || 'Worldpay Card',
+      gatewayResponse,
       customerName,
       customerEmail,
       destination,
@@ -686,14 +810,25 @@ const handleWorldpayCallback = async (req: Request, res: Response) => {
   }
 
   if (status === 'SUCCESS' || status === 'PENDING' || status === 'AUTHORIZED') {
-    const txId = (params.txId || params.transactionId || `WP-CB-${Date.now().toString().slice(-6)}`) as string;
-    const authCode = (params.authCode || 'CALLBACK-OK') as string;
+    // Ask Worldpay what actually happened rather than trusting the redirect's
+    // query string — this is also where the stored-credential reference for a
+    // subscription comes from.
+    const gatewayResponse = await fetchWorldpayPaymentDetails(orderId);
+
+    const txId = (params.txId ||
+      params.transactionId ||
+      gatewayResponse?.id ||
+      `WP-CB-${Date.now().toString().slice(-6)}`) as string;
+    const authCode = (params.authCode ||
+      gatewayResponse?.authorizationCode ||
+      'CALLBACK-OK') as string;
 
     try {
       await saveVerifiedOrder(orderId, {
         transactionId: txId,
         authCode,
-        cardBrand: 'Worldpay Card'
+        cardBrand: gatewayResponse?.paymentInstrument?.card?.brand || 'Worldpay Card',
+        gatewayResponse
       });
       console.log(`[Worldpay Callback] Successfully saved order ${orderId} as Paid upon return callback.`);
     } catch (error) {
@@ -731,7 +866,10 @@ router.post('/webhook', async (req: Request, res: Response) => {
       await saveVerifiedOrder(orderId, {
         transactionId,
         authCode,
-        cardBrand
+        cardBrand,
+        // Carries any stored-credential reference Worldpay included in the event.
+        gatewayResponse: event.data.attributes,
+        webhookEventId: event.data.id
       });
     } else if (paymentStatus === 'failed') {
       pendingCheckoutsMap.delete(orderId);
@@ -838,82 +976,44 @@ router.post('/refund', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const cfg = getEnvironmentConfig();
-    const txId = transactionId || foundOrder.worldpayTxId || foundOrder.gatewayTxId || `WP-TX-${Date.now()}`;
     const refundAmount = typeof amount === 'number' ? amount : (foundOrder.total || 0);
-    const refundRef = `WP-REFUND-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-    let liveRefundSuccess = true;
-    let refundMessage = `Worldpay refund of £${refundRef} processed successfully.`;
-
-    // If live Worldpay credentials are configured, send actual HTTP POST to Worldpay Access API
-    if (!cfg.isTestMode && cfg.authHeader) {
-      try {
-        const response = await fetch(`${cfg.baseUrl}/payments/${txId}/refunds`, {
-          method: 'POST',
-          headers: {
-            'Authorization': cfg.authHeader,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            refundAmount: Math.round(refundAmount * 100),
-            reference: refundRef,
-            description: reason || 'Customer requested refund'
-          })
-        });
-
-        if (!response.ok) {
-          const errData: any = await response.json().catch(() => ({}));
-          console.warn('[Worldpay Refund] API response error:', response.status, errData);
-          liveRefundSuccess = false;
-          refundMessage = errData?.message || `Worldpay API returned status ${response.status}`;
-        }
-      } catch (refundApiErr: any) {
-        console.error('[Worldpay Refund] API Call failed:', refundApiErr);
-        // Fall back gracefully to recorded refund in sandbox mode
-      }
-    }
-
-    // Update order status in database & Prisma
-    foundOrder.paymentStatus = 'Refunded';
-    foundOrder.fulfillmentStatus = foundOrder.fulfillmentStatus === 'Fulfilled' ? 'Fulfilled' : 'Cancelled';
-    foundOrder.refundDetails = {
-      refundRef,
+    const { refundWorldpayPayment } = await import('../services/worldpayRefund');
+    const refundResult = await refundWorldpayPayment({
+      order: foundOrder,
       amount: refundAmount,
-      reason: reason || 'Refund processed via Worldpay Gateway',
-      refundedAt: new Date().toISOString()
-    };
+      reason: reason || 'Customer requested refund',
+      transactionId: transactionId || foundOrder.worldpayTxId || foundOrder.gatewayTxId
+    });
 
-    // Save update via Prisma & StoreResource
-    try {
-      await prisma.order.update({
-        where: { id: foundOrder.id },
-        data: {
-          paymentStatus: 'Refunded',
-          fulfillmentStatus: foundOrder.fulfillmentStatus
-        }
-      });
-    } catch (_e) {}
-
-    const ordersList: any[] = (await fetchResource('orders')) || [];
-    const updatedList = ordersList.map((o: any) => String(o.id) === String(foundOrder.id) ? { ...o, ...foundOrder } : o);
-    await saveResource('orders', updatedList);
-
-    // Send Resend email confirmation for refund
-    try {
-      const { sendOrderRefundedEmail } = await import('../services/emailService');
-      await sendOrderRefundedEmail(foundOrder, refundAmount, reason || 'Refund issued to payment card');
-    } catch (e) {
-      console.warn('[Worldpay Refund] Resend email error:', e);
-    }
+    // Persist through saveSingleOrder. The Paid -> Refunded transition sends the
+    // refund email exactly once; this route used to send it directly as well,
+    // which is why a cancellation produced two refund emails.
+    const { saveSingleOrder } = await import('./orders');
+    const updatedOrder = await saveSingleOrder({
+      ...foundOrder,
+      paymentStatus: 'Refunded',
+      fulfillmentStatus: foundOrder.fulfillmentStatus === 'Fulfilled' ? 'Fulfilled' : 'Cancelled',
+      refundAmount,
+      refundReason: reason || 'Refund issued to payment card',
+      refundDetails: {
+        refundRef: refundResult.refundRef,
+        amount: refundResult.amount,
+        reason: reason || 'Refund processed via Worldpay Gateway',
+        gatewayContacted: refundResult.gatewayContacted,
+        gatewayMessage: refundResult.message,
+        refundedAt: new Date().toISOString()
+      }
+    });
 
     return res.json({
-      success: true,
-      refundRef,
-      transactionId: txId,
-      amount: refundAmount,
-      message: refundMessage,
-      order: foundOrder
+      success: refundResult.success,
+      refundRef: refundResult.refundRef,
+      transactionId: refundResult.transactionId,
+      amount: refundResult.amount,
+      gatewayContacted: refundResult.gatewayContacted,
+      message: refundResult.message,
+      order: updatedOrder
     });
 
   } catch (error: any) {

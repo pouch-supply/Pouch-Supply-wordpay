@@ -34,12 +34,13 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   const [trackingData, setTrackingData] = useState<any>(null);
   const [trackingLoading, setTrackingLoading] = useState(false);
 
-  // Return label state
-  const [returnLabelHtml, setReturnLabelHtml] = useState<string | null>(null);
 
   const trackingNumber = order.trackingNumber || order.trackingId || order.data?.royalMail?.trackingNumber;
   const isShipped = Boolean(trackingNumber && (order.fulfillmentStatus === 'Shipped' || order.fulfillmentStatus === 'Fulfilled'));
-  const isSimulated = Boolean(order.data?.royalMail?.isSimulated || (trackingNumber && trackingNumber.startsWith('RM') && trackingNumber.length === 13 && !order.data?.royalMail?.isRealApi));
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId;
+  // A Click & Drop order exists but Royal Mail has not allocated tracking yet —
+  // that happens when the postage label is generated.
+  const awaitingTracking = Boolean(royalMailOrderId && !trackingNumber);
 
   const handleSaveRealTracking = async (newTracking: string, carrierName: string) => {
     const trimmed = newTracking.trim();
@@ -63,7 +64,6 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
             trackingNumber: trimmed,
             carrier: carrierName || 'Royal Mail Tracked 24',
             shippedAt: order.data?.royalMail?.shippedAt || new Date().toISOString(),
-            isSimulated: false,
             isRealApi: true
           }
         }
@@ -122,27 +122,34 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
 
         const updated: Order = {
           ...order,
-          fulfillmentStatus: 'Shipped',
+          // Royal Mail only allocates tracking when the label is generated, so
+          // the order stays Unfulfilled until a real tracking number exists.
+          fulfillmentStatus: data.trackingNumber ? 'Shipped' : 'Unfulfilled',
           trackingNumber: data.trackingNumber,
           trackingId: data.trackingNumber,
-          carrier: data.carrier || 'Royal Mail Tracked 24',
+          carrier: data.carrier,
           data: {
             ...(order.data || {}),
             royalMail: {
               royalMailOrderId: data.royalMailOrderId,
               trackingNumber: data.trackingNumber,
-              serviceCode: data.serviceName,
+              serviceCode: data.serviceCode,
+              serviceName: data.serviceName,
               carrier: data.carrier,
-              shippedAt: new Date().toISOString(),
-              isSimulated: data.isSimulated,
-              isRealApi: !data.isSimulated
+              labelUrl: data.labelUrl,
+              createdAt: new Date().toISOString(),
+              shippedAt: data.trackingNumber ? new Date().toISOString() : null
             }
           }
         };
 
         onUpdateOrder(updated);
         if (onAddTimelineComment) {
-          onAddTimelineComment(`Created Royal Mail shipment (${data.serviceName}). Tracking number: ${data.trackingNumber}`);
+          onAddTimelineComment(
+            data.trackingNumber
+              ? `Created Royal Mail shipment (${data.serviceName}). Tracking number: ${data.trackingNumber}`
+              : `Created Royal Mail Click & Drop order ${data.royalMailOrderId} (${data.serviceName}). Tracking is allocated when the label is printed.`
+          );
         }
       } else {
         throw new Error(data.error || 'Failed to create Royal Mail shipment');
@@ -154,9 +161,10 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
     }
   };
 
+  // Opens the genuine Royal Mail postage label PDF issued by Click & Drop.
   const handlePrintLabel = () => {
-    const printUrl = `/api/royalmail/label/${order.id}/html`;
-    const win = window.open(printUrl, '_blank', 'width=600,height=800');
+    const printUrl = `/api/royalmail/label/${order.id}/order-pdf`;
+    const win = window.open(printUrl, '_blank');
     if (win) {
       win.focus();
     }
@@ -177,6 +185,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
     }
   };
 
+  // Fetches the official Royal Mail pre-paid returns label PDF and opens it.
   const handleCreateReturnLabel = async () => {
     setReturning(true);
     setStatusMessage(null);
@@ -186,21 +195,24 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: order.id })
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setReturnLabelHtml(data.labelHtml);
-        setStatusMessage({
-          type: 'success',
-          text: `Royal Mail Pre-Paid Return Label generated (${data.returnTrackingNumber}).`
-        });
-        if (onAddTimelineComment) {
-          onAddTimelineComment(`Generated Royal Mail Pre-Paid Return Label: ${data.returnTrackingNumber}`);
-        }
-      } else {
-        throw new Error(data.error || 'Failed to generate return label');
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.error || 'Failed to retrieve the returns label');
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Give the new tab time to load before revoking.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+      setStatusMessage({ type: 'success', text: 'Royal Mail pre-paid returns label retrieved.' });
+      if (onAddTimelineComment) {
+        onAddTimelineComment('Retrieved Royal Mail pre-paid returns label from Click & Drop.');
       }
     } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message || 'Return label creation failed' });
+      setStatusMessage({ type: 'error', text: err.message || 'Return label retrieval failed' });
     } finally {
       setReturning(false);
     }
@@ -360,36 +372,15 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
       {/* SHIPPED: Active Tracking & Label Management */}
       {isShipped && (
         <div className="space-y-3 pt-1">
-          {/* Simulated / Preview Tracking Notice */}
-          {isSimulated && (
-            <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
-              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-              <div className="flex-1 space-y-1">
-                <p className="font-bold">
-                  ⚠️ Preview / Test Tracking Reference: <code className="font-mono bg-amber-100/80 px-1 py-0.5 rounded text-amber-950">{trackingNumber}</code>
-                </p>
-                <p className="text-[11px] text-amber-800 leading-relaxed">
-                  This test reference was generated for store simulation and is not yet registered in Royal Mail's public system. To link your real Royal Mail parcel barcode, click <strong>"Enter Real Tracking #"</strong> below or connect your live Click & Drop API Key.
-                </p>
-              </div>
-            </div>
-          )}
-
           <div className="p-3 bg-white border border-rose-200 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 shadow-2xs">
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
                   Royal Mail Tracking Number
                 </span>
-                {isSimulated ? (
-                  <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.2 rounded">
-                    Test Mode
-                  </span>
-                ) : (
-                  <span className="text-[9px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
-                    Live Verified
-                  </span>
-                )}
+                <span className="text-[9px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
+                  Live
+                </span>
               </div>
               <span className="text-sm font-mono font-black text-rose-950 tracking-wider block mt-0.5">
                 {trackingNumber}
@@ -402,8 +393,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => {
-                  // Only prefill if it is a real tracking number; leave blank for simulated test codes
-                  setCustomTrackingInput(isSimulated ? '' : (trackingNumber || ''));
+                  setCustomTrackingInput(trackingNumber || '');
                   setCustomCarrierInput(order.carrier || 'Royal Mail Tracked 24®');
                   setShowEditTrackingModal(true);
                 }}
@@ -551,33 +541,6 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                 )}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Return Label Printable Preview Modal */}
-      {returnLabelHtml && (
-        <div className="p-4 bg-white border border-rose-300 rounded-xl space-y-3">
-          <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-            <span className="text-xs font-black text-rose-900 uppercase">Pre-Paid Royal Mail Return Label Ready</span>
-            <button onClick={() => setReturnLabelHtml(null)} className="text-slate-400 hover:text-slate-600">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => {
-                const printWindow = window.open('', '_blank');
-                if (printWindow) {
-                  printWindow.document.write(returnLabelHtml);
-                  printWindow.document.close();
-                }
-              }}
-              className="px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-lg flex items-center gap-1"
-            >
-              <Printer className="h-3.5 w-3.5" /> Print Pre-Paid Return Label
-            </button>
           </div>
         </div>
       )}

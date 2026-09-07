@@ -394,8 +394,10 @@ export default function App() {
     async function loadDataFromDb() {
       try {
         const safeFetchJson = async (url: string) => {
+          const controller = new AbortController();
+          const timeoutId = window.setTimeout(() => controller.abort(), 10000);
           try {
-            const r = await fetch(url);
+            const r = await fetch(url, { signal: controller.signal });
             if (!r.ok) return null;
             const ct = r.headers.get('content-type');
             if (ct && ct.includes('application/json')) {
@@ -404,6 +406,8 @@ export default function App() {
             return null;
           } catch {
             return null;
+          } finally {
+            window.clearTimeout(timeoutId);
           }
         };
 
@@ -628,7 +632,19 @@ export default function App() {
     window.scrollTo(0, 0);
   }, [currentTab]);
   const [activeCollectionId, setActiveCollectionId] = useState<string>('all');
-  const [isAdminActive, setIsAdminActive] = useState<boolean>(false);
+  // Derived from the URL up front. Initialising this to `false` while the
+  // address bar already said /admin-dashboard left the state and the URL
+  // disagreeing for one render, and the URL-sync effect below then "corrected"
+  // the URL to the storefront — so opening /admin-dashboard directly rendered
+  // the shop instead of the dashboard.
+  const [isAdminActive, setIsAdminActive] = useState<boolean>(() => {
+    try {
+      const path = window.location.pathname;
+      return path === '/admin-dashboard' || path.startsWith('/admin-dashboard/');
+    } catch {
+      return false;
+    }
+  });
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     return sessionStorage.getItem('ps_admin_authenticated') === 'true';
   });
@@ -688,23 +704,20 @@ export default function App() {
       targetTab = cleanSlug;
     }
 
-    let currentPathname = '';
-    try {
-      currentPathname = window.location.pathname;
-    } catch (e) {
-      console.warn('[History] Failed to read location pathname:', e);
-    }
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+    const currentSearch = typeof window !== 'undefined' ? window.location.search : '';
+    const currentFullPath = `${currentPath}${currentSearch}`;
+    const targetFullPath = `${url}`;
 
-    if (currentPathname !== url) {
+    if (currentFullPath !== targetFullPath) {
       try {
         window.history.pushState({}, '', url);
-        window.dispatchEvent(new Event('popstate'));
       } catch (e) {
         console.warn('[History] Failed to pushState (sandboxed iframe constraint):', e);
       }
     }
-    
-    setCurrentTab(targetTab);
+
+    setCurrentTab(prev => (prev === targetTab ? prev : targetTab));
     if (targetTab === 'blog-detail' && productId) {
       setSelectedBlogSlug(productId);
     }
@@ -784,53 +797,50 @@ export default function App() {
         console.warn('[History] Failed to read location pathname:', e);
       }
 
-      if (path === '/admin-dashboard' || path.startsWith('/admin-dashboard/')) {
-        setIsAdminActive(true);
-        return;
-      } else {
-        setIsAdminActive(false);
-      }
+      const nextAdminState = path === '/admin-dashboard' || path.startsWith('/admin-dashboard/');
+      setIsAdminActive(prev => (prev === nextAdminState ? prev : nextAdminState));
+      if (nextAdminState) return;
 
       if (path.startsWith('/payment/')) {
         const sub = path.replace('/payment/', '');
         if (sub.startsWith('gateway') || sub.startsWith('worldpay') || sub.startsWith('hpp')) {
-          setCurrentTab('payment-gateway');
+          setCurrentTab(prev => (prev === 'payment-gateway' ? prev : 'payment-gateway'));
         } else if (sub.startsWith('success')) {
           setCartItems([]);
           localStorage.removeItem('ps_cart');
-          setCurrentTab('payment-success');
+          setCurrentTab(prev => (prev === 'payment-success' ? prev : 'payment-success'));
         } else if (sub.startsWith('failed')) {
-          setCurrentTab('payment-failed');
+          setCurrentTab(prev => (prev === 'payment-failed' ? prev : 'payment-failed'));
         } else if (sub.startsWith('cancelled')) {
-          setCurrentTab('payment-cancelled');
+          setCurrentTab(prev => (prev === 'payment-cancelled' ? prev : 'payment-cancelled'));
         }
         return;
       }
 
       if (path === '/' || path === '' || path === '/home' || path === '/home/' || path === '/homepage') {
-        setCurrentTab('frontend-home');
+        setCurrentTab(prev => (prev === 'frontend-home' ? prev : 'frontend-home'));
       } else if (path === '/checkout' || path === '/checkout/') {
-        setCurrentTab('frontend-checkout');
+        setCurrentTab(prev => (prev === 'frontend-checkout' ? prev : 'frontend-checkout'));
       } else if (path === '/blogs' || path === '/blogs/') {
-        setCurrentTab('blogs');
+        setCurrentTab(prev => (prev === 'blogs' ? prev : 'blogs'));
       } else if (path.startsWith('/blogs/')) {
         const slug = path.replace('/blogs/', '');
-        setSelectedBlogSlug(slug);
-        setCurrentTab('blog-detail');
+        setSelectedBlogSlug(prev => (prev === slug ? prev : slug));
+        setCurrentTab(prev => (prev === 'blog-detail' ? prev : 'blog-detail'));
       } else if (path.startsWith('/pages/')) {
         const slug = path.replace('/pages/', '').replace(/^\/+/, '');
         if (slug === 'home' || slug === 'homepage' || slug === '') {
-          setCurrentTab('frontend-home');
+          setCurrentTab(prev => (prev === 'frontend-home' ? prev : 'frontend-home'));
         } else if (slug === 'subscribe' || slug.startsWith('subscribe/')) {
-          setCurrentTab('frontend-subscribe');
+          setCurrentTab(prev => (prev === 'frontend-subscribe' ? prev : 'frontend-subscribe'));
         } else if (slug === 'brands') {
-          setCurrentTab('frontend-brands');
+          setCurrentTab(prev => (prev === 'frontend-brands' ? prev : 'frontend-brands'));
         } else if (slug === 'account') {
-          setCurrentTab('frontend-account');
+          setCurrentTab(prev => (prev === 'frontend-account' ? prev : 'frontend-account'));
         } else if (slug === 'checkout') {
-          setCurrentTab('frontend-checkout');
+          setCurrentTab(prev => (prev === 'frontend-checkout' ? prev : 'frontend-checkout'));
         } else {
-          setCurrentTab(slug);
+          setCurrentTab(prev => (prev === slug ? prev : slug));
         }
       } else if (path.startsWith('/collections/')) {
         const colId = path.replace('/collections/', '');
@@ -843,26 +853,34 @@ export default function App() {
           slugify(c.id) === colId.toLowerCase()
         );
         if (matchedCol) {
-          setActiveCollectionId(matchedCol.id);
-          setCurrentTab('collection-detail');
+          setActiveCollectionId(prev => (prev === matchedCol.id ? prev : matchedCol.id));
+          setCurrentTab(prev => (prev === 'collection-detail' ? prev : 'collection-detail'));
         } else {
-          setActiveCollectionId('all');
-          setCurrentTab('frontend-shop');
+          setActiveCollectionId(prev => (prev === 'all' ? prev : 'all'));
+          setCurrentTab(prev => (prev === 'frontend-shop' ? prev : 'frontend-shop'));
         }
       } else if (path.startsWith('/products/')) {
         const prodId = path.replace('/products/', '');
-        setSelectedProductId(decodeURIComponent(prodId));
-        setCurrentTab('product-detail');
+        setSelectedProductId(prev => (prev === decodeURIComponent(prodId) ? prev : decodeURIComponent(prodId)));
+        setCurrentTab(prev => (prev === 'product-detail' ? prev : 'product-detail'));
       }
     };
-
     handleLocationChange();
     window.addEventListener('popstate', handleLocationChange);
     return () => window.removeEventListener('popstate', handleLocationChange);
   }, [collections]);
 
   // Synchronize browser URL when isAdminActive state changes in React UI
+  const adminUrlSyncMounted = useRef(false);
   useEffect(() => {
+    // On the first run the URL is the source of truth for this state, not the
+    // other way round. Writing to history here on mount would overwrite the
+    // address the user actually asked for.
+    if (!adminUrlSyncMounted.current) {
+      adminUrlSyncMounted.current = true;
+      return;
+    }
+
     let path = '';
     try {
       path = window.location.pathname;

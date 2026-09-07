@@ -6,8 +6,14 @@ import { fetchResource, saveResource } from "../../serverDb";
 import {
   chargeRecurringSubscription,
   extractRecurringAuthorizationHref,
+  extractSchemeReference,
 } from "../services/worldpaySubscription";
-import { processDueSubscriptions } from "../services/subscriptionCron";
+import {
+  processDueSubscriptions,
+  calculateNextBillingDate,
+  nextBillingDateAfterCharge,
+  normalizeBillingInterval
+} from "../services/subscriptionCron";
 
 const router = Router();
 
@@ -114,7 +120,7 @@ router.post("/update-schedule", async (req: Request, res: Response) => {
     }
 
     const updateFields: any = {};
-    if (billingInterval) updateFields.billingInterval = billingInterval;
+    if (billingInterval) updateFields.billingInterval = normalizeBillingInterval(billingInterval);
     if (targetNextDate) updateFields.nextBillingDate = targetNextDate;
 
     if (subscriptionId) {
@@ -187,7 +193,9 @@ router.post("/update-plan", async (req: Request, res: Response) => {
     const finalPlanName = subPlan || planName || (planId ? planId.toUpperCase() : "Custom Box");
     const finalPlanId = planId || (subPlan ? subPlan.toLowerCase().split(" ")[0] : "custom");
     const finalAmount = Number(subPrice ?? amount ?? 0);
-    const finalInterval = subFrequency || billingInterval || "Bi-Weekly";
+    // Store the canonical interval so the renewal worker schedules the plan the
+    // admin actually picked, whatever wording the UI sent.
+    const finalInterval = normalizeBillingInterval(subFrequency || billingInterval || "Bi-Weekly");
     const finalItems = subItems || items || [];
     const finalCans = subCansCount ?? cansCount ?? (Array.isArray(finalItems) ? finalItems.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0) : 6);
     const finalStatus = (subStatus || status || "active").toLowerCase();
@@ -447,36 +455,26 @@ router.post(
         });
       }
 
-      let recurringHref = extractRecurringAuthorizationHref(worldpayResponse);
-
-      // In test mode or when response is simulation, fallback to valid recurring href
-      if (!recurringHref) {
-        recurringHref = `https://access.worldpay.com/payments/recurring/mock-${Date.now()}`;
-      }
+      // Only Worldpay can issue a stored-credential reference. Substituting a
+      // locally generated "mock-" URL made the subscription look chargeable
+      // while every renewal actually hit a non-existent endpoint.
+      const recurringHref = extractRecurringAuthorizationHref(worldpayResponse);
+      const schemeReference = extractSchemeReference(worldpayResponse);
 
       const transactionId =
-        worldpayResponse?.id ||
-        worldpayResponse?.transactionReference ||
-        `WP-SUB-INIT-${Date.now()}`;
+        worldpayResponse?.id || worldpayResponse?.transactionReference || null;
 
-      const schemeReference =
-        worldpayResponse?.schemeReference ||
-        worldpayResponse?.paymentInstrument?.schemeReference ||
-        `SCHEME-REF-${Date.now()}`;
-
-      const nextBillingDate = new Date();
-
-      if (billingInterval === "Next Day (Test)" || billingInterval === "Next Day" || billingInterval === "next_day" || billingInterval === "1day" || billingInterval === "day") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 1);
-      } else if (billingInterval === "week" || billingInterval === "Weekly" || billingInterval === "weekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 7);
-      } else if (billingInterval === "Bi-Weekly" || billingInterval === "bi-weekly" || billingInterval === "biweekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 14);
-      } else if (billingInterval === "year") {
-        nextBillingDate.setFullYear(nextBillingDate.getFullYear() + 1);
-      } else {
-        nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
+      if (!recurringHref && !schemeReference) {
+        console.warn(
+          `[Subscription Create] No Worldpay stored credential in the supplied gateway response for ${customerEmail}. ` +
+            `Renewals for this subscription will fail until a scheme transaction reference is recorded.`
+        );
       }
+
+      // Shared normaliser — the previous exact-string comparisons silently fell
+      // through to monthly for any casing or wording they did not list.
+      const normalizedInterval = normalizeBillingInterval(billingInterval);
+      const nextBillingDate = calculateNextBillingDate(normalizedInterval, new Date());
 
       const emailClean = String(customerEmail).toLowerCase().trim();
       const subId = `sub_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
@@ -501,7 +499,7 @@ router.post(
         items: Array.isArray(items) ? items : undefined,
         currency,
         status: "active",
-        billingInterval,
+        billingInterval: normalizedInterval,
         nextBillingDate,
         worldpayTransactionId: transactionId,
         worldpayRecurringHref: recurringHref,
@@ -603,10 +601,11 @@ router.post(
         });
       }
 
-      if (!subscription.worldpayRecurringHref) {
+      if (!subscription.worldpayRecurringHref && !subscription.worldpaySchemeReference) {
         return res.status(400).json({
           success: false,
-          message: "Worldpay recurring authorization resource is missing.",
+          message:
+            "This subscription has no Worldpay stored credential, so no recurring payment can be taken.",
         });
       }
 
@@ -621,23 +620,16 @@ router.post(
         transactionReference,
         amount: chargeAmount,
         currency: subscription.currency || "GBP",
+        schemeReference: subscription.worldpaySchemeReference,
+        previousTransactionId: subscription.worldpayTransactionId,
+        customerEmail: subscription.customerEmail,
       });
 
-      const nextBillingDate = subscription.nextBillingDate
-        ? new Date(subscription.nextBillingDate)
-        : new Date();
-
-      if (subscription.billingInterval === "Next Day (Test)" || subscription.billingInterval === "Next Day" || subscription.billingInterval === "next_day" || subscription.billingInterval === "1day" || subscription.billingInterval === "day") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 1);
-      } else if (subscription.billingInterval === "week" || subscription.billingInterval === "Weekly" || subscription.billingInterval === "weekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 7);
-      } else if (subscription.billingInterval === "Bi-Weekly" || subscription.billingInterval === "bi-weekly" || subscription.billingInterval === "biweekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 14);
-      } else if (subscription.billingInterval === "year") {
-        nextBillingDate.setFullYear(nextBillingDate.getFullYear() + 1);
-      } else {
-        nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
-      }
+      // Shared scheduling helper, anchored to the date that was due.
+      const nextBillingDate = nextBillingDateAfterCharge(
+        subscription.billingInterval,
+        subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null
+      );
 
       const updatePayload = {
         lastPaymentStatus: "authorized",

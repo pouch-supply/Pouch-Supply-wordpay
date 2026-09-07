@@ -78,7 +78,12 @@ async function royalMailRequest<T>(
 
   if (!response.ok) {
     let errMsg = `Royal Mail API error (${response.status})`;
-    if (typeof data === "object" && data !== null) {
+    if (Array.isArray(data) && data.length > 0) {
+      // Click & Drop returns a bare array of error objects on some endpoints.
+      errMsg = data
+        .map((e: any) => e?.message || e?.code || JSON.stringify(e))
+        .join(" | ");
+    } else if (typeof data === "object" && data !== null) {
       const obj = data as any;
       if (Array.isArray(obj.errors) && obj.errors.length > 0) {
         errMsg = obj.errors.map((e: any) => e.message || e.code || JSON.stringify(e)).join(' | ');

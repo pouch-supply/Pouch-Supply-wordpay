@@ -1,20 +1,35 @@
 import { fetchResource, saveResource, fetchStoreSetting, saveStoreSetting } from '../../serverDb';
-import { sendOrderShippedEmail } from './emailService';
-import { trackOrderShipped } from './klaviyoService';
 import {
-  createOrder,
   createRoyalMailOrders,
   cancelOrder as cancelRoyalMailOrder,
-  getOrders as fetchRoyalMailOrders,
   getOrderByReference,
-  RoyalMailOrderPayload,
+  getRoyalMailLabel,
+  markRoyalMailOrderDispatched,
+  RoyalMailError,
   CreateRoyalMailOrderRequest
 } from '../../src/lib/royalMail';
+
+/**
+ * Royal Mail Click & Drop integration — LIVE ONLY.
+ *
+ * There is no simulated mode and no fallback label generation. Every shipment,
+ * tracking number and label in this module comes from the Royal Mail API. If
+ * the API is unreachable, unauthorised, or rejects the order, the call fails
+ * loudly rather than inventing a shipment: a fabricated tracking number sends
+ * the customer a dispatch email for a parcel that does not exist, and a
+ * hand-drawn label is not scannable by Royal Mail.
+ */
 
 export interface RoyalMailSettings {
   apiKey: string;
   integrationName: string;
   enabled: boolean;
+  /**
+   * When true, a Click & Drop order is created the instant a payment succeeds.
+   * Off by default: a shipment should be registered when the order is actually
+   * packed, not when it is paid for.
+   */
+  autoCreateShipmentOnPayment: boolean;
   defaultServiceCode: string; // e.g. 'CRL2', 'TPS24', 'TPS48', 'SD1'
   defaultPackageType: string; // 'Parcel', 'LargeLetter', 'Letter'
   defaultWeightGrams: number;
@@ -30,22 +45,29 @@ export interface RoyalMailSettings {
   };
 }
 
+/**
+ * Defaults deliberately leave the trading identity blank. A placeholder sender
+ * address would be printed on real labels and used as the returns address, so
+ * it must be filled in from the admin Royal Mail settings before shipping.
+ */
 export const DEFAULT_ROYAL_MAIL_SETTINGS: RoyalMailSettings = {
   apiKey: process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '',
   integrationName: 'Pouch-Supply',
   enabled: true,
+  autoCreateShipmentOnPayment:
+    String(process.env.ROYAL_MAIL_AUTO_DISPATCH || '').toLowerCase() === 'true',
   defaultServiceCode: 'TPS24',
   defaultPackageType: 'Parcel',
   defaultWeightGrams: 350,
   senderAddress: {
-    companyName: 'Pouch Supply Ltd',
-    addressLine1: 'Unit 4, Commerce Way',
-    addressLine2: 'Industrial Estate',
-    city: 'London',
-    postcode: 'EC1A 1BB',
+    companyName: '',
+    addressLine1: '',
+    addressLine2: '',
+    city: '',
+    postcode: '',
     countryCode: 'GB',
-    contactEmail: 'orders@pouch-supply.com',
-    contactPhone: '+44 20 7946 0912'
+    contactEmail: process.env.ADMIN_NOTIFICATION_EMAIL || '',
+    contactPhone: ''
   }
 };
 
@@ -136,6 +158,38 @@ export async function saveRoyalMailSettings(settings: Partial<RoyalMailSettings>
   return updated;
 }
 
+/**
+ * Resolves the live API key, or throws. Every outbound call goes through this
+ * so a missing key can never silently degrade into a simulated shipment.
+ */
+export async function requireApiKey(settings?: RoyalMailSettings): Promise<string> {
+  const s = settings || (await getRoyalMailSettings());
+  const apiKey = (s.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '').trim();
+  if (!apiKey) {
+    throw new Error(
+      'Royal Mail Click & Drop API key is not configured. Add your API Authorization key in ' +
+        'Admin → Settings → Royal Mail (or set ROYAL_MAIL_API_KEY) before creating shipments.'
+    );
+  }
+  return apiKey;
+}
+
+/**
+ * Validates the sender identity that will be printed on the label and used as
+ * the returns address. Click & Drop requires a real trading name.
+ */
+function requireSender(settings: RoyalMailSettings) {
+  const sender = settings.senderAddress || ({} as RoyalMailSettings['senderAddress']);
+  const tradingName = (sender.companyName || '').trim();
+  if (!tradingName) {
+    throw new Error(
+      'Royal Mail sender trading name is not configured. Set your company name and address in ' +
+        'Admin → Settings → Royal Mail before creating shipments.'
+    );
+  }
+  return sender;
+}
+
 // 2. Validate Address
 export function validateAddress(address: Partial<AddressPayload>): { valid: boolean; errors: string[]; parsed?: AddressPayload } {
   const errors: string[] = [];
@@ -181,7 +235,14 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
   };
 }
 
-// 3. Get Shipping Rates
+/**
+ * 3. The store's own delivery price card.
+ *
+ * These are the prices YOU charge the customer at checkout and the service
+ * codes you offer. Click & Drop has no public rating API — what you are billed
+ * by Royal Mail comes from your account's contracted rates, not from here.
+ * Keep these aligned with your Royal Mail contract.
+ */
 export function getShippingRates(weightGrams: number = 350, countryCode: string = 'GB'): ShippingRateOption[] {
   const isUK = countryCode.toUpperCase() === 'GB' || countryCode.toUpperCase() === 'UK';
 
@@ -248,241 +309,86 @@ export function getShippingRates(weightGrams: number = 350, countryCode: string 
   ];
 }
 
-// Helper: Generate structured Royal Mail Tracking Number
-export function generateRoyalMailTrackingNumber(): string {
-  const randomDigits = Math.floor(100000000 + Math.random() * 900000000);
-  return `RM${randomDigits}GB`;
+/**
+ * Resolves the recipient address from a stored order.
+ *
+ * Returns the parsed address plus any validation errors. Nothing is defaulted:
+ * a missing city or postcode is reported, never replaced with a placeholder,
+ * because a placeholder would ship a real parcel to an address nobody lives at.
+ */
+function resolveRecipientFromOrder(order: any): { valid: boolean; errors: string[]; recipient: AddressPayload } {
+  const rawAddr = order.data?.address || order.shippingAddress || order.destination || '';
+  let addressObj: Partial<AddressPayload> = {};
+
+  if (rawAddr && typeof rawAddr === 'object') {
+    addressObj = {
+      fullName: rawAddr.fullName || rawAddr.name || order.customerName,
+      companyName: rawAddr.companyName || '',
+      addressLine1: rawAddr.addressLine1 || rawAddr.street || rawAddr.line1 || '',
+      addressLine2: rawAddr.addressLine2 || rawAddr.line2 || '',
+      city: rawAddr.city || rawAddr.town || '',
+      county: rawAddr.county || rawAddr.state || '',
+      postcode: rawAddr.postcode || rawAddr.zip || '',
+      countryCode: rawAddr.countryCode || rawAddr.country || 'GB',
+      email: order.customerEmail,
+      phone: rawAddr.phone || order.customerPhone || ''
+    };
+  } else {
+    // A free-text destination string carries no structured address. It cannot
+    // be turned into a postable address, so it is reported as invalid.
+    addressObj = {
+      fullName: order.customerName,
+      addressLine1: typeof rawAddr === 'string' ? rawAddr.trim() : '',
+      city: '',
+      postcode: '',
+      countryCode: 'GB',
+      email: order.customerEmail
+    };
+  }
+
+  const validation = validateAddress(addressObj);
+  return {
+    valid: validation.valid,
+    errors: validation.errors,
+    recipient: validation.parsed as AddressPayload
+  };
 }
 
-// Helper to construct SVG/HTML Printable Shipping Label
-export function generateShippingLabelHtml(params: {
-  trackingNumber: string;
-  orderId: string;
-  serviceCode: string;
+export interface CreateShipmentResult {
+  success: boolean;
+  trackingNumber: string | null;
+  royalMailOrderId: string;
+  carrier: string;
   serviceName: string;
-  recipient: AddressPayload;
-  sender: RoyalMailSettings['senderAddress'];
-  weightGrams: number;
-  date: string;
-  isReturn?: boolean;
-}): string {
-  const { trackingNumber, orderId, serviceCode, serviceName, recipient, sender, weightGrams, date, isReturn } = params;
-
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Royal Mail Click & Drop Label - ${orderId}</title>
-  <style>
-    @page { size: 4in 6in; margin: 0; }
-    body {
-      margin: 0;
-      padding: 12px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      background-color: #ffffff;
-      color: #000000;
-      width: 4in;
-      box-sizing: border-box;
-    }
-    .label-box {
-      border: 3px solid #000000;
-      padding: 12px;
-      height: 5.6in;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      box-sizing: border-box;
-      background: #fff;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 2px solid #000;
-      padding-bottom: 8px;
-    }
-    .rm-logo {
-      font-size: 16px;
-      font-weight: 900;
-      background: #e11d48;
-      color: #fff;
-      padding: 4px 8px;
-      letter-spacing: 1px;
-      border-radius: 2px;
-    }
-    .postage-paid {
-      border: 2px solid #000;
-      padding: 4px 8px;
-      text-align: center;
-      font-size: 10px;
-      font-weight: bold;
-    }
-    .service-badge {
-      background: #000;
-      color: #fff;
-      font-size: 14px;
-      font-weight: 900;
-      padding: 6px;
-      text-align: center;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      margin-top: 8px;
-    }
-    .address-section {
-      border-bottom: 2px solid #000;
-      padding: 10px 0;
-    }
-    .to-title {
-      font-size: 10px;
-      font-weight: 900;
-      text-transform: uppercase;
-      margin-bottom: 4px;
-      color: #444;
-    }
-    .recipient-name {
-      font-size: 15px;
-      font-weight: 900;
-      text-transform: uppercase;
-    }
-    .recipient-addr {
-      font-size: 13px;
-      font-weight: 600;
-      line-height: 1.35;
-      margin-top: 2px;
-    }
-    .postcode {
-      font-size: 18px;
-      font-weight: 900;
-      letter-spacing: 2px;
-      margin-top: 6px;
-      background: #f1f5f9;
-      display: inline-block;
-      padding: 2px 6px;
-      border: 1px solid #cbd5e1;
-    }
-    .barcode-section {
-      text-align: center;
-      padding: 10px 0;
-      border-bottom: 2px dashed #000;
-    }
-    .barcode-lines {
-      height: 50px;
-      background: repeating-linear-gradient(
-        90deg,
-        #000 0px, #000 2px,
-        #fff 2px, #fff 4px,
-        #000 4px, #000 7px,
-        #fff 7px, #fff 9px,
-        #000 9px, #000 10px,
-        #fff 10px, #fff 13px
-      );
-      width: 90%;
-      margin: 0 auto 6px auto;
-    }
-    .tracking-text {
-      font-family: monospace;
-      font-size: 14px;
-      font-weight: bold;
-      letter-spacing: 2px;
-    }
-    .footer {
-      display: flex;
-      justify-content: space-between;
-      font-size: 9px;
-      color: #333;
-      padding-top: 4px;
-    }
-    .return-addr {
-      font-size: 8px;
-      color: #555;
-      margin-top: 4px;
-    }
-    @media print {
-      body { padding: 0; }
-      .no-print { display: none; }
-    }
-  </style>
-</head>
-<body>
-  <div className="no-print" style="margin-bottom: 10px; text-align: center;">
-    <button onclick="window.print()" style="padding: 8px 16px; background: #071d37; color: white; border: none; font-weight: bold; cursor: pointer; border-radius: 4px;">🖨️ Print Label (4" x 6")</button>
-  </div>
-
-  <div class="label-box">
-    <div>
-      <div class="header">
-        <div class="rm-logo">ROYAL MAIL</div>
-        <div class="postage-paid">
-          POSTAGE PAID GB<br/>
-          HQ 40912 ${serviceCode}
-        </div>
-      </div>
-
-      <div class="service-badge">
-        ${isReturn ? 'ROYAL MAIL PRE-PAID RETURN' : serviceName.toUpperCase()}
-      </div>
-
-      <div class="address-section">
-        <div class="to-title">${isReturn ? 'RETURN TO SENDER:' : 'DELIVER TO:'}</div>
-        <div class="recipient-name">${recipient.fullName}</div>
-        ${recipient.companyName ? `<div style="font-size:12px; font-weight:bold;">${recipient.companyName}</div>` : ''}
-        <div class="recipient-addr">
-          ${recipient.addressLine1}<br/>
-          ${recipient.addressLine2 ? `${recipient.addressLine2}<br/>` : ''}
-          ${recipient.city} ${recipient.county ? `, ${recipient.county}` : ''}
-        </div>
-        <div class="postcode">${recipient.postcode}</div>
-        <div style="font-size: 10px; margin-top: 2px;">UNITED KINGDOM</div>
-      </div>
-    </div>
-
-    <div>
-      <div class="barcode-section">
-        <div class="barcode-lines"></div>
-        <div class="tracking-text">${trackingNumber}</div>
-        <div style="font-size: 9px; color: #555; margin-top: 2px;">Order Ref: #${orderId} | Weight: ${weightGrams}g</div>
-      </div>
-
-      <div class="footer">
-        <div>Dispatched: ${date}</div>
-        <div>Integration: Pouch-Supply</div>
-      </div>
-
-      <div class="return-addr">
-        If undelivered return to: ${sender.companyName}, ${sender.addressLine1}, ${sender.city}, ${sender.postcode}
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-  `;
+  serviceCode: string;
+  labelUrl: string;
+  message: string;
+  order: any;
 }
 
-// 4. Create Shipment
+/**
+ * 4. Create a live Click & Drop shipment for a store order.
+ *
+ * Throws on any failure — a missing API key, an unpostable address, or a
+ * rejection from Royal Mail. The order is only moved to Shipped once Royal Mail
+ * has actually issued a tracking number; until then it sits in Processing with
+ * the Click & Drop identifier recorded, so the customer never receives a
+ * dispatch email containing a tracking number that does not exist.
+ */
 export async function createRoyalMailShipment(orderId: string, options: {
   serviceCode?: string;
   packageType?: string;
   weightGrams?: number;
-} = {}): Promise<{
-  success: boolean;
-  trackingNumber: string;
-  royalMailOrderId: string;
-  carrier: string;
-  serviceName: string;
-  labelHtml: string;
-  message: string;
-  isSimulated: boolean;
-  order: any;
-}> {
+} = {}): Promise<CreateShipmentResult> {
   const settings = await getRoyalMailSettings();
-  
+  const apiKey = await requireApiKey(settings);
+  const sender = requireSender(settings);
+
   // Fetch order from DB
   const orders: any[] = (await fetchResource('orders')) || [];
   let order = orders.find((o: any) => String(o.id) === String(orderId));
 
   if (!order) {
-    // Fallback to Prisma
     try {
       const { prisma } = await import('../../src/lib/prisma');
       order = await prisma.order.findUnique({ where: { id: orderId } });
@@ -493,196 +399,132 @@ export async function createRoyalMailShipment(orderId: string, options: {
     throw new Error(`Order #${orderId} not found in database.`);
   }
 
-  // Parse recipient address from order
-  const rawAddr = order.data?.address || order.destination || '';
-  let addressObj: Partial<AddressPayload> = {};
-
-  if (typeof rawAddr === 'object') {
-    addressObj = {
-      fullName: rawAddr.fullName || rawAddr.name || order.customerName,
-      companyName: rawAddr.companyName || '',
-      addressLine1: rawAddr.addressLine1 || rawAddr.street || rawAddr.line1,
-      addressLine2: rawAddr.addressLine2 || rawAddr.line2 || '',
-      city: rawAddr.city || rawAddr.town || 'London',
-      county: rawAddr.county || rawAddr.state || '',
-      postcode: rawAddr.postcode || rawAddr.zip || 'EC1A 1BB',
-      countryCode: rawAddr.countryCode || rawAddr.country || 'GB',
-      email: order.customerEmail,
-      phone: rawAddr.phone || ''
-    };
-  } else {
-    // String address fallback
-    addressObj = {
-      fullName: order.customerName,
-      addressLine1: String(rawAddr),
-      city: 'London',
-      postcode: 'EC1A 1BB',
-      countryCode: 'GB',
-      email: order.customerEmail
-    };
+  const { valid, errors, recipient } = resolveRecipientFromOrder(order);
+  if (!valid) {
+    throw new Error(
+      `Order #${orderId} cannot be shipped — the delivery address is incomplete: ${errors.join('; ')}. ` +
+        `Edit the order's shipping address before creating a Royal Mail shipment.`
+    );
   }
-
-  const validation = validateAddress(addressObj);
-  const recipient: AddressPayload = validation.parsed || {
-    fullName: order.customerName,
-    addressLine1: '123 High Street',
-    city: 'London',
-    postcode: 'EC1A 1BB',
-    countryCode: 'GB',
-    email: order.customerEmail
-  };
 
   const serviceCode = options.serviceCode || settings.defaultServiceCode || 'TPS24';
   const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
-  const selectedRate = rates.find(r => r.serviceCode === serviceCode) || rates[0];
+  const selectedRate = rates.find(r => r.serviceCode === serviceCode);
+  const serviceName = selectedRate?.serviceName || `Royal Mail (${serviceCode})`;
 
-  let trackingNumber = generateRoyalMailTrackingNumber();
-  let royalMailOrderId = `RM-ORD-${Math.floor(100000 + Math.random() * 900000)}`;
-  let isSimulated = false;
-  let apiMessage = '';
+  console.log(`[RoyalMailService] Creating live Click & Drop order for #${orderId} via ${serviceCode}`);
 
-  // Call Royal Mail API if API key is set
-  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '';
+  const addressObj: any = {
+    fullName: recipient.fullName,
+    addressLine1: recipient.addressLine1,
+    city: recipient.city,
+    postcode: recipient.postcode,
+    countryCode: recipient.countryCode || 'GB'
+  };
+  if (recipient.companyName?.trim()) addressObj.companyName = recipient.companyName.trim();
+  if (recipient.addressLine2?.trim()) addressObj.addressLine2 = recipient.addressLine2.trim();
+  if (recipient.county?.trim()) addressObj.county = recipient.county.trim();
 
-  if (apiKey && apiKey.trim().length > 0) {
-    try {
-      console.log(`[RoyalMailService] Attempting live Royal Mail Click & Drop API call for Order #${orderId}`);
-      
-      // Build clean address object without empty strings
-      const addressObj: any = {
-        fullName: recipient.fullName || 'Valued Customer',
-        addressLine1: recipient.addressLine1 || 'High Street 1',
-        city: recipient.city || 'London',
-        postcode: recipient.postcode || 'SW1A 1AA',
-        countryCode: recipient.countryCode || 'GB'
-      };
-      if (recipient.companyName?.trim()) addressObj.companyName = recipient.companyName.trim();
-      if (recipient.addressLine2?.trim()) addressObj.addressLine2 = recipient.addressLine2.trim();
-      if (recipient.county?.trim()) addressObj.county = recipient.county.trim();
+  const recipientObj: any = { address: addressObj };
+  if (recipient.email) recipientObj.emailAddress = recipient.email.trim();
+  if (recipient.phone?.trim()) recipientObj.phoneNumber = recipient.phone.trim();
 
-      const recipientObj: any = { address: addressObj };
-      if (recipient.email || order.customerEmail) {
-        recipientObj.emailAddress = (recipient.email || order.customerEmail).trim();
-      }
-      if (recipient.phone?.trim()) {
-        recipientObj.phoneNumber = recipient.phone.trim();
-      }
+  const senderObj: any = { tradingName: sender.companyName.trim() };
+  if (sender.contactPhone?.trim()) senderObj.phoneNumber = sender.contactPhone.trim();
+  if (sender.contactEmail?.trim()) senderObj.emailAddress = sender.contactEmail.trim();
 
-      const senderObj: any = {
-        tradingName: (settings.senderAddress.companyName || 'Pouch Supply Ltd').trim()
-      };
-      if (settings.senderAddress.contactPhone?.trim()) {
-        senderObj.phoneNumber = settings.senderAddress.contactPhone.trim();
-      }
-      if (settings.senderAddress.contactEmail?.trim()) {
-        senderObj.emailAddress = settings.senderAddress.contactEmail.trim();
-      }
+  const totalVal = Number(order.total) || 0;
+  const shippingVal = Number(order.shippingCost ?? order.deliveryCost ?? 0);
+  const subtotalVal = Number(order.subtotal) || Math.max(0, totalVal - shippingVal);
 
-      const totalVal = Number(order.total) || 10;
-      const shippingVal = Number(order.shipping) || Number(selectedRate?.price) || 0;
-      const subtotalVal = Number(order.subtotal) || (totalVal - shippingVal > 0 ? totalVal - shippingVal : totalVal);
-
-      const payload: CreateRoyalMailOrderRequest = {
-        orderReference: String(order.id),
-        isRecipientABusiness: Boolean(recipient.companyName?.trim()),
-        recipient: recipientObj,
-        sender: senderObj,
-        subtotal: Math.round(subtotalVal * 100) / 100,
-        shippingCostCharged: Math.round(shippingVal * 100) / 100,
-        total: Math.round(totalVal * 100) / 100,
-        currencyCode: 'GBP',
-        orderDate: order.createdAt || new Date().toISOString(),
-        packages: [
-          {
-            weightInGrams: options.weightGrams || settings.defaultWeightGrams || 350,
-            packageFormatIdentifier: options.packageType || settings.defaultPackageType || 'Parcel',
-            contents: Array.isArray(order.items) && order.items.length > 0 ? order.items.map((it: any) => ({
+  const payload: CreateRoyalMailOrderRequest = {
+    orderReference: String(order.id),
+    isRecipientABusiness: Boolean(recipient.companyName?.trim()),
+    recipient: recipientObj,
+    sender: senderObj,
+    subtotal: Math.round(subtotalVal * 100) / 100,
+    shippingCostCharged: Math.round(shippingVal * 100) / 100,
+    total: Math.round(totalVal * 100) / 100,
+    currencyCode: 'GBP',
+    orderDate: order.createdAt || new Date().toISOString(),
+    packages: [
+      {
+        weightInGrams: options.weightGrams || settings.defaultWeightGrams || 350,
+        packageFormatIdentifier: options.packageType || settings.defaultPackageType || 'Parcel',
+        contents: Array.isArray(order.items) && order.items.length > 0
+          ? order.items.map((it: any) => ({
               name: it.productTitle || it.title || 'Pouch Supply Item',
-              quantity: it.quantity || 1,
-              unitValue: it.price || 5.0,
-              unitWeightInGrams: 100
-            })) : [{ name: 'Pouch Supply Package', quantity: 1, unitValue: order.total || 10, unitWeightInGrams: 350 }]
-          }
-        ],
-        postageDetails: {
-          serviceCode: serviceCode,
-          sendNotificationsTo: recipientObj.emailAddress ? 'recipient' : 'none',
-          receiveEmailNotification: Boolean(recipientObj.emailAddress),
-          receiveSmsNotification: Boolean(recipientObj.phoneNumber)
-        }
-      };
-
-      const result = await createRoyalMailOrders([payload], apiKey);
-      if (result) {
-        if (result.failedOrders && result.failedOrders.length > 0) {
-          const errMsgs: string[] = [];
-          result.failedOrders.forEach((f: any) => {
-            if (Array.isArray(f.errors)) {
-              f.errors.forEach((e: any) => {
-                errMsgs.push(e.message || e.code || JSON.stringify(e));
-              });
-            } else if (f.errors) {
-              errMsgs.push(JSON.stringify(f.errors));
-            }
-          });
-          if (errMsgs.length > 0) {
-            console.warn('[RoyalMailService] Live API returned errors, falling back to simulated label:', errMsgs.join(' | '));
-            isSimulated = true;
-            apiMessage = `Simulated mode: ${errMsgs.join(' | ')}`;
-          }
-        } else {
-          isSimulated = false;
-          const createdOrder = result.createdOrders?.[0];
-          if (createdOrder?.orderIdentifier) {
-            royalMailOrderId = String(createdOrder.orderIdentifier);
-          }
-          if (createdOrder?.trackingNumber) {
-            trackingNumber = createdOrder.trackingNumber;
-          } else if (createdOrder?.packages?.[0]?.trackingNumber) {
-            trackingNumber = createdOrder.packages[0].trackingNumber;
-          } else if (createdOrder?.orderIdentifier) {
-            // Check if Click & Drop order detail has package tracking
-            try {
-              const detail: any = await getOrderByReference(String(createdOrder.orderIdentifier), apiKey);
-              if (detail?.trackingNumber) {
-                trackingNumber = detail.trackingNumber;
-              } else if (detail?.packages?.[0]?.trackingNumber) {
-                trackingNumber = detail.packages[0].trackingNumber;
+              SKU: it.sku || undefined,
+              quantity: Number(it.quantity) || 1,
+              unitValue: Number(it.price) || 0,
+              unitWeightInGrams: Number(it.weightGrams) || 100
+            }))
+          : [
+              {
+                name: 'Pouch Supply Package',
+                quantity: 1,
+                unitValue: totalVal,
+                unitWeightInGrams: options.weightGrams || settings.defaultWeightGrams || 350
               }
-            } catch (_e) {}
-          }
-          apiMessage = 'Live Royal Mail Click & Drop shipment successfully registered!';
-        }
+            ]
       }
-    } catch (apiErr: any) {
-      console.warn('[RoyalMailService] Live API call failed, generating fallback Royal Mail shipping label:', apiErr?.message);
-      isSimulated = true;
-      apiMessage = `Simulated label generated (${apiErr?.message || 'API connection unavailable'}).`;
+    ],
+    postageDetails: {
+      serviceCode,
+      sendNotificationsTo: recipientObj.emailAddress ? 'recipient' : 'none',
+      receiveEmailNotification: Boolean(recipientObj.emailAddress),
+      receiveSmsNotification: Boolean(recipientObj.phoneNumber)
     }
-  } else {
-    isSimulated = true;
-    apiMessage = 'Royal Mail shipment created and label generated (Simulated Mode - configure ROYAL_MAIL_API_KEY for live Click & Drop API).';
-    console.log('[RoyalMailService] No ROYAL_MAIL_API_KEY configured. Generating Royal Mail package label in simulated mode.');
+  };
+
+  // Any failure here propagates. There is no simulated fallback.
+  const result = await createRoyalMailOrders([payload], apiKey);
+
+  if (result?.failedOrders && result.failedOrders.length > 0) {
+    const errMsgs: string[] = [];
+    result.failedOrders.forEach((f: any) => {
+      if (Array.isArray(f.errors)) {
+        f.errors.forEach((e: any) => errMsgs.push(e.message || e.code || JSON.stringify(e)));
+      } else if (f.errors) {
+        errMsgs.push(JSON.stringify(f.errors));
+      }
+    });
+    throw new Error(
+      `Royal Mail rejected the shipment for order #${orderId}: ${errMsgs.join(' | ') || 'unknown error'}`
+    );
   }
 
-  const carrierName = selectedRate.serviceName;
+  const createdOrder = result?.createdOrders?.[0];
+  if (!createdOrder?.orderIdentifier) {
+    throw new Error(
+      `Royal Mail did not return a Click & Drop order identifier for #${orderId}. The shipment was not created.`
+    );
+  }
 
-  // Generate Label HTML & Data
-  const labelHtml = generateShippingLabelHtml({
-    trackingNumber,
-    orderId: String(order.id),
-    serviceCode,
-    serviceName: selectedRate.serviceName,
-    recipient,
-    sender: settings.senderAddress,
-    weightGrams: options.weightGrams || settings.defaultWeightGrams || 350,
-    date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-  });
+  const royalMailOrderId = String(createdOrder.orderIdentifier);
+  let trackingNumber: string | null =
+    createdOrder.trackingNumber || createdOrder.packages?.[0]?.trackingNumber || null;
 
-  // Update order object
-  const updatedOrder = {
+  // Click & Drop allocates the tracking number when the label is generated, so
+  // it is often absent from the create response. Re-read the order once.
+  if (!trackingNumber) {
+    try {
+      const detail: any = await getOrderByReference(royalMailOrderId, apiKey);
+      trackingNumber = detail?.trackingNumber || detail?.packages?.[0]?.trackingNumber || null;
+    } catch (lookupErr: any) {
+      console.warn(`[RoyalMailService] Tracking lookup for #${orderId} deferred:`, lookupErr?.message);
+    }
+  }
+
+  const carrierName = serviceName;
+  const labelUrl = `/api/royalmail/label/${encodeURIComponent(royalMailOrderId)}/pdf`;
+
+  // Only claim the parcel is shipped once Royal Mail has issued tracking.
+  const nextFulfillment = trackingNumber ? 'Shipped' : 'Unfulfilled';
+
+  const shippedOrder = {
     ...order,
-    fulfillmentStatus: 'Shipped',
+    fulfillmentStatus: nextFulfillment,
     trackingNumber: trackingNumber,
     trackingId: trackingNumber,
     carrier: carrierName,
@@ -692,55 +534,37 @@ export async function createRoyalMailShipment(orderId: string, options: {
         royalMailOrderId,
         trackingNumber,
         serviceCode,
-        serviceName: selectedRate.serviceName,
+        serviceName,
         carrier: carrierName,
-        shippedAt: new Date().toISOString(),
-        isSimulated,
-        addressValidation: validation
+        labelUrl,
+        createdAt: new Date().toISOString(),
+        shippedAt: trackingNumber ? new Date().toISOString() : null,
+        addressValidation: { valid, errors }
       }
     }
   };
 
-  // 1. Save to Prisma DB
+  // Persist through saveSingleOrder so the dispatch email and the Klaviyo
+  // "shipped" event are emitted by the single order-notification funnel,
+  // exactly once, and only on a real Unfulfilled -> Shipped transition.
+  let updatedOrder = shippedOrder;
   try {
-    const { prisma } = await import('../../src/lib/prisma');
-    await prisma.order.upsert({
-      where: { id: String(orderId) },
-      update: updatedOrder,
-      create: updatedOrder
-    });
-  } catch (prismaErr: any) {
-    console.warn('[RoyalMailService] Prisma update warning:', prismaErr?.message);
-  }
-
-  // 2. Save to StoreResource
-  try {
-    const currentOrders: any[] = (await fetchResource('orders')) || [];
-    const idx = currentOrders.findIndex((o: any) => String(o.id) === String(orderId));
-    if (idx !== -1) {
-      currentOrders[idx] = updatedOrder;
-    } else {
-      currentOrders.unshift(updatedOrder);
+    const { saveSingleOrder } = await import('../routes/orders');
+    updatedOrder = await saveSingleOrder(shippedOrder);
+  } catch (saveErr: any) {
+    console.error('[RoyalMailService] Order save error, falling back to direct store write:', saveErr?.message);
+    try {
+      const currentOrders: any[] = (await fetchResource('orders')) || [];
+      const idx = currentOrders.findIndex((o: any) => String(o.id) === String(orderId));
+      if (idx !== -1) {
+        currentOrders[idx] = shippedOrder;
+      } else {
+        currentOrders.unshift(shippedOrder);
+      }
+      await saveResource('orders', currentOrders);
+    } catch (resourceErr) {
+      console.error('[RoyalMailService] StoreResource save error:', resourceErr);
     }
-    await saveResource('orders', currentOrders);
-  } catch (resourceErr) {
-    console.error('[RoyalMailService] StoreResource save error:', resourceErr);
-  }
-
-  // 3. Send Shipping Email via Resend
-  try {
-    console.log(`[RoyalMailService] Triggering Resend Shipping Confirmation Email for #${orderId}`);
-    await sendOrderShippedEmail(updatedOrder, trackingNumber, carrierName);
-  } catch (emailErr) {
-    console.warn('[RoyalMailService] Resend email error:', emailErr);
-  }
-
-  // 4. Trigger Klaviyo Event
-  try {
-    console.log(`[RoyalMailService] Triggering Klaviyo Order Shipped Event for #${orderId}`);
-    await trackOrderShipped(updatedOrder, trackingNumber, carrierName);
-  } catch (klaviyoErr) {
-    console.warn('[RoyalMailService] Klaviyo tracking error:', klaviyoErr);
   }
 
   return {
@@ -748,86 +572,165 @@ export async function createRoyalMailShipment(orderId: string, options: {
     trackingNumber,
     royalMailOrderId,
     carrier: carrierName,
-    serviceName: selectedRate.serviceName,
-    labelHtml,
-    message: apiMessage,
-    isSimulated,
+    serviceName,
+    serviceCode,
+    labelUrl,
+    message: trackingNumber
+      ? `Royal Mail shipment created. Tracking ${trackingNumber}.`
+      : `Royal Mail order ${royalMailOrderId} created. Tracking is allocated when the label is generated — print the label, then sync the order.`,
     order: updatedOrder
   };
 }
 
-// 5. Cancel Shipment
-export async function cancelRoyalMailShipment(orderId: string, royalMailOrderId?: string): Promise<{ success: boolean; message: string }> {
-  const settings = await getRoyalMailSettings();
-  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '';
-  let message = 'Shipment marked as cancelled in store records.';
+/**
+ * 5. Mark a Click & Drop order as despatched with Royal Mail.
+ */
+export async function dispatchRoyalMailShipment(orderId: string): Promise<{ success: boolean; message: string; order: any }> {
+  const apiKey = await requireApiKey();
 
-  if (apiKey && (royalMailOrderId || orderId)) {
-    try {
-      const ref = royalMailOrderId || orderId;
-      await cancelRoyalMailOrder(ref, apiKey);
-      message = 'Shipment cancelled in Royal Mail Click & Drop system.';
-    } catch (err: any) {
-      console.warn('[RoyalMailService] API cancel failed:', err?.message);
-    }
+  const orders: any[] = (await fetchResource('orders')) || [];
+  const order = orders.find((o: any) => String(o.id) === String(orderId));
+  if (!order) {
+    throw new Error(`Order #${orderId} not found.`);
   }
 
-  // Update order in database
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId;
+  if (!royalMailOrderId) {
+    throw new Error(
+      `Order #${orderId} has no Royal Mail Click & Drop shipment. Create the shipment before marking it despatched.`
+    );
+  }
+
+  await markRoyalMailOrderDispatched(Number(royalMailOrderId) || String(royalMailOrderId), apiKey);
+
+  // Pull the tracking number now that the order is manifested.
+  let trackingNumber = order.trackingNumber || order.trackingId || null;
+  try {
+    const detail: any = await getOrderByReference(String(royalMailOrderId), apiKey);
+    trackingNumber = detail?.trackingNumber || detail?.packages?.[0]?.trackingNumber || trackingNumber;
+  } catch (_e) {}
+
+  const { saveSingleOrder } = await import('../routes/orders');
+  const updatedOrder = await saveSingleOrder({
+    ...order,
+    fulfillmentStatus: 'Shipped',
+    trackingNumber,
+    trackingId: trackingNumber,
+    data: {
+      ...(order.data || {}),
+      royalMail: {
+        ...(order.data?.royalMail || {}),
+        trackingNumber,
+        status: 'despatched',
+        shippedAt: new Date().toISOString()
+      }
+    }
+  });
+
+  return {
+    success: true,
+    message: `Order #${orderId} marked as despatched with Royal Mail.`,
+    order: updatedOrder
+  };
+}
+
+/**
+ * 6. Retrieve the official Royal Mail postage label PDF for a store order.
+ */
+export async function getRoyalMailLabelForOrder(
+  orderId: string,
+  options: { includeReturnsLabel?: boolean; includeCN?: boolean } = {}
+): Promise<{ pdf: ArrayBuffer; royalMailOrderId: string }> {
+  const apiKey = await requireApiKey();
+
   const orders: any[] = (await fetchResource('orders')) || [];
-  const idx = orders.findIndex((o: any) => String(o.id) === String(orderId));
-  if (idx !== -1) {
-    orders[idx] = {
-      ...orders[idx],
+  const order = orders.find((o: any) => String(o.id) === String(orderId));
+  if (!order) {
+    throw new Error(`Order #${orderId} not found.`);
+  }
+
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId;
+  if (!royalMailOrderId) {
+    throw new Error(
+      `Order #${orderId} has no Royal Mail shipment yet. Create the Click & Drop shipment first, then print the label.`
+    );
+  }
+
+  const pdf = await getRoyalMailLabel(
+    Number(royalMailOrderId) || String(royalMailOrderId),
+    options,
+    apiKey
+  );
+
+  return { pdf, royalMailOrderId: String(royalMailOrderId) };
+}
+
+// 7. Cancel Shipment
+export async function cancelRoyalMailShipment(orderId: string, royalMailOrderId?: string): Promise<{ success: boolean; message: string }> {
+  const apiKey = await requireApiKey();
+
+  const orders: any[] = (await fetchResource('orders')) || [];
+  const order = orders.find((o: any) => String(o.id) === String(orderId));
+  const ref = royalMailOrderId || order?.data?.royalMail?.royalMailOrderId;
+
+  if (!ref) {
+    throw new Error(`Order #${orderId} has no Royal Mail shipment to cancel.`);
+  }
+
+  // Propagates on failure: the local record must not say "cancelled" while the
+  // shipment is still live in Click & Drop and about to be collected.
+  await cancelRoyalMailOrder(String(ref), apiKey);
+
+  if (order) {
+    const { saveSingleOrder } = await import('../routes/orders');
+    await saveSingleOrder({
+      ...order,
       fulfillmentStatus: 'Unfulfilled',
       trackingNumber: null,
       trackingId: null,
       carrier: null,
       data: {
-        ...(orders[idx].data || {}),
+        ...(order.data || {}),
         royalMail: {
-          ...(orders[idx].data?.royalMail || {}),
+          ...(order.data?.royalMail || {}),
           status: 'Cancelled',
+          trackingNumber: null,
           cancelledAt: new Date().toISOString()
         }
       }
-    };
-    await saveResource('orders', orders);
+    });
   }
 
-  try {
-    const { prisma } = await import('../../src/lib/prisma');
-    await prisma.order.update({
-      where: { id: String(orderId) },
-      data: {
-        fulfillmentStatus: 'Unfulfilled',
-        trackingId: null,
-        carrier: null
-      }
-    });
-  } catch (_e) {}
-
-  return { success: true, message };
+  return { success: true, message: 'Shipment cancelled in Royal Mail Click & Drop.' };
 }
 
-// 6. Track Shipment Status with Live Click & Drop Sync
-export async function getRoyalMailTracking(trackingNumberOrQuery: string): Promise<{
-  trackingNumber: string;
+export interface TrackingResult {
+  trackingNumber: string | null;
   orderId?: string;
+  royalMailOrderId?: string;
   status: string;
   statusDescription: string;
   carrier: string;
   estimatedDelivery: string;
   recipientLocation?: string;
-  officialTrackingUrl: string;
+  officialTrackingUrl: string | null;
   isLive: boolean;
-  royalMailOrderId?: string;
   history: Array<{ timestamp: string; location: string; status: string; description: string }>;
-}> {
-  const query = (trackingNumberOrQuery || '').trim();
-  const settings = await getRoyalMailSettings();
-  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '';
+}
 
-  // Find order in StoreResource or Prisma
+/**
+ * 8. Live tracking lookup against Click & Drop.
+ *
+ * Reports only what Royal Mail actually says. The previous implementation
+ * synthesised a full delivery timeline ("processed through NDC hub",
+ * "Delivered & Signed") from the local order status alone, which showed
+ * customers scan events that never happened.
+ */
+export async function getRoyalMailTracking(trackingNumberOrQuery: string): Promise<TrackingResult> {
+  const query = (trackingNumberOrQuery || '').trim();
+  const apiKey = await requireApiKey();
+
+  // Find the matching store order so we can resolve the Click & Drop identifier.
   let matchedOrder: any = null;
   try {
     const orders: any[] = (await fetchResource('orders')) || [];
@@ -840,154 +743,99 @@ export async function getRoyalMailTracking(trackingNumberOrQuery: string): Promi
     );
   } catch (_e) {}
 
-  if (!matchedOrder) {
-    try {
-      const { prisma } = await import('../../src/lib/prisma');
-      matchedOrder = await prisma.order.findFirst({
-        where: {
-          OR: [
-            { id: query },
-            { trackingId: query }
-          ]
-        }
-      });
-    } catch (_e) {}
-  }
+  const royalMailOrderId = matchedOrder?.data?.royalMail?.royalMailOrderId;
+  const lookupRef = royalMailOrderId || (matchedOrder?.id ? String(matchedOrder.id) : query);
 
-  let trackingNumber = query;
-  let orderId = matchedOrder?.id || query;
-  let carrier = matchedOrder?.carrier || 'Royal Mail Tracked 24';
-  let royalMailOrderId = matchedOrder?.data?.royalMail?.royalMailOrderId;
-  let isLive = false;
-  let clickAndDropStatus = '';
-
-  if (matchedOrder?.trackingNumber) {
-    trackingNumber = matchedOrder.trackingNumber;
-  } else if (matchedOrder?.data?.royalMail?.trackingNumber) {
-    trackingNumber = matchedOrder.data.royalMail.trackingNumber;
-  } else if (matchedOrder?.trackingId) {
-    trackingNumber = matchedOrder.trackingId;
-  } else if (query && query.length >= 9 && !query.startsWith('PS') && !query.startsWith('ord_')) {
-    trackingNumber = query;
-  } else if (!trackingNumber || trackingNumber.startsWith('PS')) {
-    trackingNumber = matchedOrder?.id ? `RM-${matchedOrder.id}` : query;
-  }
-
-  // Attempt live Click & Drop API lookup if we have an API key and RM Order ID / Reference
-  if (apiKey && (royalMailOrderId || orderId)) {
-    try {
-      const liveRef = royalMailOrderId || orderId;
-      const cdOrder: any = await getOrderByReference(liveRef, apiKey);
-      if (cdOrder) {
-        isLive = true;
-        clickAndDropStatus = cdOrder.status || cdOrder.orderStatus || '';
-        if (cdOrder.trackingNumber) {
-          trackingNumber = cdOrder.trackingNumber;
-        } else if (cdOrder.packages?.[0]?.trackingNumber) {
-          trackingNumber = cdOrder.packages[0].trackingNumber;
-        }
-      }
-    } catch (_liveErr) {
-      // Keep going with database record
+  let cdOrder: any = null;
+  try {
+    cdOrder = await getOrderByReference(String(lookupRef), apiKey);
+  } catch (err: any) {
+    if (err instanceof RoyalMailError && err.status === 404) {
+      throw new Error(
+        `Royal Mail has no record of "${query}". Confirm the shipment was created in Click & Drop.`
+      );
     }
+    throw err;
   }
 
-  // Determine stage and timeline events
-  const dateNow = new Date();
-  const dateFormatted = dateNow.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  const timeFormatted = dateNow.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const trackingNumber =
+    cdOrder?.trackingNumber ||
+    cdOrder?.packages?.[0]?.trackingNumber ||
+    matchedOrder?.trackingNumber ||
+    null;
 
-  const orderDate = matchedOrder?.createdAt ? new Date(matchedOrder.createdAt) : new Date(Date.now() - 1000 * 60 * 60 * 4);
-  const orderDateFormatted = orderDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  const orderTimeFormatted = orderDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const rawStatus = String(cdOrder?.status || cdOrder?.orderStatus || '').trim();
+  const statusLower = rawStatus.toLowerCase();
 
-  let displayStatus = 'In Transit';
-  let statusDescription = 'Your parcel is moving through the Royal Mail network and is on schedule.';
-  let estimatedDelivery = 'Tomorrow by 3:00 PM';
+  let displayStatus = rawStatus || 'Awaiting Despatch';
+  let statusDescription = 'Royal Mail has the order. No scan events have been recorded yet.';
+  let estimatedDelivery = 'Awaiting despatch';
 
-  const isDelivered = matchedOrder?.fulfillmentStatus === 'Delivered' || clickAndDropStatus.toLowerCase() === 'delivered';
-  const isFulfilled = matchedOrder?.fulfillmentStatus === 'Shipped' || matchedOrder?.fulfillmentStatus === 'Fulfilled' || clickAndDropStatus.toLowerCase().includes('despatch') || clickAndDropStatus.toLowerCase().includes('manifest');
-
-  if (isDelivered) {
-    displayStatus = 'Delivered & Signed';
-    statusDescription = 'Item has been safely delivered to the recipient address.';
+  if (statusLower.includes('deliver')) {
+    displayStatus = 'Delivered';
+    statusDescription = 'Royal Mail has recorded this item as delivered.';
     estimatedDelivery = 'Delivered';
-  } else if (isFulfilled) {
+  } else if (statusLower.includes('despatch') || statusLower.includes('manifest') || statusLower.includes('shipped')) {
     displayStatus = 'In Transit';
-    statusDescription = 'Item accepted at Royal Mail Mail Centre and in transit to local delivery office.';
-    estimatedDelivery = carrier.includes('48') ? 'Within 2 Working Days' : 'Next Working Day';
-  } else {
-    displayStatus = 'Sender Advice Received';
-    statusDescription = 'We have received sender advice. Royal Mail is awaiting physical handover of the parcel.';
-    estimatedDelivery = 'Awaiting Dispatch';
+    statusDescription = 'Item has been despatched and is moving through the Royal Mail network.';
+    estimatedDelivery = 'In transit';
+  } else if (statusLower.includes('cancel')) {
+    displayStatus = 'Cancelled';
+    statusDescription = 'This Click & Drop order has been cancelled.';
+    estimatedDelivery = 'Cancelled';
   }
 
-  const rawAddr = matchedOrder?.data?.address || matchedOrder?.destination || 'London, UK';
-  const destinationStr = typeof rawAddr === 'object' ? `${rawAddr.city || 'London'}, ${rawAddr.postcode || 'United Kingdom'}` : String(rawAddr);
-
-  const history: Array<{ timestamp: string; location: string; status: string; description: string }> = [];
-
-  if (isDelivered) {
+  // Only real, dated events from Click & Drop — no synthesised scan history.
+  const history: TrackingResult['history'] = [];
+  const pushEvent = (iso: any, status: string, description: string) => {
+    if (!iso) return;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return;
     history.push({
-      timestamp: `${dateFormatted} at ${timeFormatted}`,
-      location: destinationStr,
-      status: 'Delivered',
-      description: 'Delivered to recipient address and signature captured.'
+      timestamp: `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      location: 'Royal Mail Click & Drop',
+      status,
+      description
     });
-    history.push({
-      timestamp: `${dateFormatted} at 07:45 AM`,
-      location: 'Local Delivery Office',
-      status: 'Out for Delivery',
-      description: 'Item is loaded on Royal Mail delivery van for final delivery today.'
-    });
-  }
+  };
 
-  if (isFulfilled || isDelivered) {
-    history.push({
-      timestamp: `${dateFormatted} at 02:15 AM`,
-      location: 'National Distribution Centre (NDC)',
-      status: 'In Transit',
-      description: 'Item processed through Royal Mail NDC hub.'
-    });
-    history.push({
-      timestamp: `${orderDateFormatted} at 08:30 PM`,
-      location: 'London North Mail Centre',
-      status: 'Item Received',
-      description: 'Item accepted at Royal Mail Mail Centre.'
-    });
-  }
+  pushEvent(cdOrder?.shippedOn, 'Despatched', 'Item despatched to Royal Mail.');
+  pushEvent(cdOrder?.manifestedOn, 'Manifested', 'Order manifested with Royal Mail.');
+  pushEvent(cdOrder?.printedOn, 'Label Printed', 'Postage label generated.');
+  pushEvent(cdOrder?.createdOn, 'Order Created', 'Shipment registered in Click & Drop.');
 
-  history.push({
-    timestamp: `${orderDateFormatted} at ${orderTimeFormatted}`,
-    location: settings.senderAddress.companyName || 'Pouch Supply Logistics Hub',
-    status: 'Sender Advice Received',
-    description: 'Shipping label created & order logged with Royal Mail Click & Drop.'
-  });
+  const rawAddr = matchedOrder?.data?.address || matchedOrder?.destination || '';
+  const destinationStr = rawAddr && typeof rawAddr === 'object'
+    ? [rawAddr.city, rawAddr.postcode].filter(Boolean).join(', ')
+    : String(rawAddr || '');
 
   return {
     trackingNumber,
-    orderId,
+    orderId: matchedOrder?.id,
+    royalMailOrderId: royalMailOrderId ? String(royalMailOrderId) : undefined,
     status: displayStatus,
     statusDescription,
-    carrier,
+    carrier: matchedOrder?.carrier || 'Royal Mail',
     estimatedDelivery,
-    recipientLocation: destinationStr,
-    officialTrackingUrl: `https://www.royalmail.com/track-your-item#/tracking-details/${encodeURIComponent(trackingNumber)}`,
-    isLive,
-    royalMailOrderId,
+    recipientLocation: destinationStr || undefined,
+    officialTrackingUrl: trackingNumber
+      ? `https://www.royalmail.com/track-your-item#/tracking-details/${encodeURIComponent(trackingNumber)}`
+      : null,
+    isLive: true,
     history
   };
 }
 
-// 7. Sync live status for an order from Royal Mail Click & Drop
+/**
+ * 9. Sync live status for an order from Royal Mail Click & Drop.
+ */
 export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
   success: boolean;
   order: any;
   message: string;
   clickAndDropStatus?: string;
 }> {
-  const settings = await getRoyalMailSettings();
-  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || '';
+  const apiKey = await requireApiKey();
 
   const orders: any[] = (await fetchResource('orders')) || [];
   const order = orders.find((o: any) => String(o.id) === String(orderId));
@@ -996,136 +844,85 @@ export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
     throw new Error(`Order #${orderId} not found.`);
   }
 
-  if (!apiKey) {
-    return {
-      success: true,
-      order,
-      message: 'API Key not configured. Order loaded from local store.'
-    };
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId;
+  if (!royalMailOrderId) {
+    throw new Error(`Order #${orderId} has no Royal Mail shipment to sync.`);
   }
 
-  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId || order.id;
+  const cdOrder: any = await getOrderByReference(String(royalMailOrderId), apiKey);
+  if (!cdOrder) {
+    throw new Error(`Royal Mail returned no record for Click & Drop order ${royalMailOrderId}.`);
+  }
 
-  try {
-    const cdOrder: any = await getOrderByReference(royalMailOrderId, apiKey);
-    if (cdOrder) {
-      const cdStatus = (cdOrder.status || cdOrder.orderStatus || '').toLowerCase();
-      let updatedFulfillment = order.fulfillmentStatus;
-      let newTrackingNumber = order.trackingNumber || order.trackingId;
+  const cdStatus = (cdOrder.status || cdOrder.orderStatus || '').toLowerCase();
+  const newTrackingNumber =
+    cdOrder.trackingNumber ||
+    cdOrder.packages?.[0]?.trackingNumber ||
+    order.trackingNumber ||
+    order.trackingId ||
+    null;
 
-      if (cdOrder.trackingNumber) {
-        newTrackingNumber = cdOrder.trackingNumber;
-      } else if (cdOrder.packages?.[0]?.trackingNumber) {
-        newTrackingNumber = cdOrder.packages[0].trackingNumber;
-      }
+  let updatedFulfillment = order.fulfillmentStatus;
+  if (cdStatus.includes('deliver')) {
+    updatedFulfillment = 'Delivered';
+  } else if (cdStatus.includes('despatch') || cdStatus.includes('manifest') || cdStatus.includes('shipped')) {
+    // Only advance to Shipped once there is a real tracking number to send.
+    updatedFulfillment = newTrackingNumber ? 'Shipped' : order.fulfillmentStatus;
+  }
 
-      if (cdStatus.includes('deliver')) {
-        updatedFulfillment = 'Delivered';
-      } else if (cdStatus.includes('despatch') || cdStatus.includes('manifest') || cdStatus.includes('print')) {
-        updatedFulfillment = 'Shipped';
-      }
-
-      const updatedOrder = {
-        ...order,
-        fulfillmentStatus: updatedFulfillment,
+  const syncedOrder = {
+    ...order,
+    fulfillmentStatus: updatedFulfillment,
+    trackingNumber: newTrackingNumber,
+    trackingId: newTrackingNumber,
+    data: {
+      ...(order.data || {}),
+      royalMail: {
+        ...(order.data?.royalMail || {}),
+        status: cdOrder.status || cdOrder.orderStatus,
         trackingNumber: newTrackingNumber,
-        trackingId: newTrackingNumber,
-        data: {
-          ...(order.data || {}),
-          royalMail: {
-            ...(order.data?.royalMail || {}),
-            status: cdOrder.status || cdOrder.orderStatus,
-            trackingNumber: newTrackingNumber,
-            syncedAt: new Date().toISOString(),
-            clickAndDropDetails: cdOrder
-          }
-        }
-      };
-
-      const idx = orders.findIndex((o: any) => String(o.id) === String(orderId));
-      if (idx !== -1) {
-        orders[idx] = updatedOrder;
-        await saveResource('orders', orders);
+        syncedAt: new Date().toISOString(),
+        clickAndDropDetails: cdOrder
       }
-
-      try {
-        const { prisma } = await import('../../src/lib/prisma');
-        await prisma.order.upsert({
-          where: { id: String(orderId) },
-          update: updatedOrder,
-          create: updatedOrder
-        });
-      } catch (_e) {}
-
-      return {
-        success: true,
-        order: updatedOrder,
-        message: `Synced with Royal Mail Click & Drop. Status: ${cdOrder.status || 'Updated'}`,
-        clickAndDropStatus: cdOrder.status || cdOrder.orderStatus
-      };
     }
-  } catch (err: any) {
-    console.warn(`[RoyalMailService] Status sync warning for #${orderId}:`, err?.message);
-  }
+  };
+
+  // Route through saveSingleOrder so a status change that moves the order to
+  // Shipped or Delivered notifies the customer through the same funnel as every
+  // other status change — once, and only on a real change.
+  const { saveSingleOrder } = await import('../routes/orders');
+  const updatedOrder = await saveSingleOrder(syncedOrder);
 
   return {
     success: true,
-    order,
-    message: 'Local order status up to date.'
+    order: updatedOrder,
+    message: `Synced with Royal Mail Click & Drop. Status: ${cdOrder.status || 'Updated'}`,
+    clickAndDropStatus: cdOrder.status || cdOrder.orderStatus
   };
 }
 
-// 7. Create Return Label
+/**
+ * 10. Official Royal Mail pre-paid returns label PDF.
+ *
+ * Requested from Royal Mail with `includeReturnsLabel`, so it carries a real
+ * returns barcode. There is no locally generated substitute — a hand-drawn
+ * label cannot be scanned and the parcel would be refused.
+ */
 export async function createRoyalMailReturnLabel(orderId: string): Promise<{
   success: boolean;
-  returnTrackingNumber: string;
-  labelHtml: string;
+  pdf: ArrayBuffer;
+  royalMailOrderId: string;
   message: string;
 }> {
-  const settings = await getRoyalMailSettings();
-  const orders: any[] = (await fetchResource('orders')) || [];
-  const order = orders.find((o: any) => String(o.id) === String(orderId));
-
-  if (!order) {
-    throw new Error(`Order #${orderId} not found.`);
-  }
-
-  const returnTrackingNumber = `RM${Math.floor(100000000 + Math.random() * 900000000)}GB`;
-  const customerName = order.customerName || 'Customer';
-
-  const labelHtml = generateShippingLabelHtml({
-    trackingNumber: returnTrackingNumber,
-    orderId: String(order.id) + '-RET',
-    serviceCode: 'TPS24',
-    serviceName: 'Royal Mail Pre-Paid Return 24',
-    recipient: {
-      fullName: settings.senderAddress.companyName,
-      addressLine1: settings.senderAddress.addressLine1,
-      addressLine2: settings.senderAddress.addressLine2,
-      city: settings.senderAddress.city,
-      postcode: settings.senderAddress.postcode,
-      countryCode: settings.senderAddress.countryCode,
-      email: settings.senderAddress.contactEmail
-    },
-    sender: {
-      companyName: customerName,
-      addressLine1: order.destination || 'Customer Address',
-      city: 'Customer City',
-      postcode: 'UK POSTCODE',
-      countryCode: 'GB',
-      contactEmail: order.customerEmail,
-      contactPhone: ''
-    },
-    weightGrams: settings.defaultWeightGrams || 350,
-    date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-    isReturn: true
+  const { pdf, royalMailOrderId } = await getRoyalMailLabelForOrder(orderId, {
+    includeReturnsLabel: true
   });
 
   return {
     success: true,
-    returnTrackingNumber,
-    labelHtml,
-    message: `Royal Mail Pre-paid Return Label generated for Order #${orderId}.`
+    pdf,
+    royalMailOrderId,
+    message: `Royal Mail pre-paid returns label retrieved for order #${orderId}.`
   };
 }
 

@@ -7,73 +7,135 @@ type WorldpayConfig = {
   isTestMode: boolean;
 };
 
+/**
+ * Placeholder credential values that earlier builds of this app manufactured
+ * locally instead of reading them from a Worldpay response. They are not real
+ * credentials and must never be sent to the gateway.
+ */
+const PLACEHOLDER_PATTERNS = [
+  /^SCHEME-MOCK/i,
+  /^SCHEME-SIM-/i,
+  /^SCHEME-REF-\d+$/i,
+  /^SCHEME-WP-/i,
+  /^WP-MOCK/i,
+  /^WP-SUB-AUTH-/i,
+  /^WP-SUB-RECURRING-/i,
+  /^WP-SUB-INIT-/i,
+  /^WP-TEST-TXN-/i,
+  /mock/i,
+  /test-simulation/i
+];
+
+export function isPlaceholderCredential(value?: string | null): boolean {
+  if (!value || typeof value !== "string") return true;
+  return PLACEHOLDER_PATTERNS.some(rx => rx.test(value));
+}
+
+/**
+ * A recurring href is only usable if Worldpay itself returned it. A URL we
+ * built from an order id points at nothing and will always 404.
+ */
+export function isUsableRecurringHref(href?: string | null): boolean {
+  if (!href || typeof href !== "string") return false;
+  if (!href.startsWith("http")) return false;
+  if (isPlaceholderCredential(href)) return false;
+  // Locally fabricated links all had this shape: /payments/recurring/wp-<orderId>
+  if (/\/payments\/recurring\/(wp-|mock-)/i.test(href)) return false;
+  return true;
+}
+
+/**
+ * Simulated authorizations are a development convenience only. They record an
+ * order as Paid without any money moving, so they must be opted into
+ * explicitly — otherwise a live store silently reports fake successful
+ * renewals, which is exactly the failure this flag exists to prevent.
+ */
+function simulationAllowed(): boolean {
+  return String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+}
+
 function getWorldpayConfig(): WorldpayConfig {
   const username = process.env.WORLDPAY_API_USERNAME;
   const password = process.env.WORLDPAY_API_PASSWORD;
   const entity = process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID;
   const baseUrl = (process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").replace(/\/+$/, "");
+  const environment = String(process.env.WORLDPAY_ENVIRONMENT || "live").toLowerCase();
 
   if (!username || !password || !entity) {
-    throw new Error(
-      "Worldpay subscription credentials are not configured."
-    );
+    throw new Error("Worldpay subscription credentials are not configured.");
   }
 
   return {
     baseUrl,
-    entity: entity || '',
-    isTestMode: false,
-    authHeader: `Basic ${Buffer.from(
-      `${username}:${password}`
-    ).toString("base64")}`,
+    entity,
+    isTestMode: environment === "test" || environment === "sandbox",
+    authHeader: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
   };
 }
 
 function getHeaders(config: WorldpayConfig) {
-  const correlationId = crypto.randomUUID ? crypto.randomUUID() : `sub-${Math.random().toString(36).substring(2, 10)}`;
+  const correlationId = crypto.randomUUID
+    ? crypto.randomUUID()
+    : `sub-${Math.random().toString(36).substring(2, 10)}`;
   return {
     Authorization: config.authHeader,
     "Content-Type": "application/json",
     Accept: "application/json",
-    "WP-CorrelationId": correlationId,
+    "WP-CorrelationId": correlationId
   };
 }
 
 /**
- * Creates the first payment for a subscription.
+ * Creates the first payment for a subscription and asks Worldpay to store the
+ * credential so that later merchant-initiated charges are possible.
  *
- * IMPORTANT:
- * The response must be inspected for Worldpay's returned
- * stored-credential / recurring action link.
+ * The `customerAgreement` block is what makes the card reusable. Without it
+ * Worldpay authorises a one-off payment and returns no scheme reference, so
+ * every subsequent recurring charge has nothing to present.
  */
 export async function createInitialSubscriptionPayment({
   orderReference,
   amount,
   currency = "GBP",
+  paymentInstrument,
+  customerEmail
 }: {
   orderReference: string;
   amount: number;
   currency?: string;
+  paymentInstrument?: any;
+  customerEmail?: string | null;
 }) {
   const config = getWorldpayConfig();
 
-  const response = await fetch(
-    `${config.baseUrl}/payments/authorizations`,
-    {
-      method: "POST",
-      headers: getHeaders(config),
-      body: JSON.stringify({
-        transactionReference: orderReference,
-        merchant: {
-          entity: config.entity,
-        },
-        value: {
-          currency,
-          amount: Math.round(amount * 100),
-        },
-      }),
+  const body: any = {
+    transactionReference: orderReference,
+    merchant: { entity: config.entity },
+    instruction: {
+      narrative: { line1: "Pouch Supply Sub" },
+      value: {
+        currency,
+        amount: Math.round(amount * 100)
+      },
+      customerAgreement: {
+        type: "subscription",
+        storedCardUsage: "first"
+      }
     }
-  );
+  };
+
+  if (paymentInstrument) {
+    body.instruction.paymentInstrument = paymentInstrument;
+  }
+  if (customerEmail) {
+    body.customer = { email: customerEmail };
+  }
+
+  const response = await fetch(`${config.baseUrl}/api/payments/authorizations`, {
+    method: "POST",
+    headers: getHeaders(config),
+    body: JSON.stringify(body)
+  });
 
   const data = await response.json().catch(() => ({}));
 
@@ -89,18 +151,45 @@ export async function createInitialSubscriptionPayment({
 }
 
 /**
+ * Extracts the scheme transaction reference Worldpay issues for a stored
+ * credential. This is the value that must be presented on every subsequent
+ * merchant-initiated charge.
+ */
+export function extractSchemeReference(response: any): string | null {
+  if (!response || typeof response !== "object") return null;
+
+  const candidates = [
+    response?.schemeReference,
+    response?.schemeTransactionReference,
+    response?.paymentInstrument?.schemeReference,
+    response?.paymentInstrument?.schemeTransactionReference,
+    response?.instruction?.paymentInstrument?.schemeReference,
+    response?.customerAgreement?.schemeReference,
+    response?.paymentInstrument?.card?.schemeReference
+  ];
+
+  for (const value of candidates) {
+    if (value && typeof value === "string" && !isPlaceholderCredential(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Extract the recurring action href returned by Worldpay.
  *
- * We intentionally inspect multiple possible HAL structures because
- * Worldpay responses can expose action links through _links.
+ * We inspect multiple HAL structures because Worldpay exposes action links
+ * through `_links`. Anything that is not a genuine Worldpay-issued link is
+ * rejected — a manufactured URL is worse than no URL, because it sends the
+ * recurring charge to an endpoint that does not exist.
  */
-export function extractRecurringAuthorizationHref(
-  response: any
-): string | null {
+export function extractRecurringAuthorizationHref(response: any): string | null {
   if (!response) return null;
 
-  if (typeof response === 'string' && response.startsWith('http')) {
-    return response;
+  if (typeof response === "string") {
+    return isUsableRecurringHref(response) ? response : null;
   }
 
   const links = response?._links;
@@ -110,27 +199,45 @@ export function extractRecurringAuthorizationHref(
       "payments:recurringAuthorize",
       "recurringAuthorize",
       "payments:recurring",
-      "recurring",
-      "self"
+      "recurring"
     ];
 
     for (const key of possibleKeys) {
       const item = links[key];
       const href = typeof item === "string" ? item : item?.href;
-      if (href && typeof href === "string") {
-        return href;
+      if (isUsableRecurringHref(href)) {
+        return href as string;
       }
     }
   }
 
-  return response?.recurringHref || response?.worldpayRecurringHref || response?.worldpayRecurringUrl || null;
+  const direct =
+    response?.recurringHref || response?.worldpayRecurringHref || response?.worldpayRecurringUrl;
+
+  return isUsableRecurringHref(direct) ? direct : null;
+}
+
+export interface RecurringChargeResult {
+  id: string;
+  status: string;
+  outcome?: string;
+  transactionReference: string;
+  amount: number;
+  currency: string;
+  authCode?: string | null;
+  schemeReference?: string | null;
+  paymentMethod?: string;
+  simulated: boolean;
+  rawResponse?: any;
+  timestamp: string;
 }
 
 /**
- * Perform a merchant initiated recurring subscription payment.
+ * Perform a merchant initiated (MIT) recurring subscription payment.
  *
- * `recurringHref` comes from Worldpay's previous response.
- * Do NOT manufacture this URL yourself.
+ * Requires a stored credential that Worldpay issued during the initial
+ * payment — either a recurring action href or a scheme transaction reference.
+ * Neither can be invented locally.
  */
 export async function chargeRecurringSubscription({
   recurringHref,
@@ -148,140 +255,160 @@ export async function chargeRecurringSubscription({
   schemeReference?: string | null;
   previousTransactionId?: string | null;
   customerEmail?: string | null;
-}) {
+}): Promise<RecurringChargeResult> {
   let config: WorldpayConfig | null = null;
+  let configError: string | null = null;
+
   try {
     config = getWorldpayConfig();
   } catch (cfgErr: any) {
-    console.warn('[Worldpay Subscription] Credentials note:', cfgErr.message);
+    configError = cfgErr.message;
+    console.warn("[Worldpay Subscription] Credentials note:", cfgErr.message);
   }
 
-  // If Worldpay credentials are fully present, attempt live MIT charge
-  if (config && config.authHeader && config.entity) {
-    const targetUrl = (recurringHref && recurringHref.startsWith('http') && !recurringHref.includes('mock') && !recurringHref.includes('test-simulation'))
-      ? recurringHref
-      : `${config.baseUrl}/payments/authorizations`;
+  const usableHref = isUsableRecurringHref(recurringHref);
+  const usableScheme = Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
+  const usablePreviousTx =
+    Boolean(previousTransactionId) && !isPlaceholderCredential(previousTransactionId);
 
-    console.log(`[Worldpay Subscription] Initiating MIT Recurring Charge via ${targetUrl} for ${transactionReference} (£${amount})`);
-
-    const mitPayload: any = {
-      transactionReference,
-      merchant: {
-        entity: config.entity,
-      },
-      instruction: {
-        value: {
-          currency,
-          amount: Math.round(amount * 100),
-        },
-        narrative: {
-          line1: "Pouch Supply Sub",
-        },
-        debtRepayment: false,
-        customerAgreement: {
-          type: "recurring",
-          credentialOnFile: "stored"
-        }
-      },
-      value: {
-        currency,
-        amount: Math.round(amount * 100),
-      },
-      merchantInitiatedReason: "subscription"
-    };
-
-    if (customerEmail) {
-      mitPayload.shopper = {
-        email: customerEmail
-      };
+  if (!config) {
+    if (simulationAllowed()) {
+      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
     }
-
-    if (schemeReference && !schemeReference.startsWith('SCHEME-MOCK')) {
-      mitPayload.paymentInstrument = {
-        type: "plain",
-        schemeReference: schemeReference,
-        previousTransactionReference: previousTransactionId || undefined
-      };
-    } else if (previousTransactionId && !previousTransactionId.startsWith('WP-MOCK')) {
-      mitPayload.paymentInstrument = {
-        type: "plain",
-        previousTransactionReference: previousTransactionId
-      };
-    }
-
-    try {
-      const response = await fetch(targetUrl, {
-        method: "POST",
-        headers: getHeaders(config),
-        body: JSON.stringify(mitPayload),
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (response.ok) {
-        console.log(`[Worldpay Subscription] Live recurring payment SUCCESS for ${transactionReference}:`, data?.id || data?.outcome || 'Authorized');
-        return {
-          id: data?.id || data?.transactionReference || `WP-MIT-${Date.now().toString().slice(-6)}`,
-          status: 'authorized',
-          outcome: data?.outcome || 'authorized',
-          transactionReference,
-          amount,
-          currency,
-          authCode: data?.authorizationCode || data?.authCode || 'AUTH-OK-LIVE',
-          schemeReference: data?.paymentInstrument?.schemeReference || schemeReference,
-          rawResponse: data,
-          timestamp: new Date().toISOString()
-        };
-      } else {
-        const errMsg = data?.description || data?.message || `Worldpay returned HTTP ${response.status}`;
-        console.warn(`[Worldpay Subscription] Live endpoint returned ${response.status} (${errMsg}).`);
-
-        // If sandbox/test agreement or non-fatal status in dev, fallback gracefully to authorized simulation
-        if (response.status === 403 || response.status === 401 || response.status === 404 || errMsg.toLowerCase().includes('denied') || errMsg.toLowerCase().includes('not found')) {
-          console.log(`[Worldpay Subscription] Falling back to successful simulated authorization for subscription ${transactionReference}`);
-          return {
-            id: `WP-SUB-AUTH-${Date.now().toString().slice(-6)}`,
-            status: 'authorized',
-            transactionReference,
-            amount,
-            currency,
-            authCode: 'AUTH-OK-MIT-SIM',
-            schemeReference: schemeReference || `SCHEME-${Date.now()}`,
-            timestamp: new Date().toISOString()
-          };
-        }
-
-        throw new Error(errMsg);
-      }
-    } catch (fetchErr: any) {
-      console.warn('[Worldpay Subscription] Live API fetch exception:', fetchErr.message);
-      if (fetchErr.message && (fetchErr.message.includes('denied') || fetchErr.message.includes('ECONNREFUSED') || fetchErr.message.includes('ENOTFOUND'))) {
-        return {
-          id: `WP-SUB-AUTH-${Date.now().toString().slice(-6)}`,
-          status: 'authorized',
-          transactionReference,
-          amount,
-          currency,
-          authCode: 'AUTH-OK-DEV-RECOVERY',
-          schemeReference: schemeReference || `SCHEME-${Date.now()}`,
-          timestamp: new Date().toISOString()
-        };
-      }
-      throw fetchErr;
-    }
+    throw new Error(
+      configError ||
+        "Worldpay credentials are not configured, so no recurring payment can be taken."
+    );
   }
 
-  // Standalone fallback when credentials are not present or during test executions
-  console.log(`[Worldpay Subscription] Executing simulated MIT recurring authorization for tx: ${transactionReference}`);
+  if (!usableHref && !usableScheme && !usablePreviousTx) {
+    if (simulationAllowed()) {
+      console.warn(
+        `[Worldpay Subscription] No stored credential for ${transactionReference}; returning a SIMULATED authorization because WORLDPAY_ALLOW_SIMULATED_MIT=true.`
+      );
+      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
+    }
+    throw new Error(
+      "No Worldpay stored credential is available for this subscription. " +
+        "The initial payment must be taken with a customer agreement so Worldpay returns a " +
+        "scheme transaction reference to reuse for recurring charges."
+    );
+  }
+
+  const targetUrl = usableHref
+    ? (recurringHref as string)
+    : `${config.baseUrl}/api/payments/authorizations`;
+
+  console.log(
+    `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ${transactionReference} (£${amount})`
+  );
+
+  const instruction: any = {
+    narrative: { line1: "Pouch Supply Sub" },
+    value: {
+      currency,
+      amount: Math.round(amount * 100)
+    },
+    debtRepayment: false,
+    customerAgreement: {
+      type: "subscription",
+      storedCardUsage: "subsequent"
+    }
+  };
+
+  if (usableScheme) {
+    instruction.customerAgreement.schemeReference = schemeReference;
+  } else if (usablePreviousTx) {
+    instruction.customerAgreement.schemeReference = previousTransactionId;
+  }
+
+  const mitPayload: any = {
+    transactionReference,
+    merchant: { entity: config.entity },
+    instruction
+  };
+
+  if (customerEmail) {
+    mitPayload.customer = { email: customerEmail };
+  }
+
+  const response = await fetch(targetUrl, {
+    method: "POST",
+    headers: getHeaders(config),
+    body: JSON.stringify(mitPayload)
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errMsg =
+      data?.description || data?.message || `Worldpay returned HTTP ${response.status}`;
+    console.error(
+      `[Worldpay Subscription] Recurring charge REJECTED for ${transactionReference}: ${response.status} — ${errMsg}`
+    );
+
+    // Only fall back to a simulated success when explicitly enabled for
+    // development. In every other case a rejection is a real failure and the
+    // renewal must be recorded as failed rather than as a paid order.
+    if (simulationAllowed()) {
+      console.warn(
+        "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT=true — returning a simulated authorization instead of failing."
+      );
+      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
+    }
+
+    throw new Error(errMsg);
+  }
+
+  const outcome = String(data?.outcome || data?.lastEvent || "").toLowerCase();
+  const declined =
+    outcome.includes("refus") || outcome.includes("declin") || outcome.includes("fail");
+
+  if (declined) {
+    throw new Error(
+      `Worldpay declined the recurring payment for ${transactionReference} (outcome: ${data?.outcome || "refused"}).`
+    );
+  }
+
+  console.log(
+    `[Worldpay Subscription] Live recurring payment SUCCESS for ${transactionReference}:`,
+    data?.id || data?.outcome || "authorized"
+  );
+
   return {
-    id: `WP-SUB-RECURRING-${Date.now().toString().slice(-6)}`,
-    status: 'authorized',
+    id: data?.id || data?.transactionReference || transactionReference,
+    status: "authorized",
+    outcome: data?.outcome || "authorized",
     transactionReference,
     amount,
     currency,
-    authCode: 'AUTH-OK-MIT',
-    paymentMethod: 'Worldpay Recurring Token',
-    schemeReference: schemeReference || `SCHEME-SIM-${Date.now()}`,
+    authCode: data?.authorizationCode || data?.authCode || null,
+    schemeReference: extractSchemeReference(data) || (usableScheme ? schemeReference : null),
+    simulated: false,
+    rawResponse: data,
+    timestamp: new Date().toISOString()
+  };
+}
+
+function buildSimulatedResult(
+  transactionReference: string,
+  amount: number,
+  currency: string,
+  schemeReference?: string | null
+): RecurringChargeResult {
+  console.log(
+    `[Worldpay Subscription] SIMULATED (no money taken) MIT authorization for tx: ${transactionReference}`
+  );
+  return {
+    id: `WP-SIM-${Date.now().toString().slice(-6)}`,
+    status: "authorized",
+    transactionReference,
+    amount,
+    currency,
+    authCode: "AUTH-SIMULATED",
+    paymentMethod: "Simulated Worldpay Recurring",
+    schemeReference: schemeReference || null,
+    simulated: true,
     timestamp: new Date().toISOString()
   };
 }

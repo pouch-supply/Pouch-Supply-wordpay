@@ -15,6 +15,15 @@ import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed, trackSu
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
 import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
 
+function hasCurrentAgeApproval(): boolean {
+  if (typeof window === 'undefined') return false;
+  const approved = window.localStorage.getItem('agechecked-approved') === 'true' ||
+    window.localStorage.getItem('ageVerified') === 'true';
+  const agecheckId = window.localStorage.getItem('agechecked-id');
+  const verifiedAt = Date.parse(window.localStorage.getItem('agechecked-verified-at') || '');
+  return approved && Boolean(agecheckId) && Number.isFinite(verifiedAt) && Date.now() - verifiedAt <= 24 * 60 * 60 * 1000;
+}
+
 interface CheckoutViewProps {
   cartItems: CartItem[];
   discountApplied: Discount | null;
@@ -86,38 +95,66 @@ export default function CheckoutView({
     const storedVerified = window.localStorage.getItem('ageVerified');
     const params = new URLSearchParams(window.location.search);
     const statusParam = (params.get('status') || '').toLowerCase();
-    return (
-      stored === 'true' ||
-      storedVerified === 'true' ||
+    return hasCurrentAgeApproval() && (
       params.get('agechecked') === 'approved' ||
       params.get('approved') === 'true' ||
       statusParam === '6' ||
       statusParam === '7' ||
       statusParam === 'approved' ||
       statusParam === 'verified' ||
-      statusParam === 'pass'
+      statusParam === 'pass' ||
+      Boolean(window.localStorage.getItem('agechecked-id'))
     );
   });
+
+  // AgeChecked may return the popup to the registered checkout URL on another origin.
+  // Let the popup close itself because the opener cannot inspect a cross-origin URL.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.opener || window.opener === window) return;
+
+    const agecheckId = new URLSearchParams(window.location.search).get('agecheckid');
+    if (!agecheckId) return;
+
+    try {
+      window.opener.postMessage({
+        type: 'AGECHECKED_VERIFIED',
+        verified: true,
+        approved: true,
+        data: { id: agecheckId, agecheckid: agecheckId, status: 'approved' }
+      }, '*');
+      window.opener.postMessage({
+        type: 'agechecked-approved',
+        status: 'approved',
+        approved: true,
+        verified: true,
+        agecheckid: agecheckId
+      }, '*');
+    } finally {
+      try {
+        window.open('', '_self');
+        window.close();
+      } catch (_e) {}
+    }
+  }, []);
 
   // Keep isAgeApproved synchronized with localStorage, message events, storage events & server DB
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const checkAgeApprovedStorage = async () => {
-      const stored = window.localStorage.getItem('agechecked-approved');
-      const storedVerified = window.localStorage.getItem('ageVerified');
-      if (stored === 'true' || storedVerified === 'true') {
+      if (hasCurrentAgeApproval()) {
         setIsAgeApproved(true);
         setPaymentError(null);
         return;
       }
 
-      if (email && email.includes('@')) {
+      const agecheckId = window.localStorage.getItem('agechecked-id');
+      if (agecheckId) {
         try {
-          const res = await fetch(`/api/agechecked/status?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+          const res = await fetch(`/api/agechecked/status?agecheckid=${encodeURIComponent(agecheckId)}`);
           if (res.ok) {
             const data = await res.json();
-            if (data.approved === true || data.status === '6' || data.status === '7' || data.success === true) {
+            if (data.approved === true && data.agecheckid) {
               window.localStorage.setItem('agechecked-approved', 'true');
               window.localStorage.setItem('ageVerified', 'true');
               setIsAgeApproved(true);
@@ -155,15 +192,19 @@ export default function CheckoutView({
         }
       }
 
+      const messageAgeCheckId = data?.data?.agecheckid || data?.agecheckid;
       if (
-        data?.type === 'AGECHECKED_VERIFIED' ||
-        data?.type === 'agechecked-approved' ||
-        data?.getidEventName === 'complete' ||
-        data?.approved === true ||
-        data?.verified === true ||
-        data?.status === 'approved' ||
-        data?.status === '6' ||
-        data?.status === '7'
+        messageAgeCheckId && messageAgeCheckId === window.localStorage.getItem('agechecked-id') &&
+        (
+          data?.type === 'AGECHECKED_VERIFIED' ||
+          data?.type === 'agechecked-approved' ||
+          data?.getidEventName === 'complete' ||
+          data?.approved === true ||
+          data?.verified === true ||
+          data?.status === 'approved' ||
+          data?.status === '6' ||
+          data?.status === '7'
+        )
       ) {
         setIsAgeApproved(true);
         setPaymentError(null);
@@ -175,7 +216,7 @@ export default function CheckoutView({
       if (typeof BroadcastChannel !== 'undefined') {
         bc = new BroadcastChannel('agechecked_channel');
         bc.onmessage = (ev) => {
-          if (ev.data && (ev.data.type === 'agechecked-approved' || ev.data.approved === true || ev.data.status === 'approved' || ev.data.verified === true)) {
+          if (ev.data && ev.data.agecheckid && ev.data.agecheckid === window.localStorage.getItem('agechecked-id') && (ev.data.type === 'agechecked-approved' || ev.data.approved === true || ev.data.status === 'approved' || ev.data.verified === true)) {
             setIsAgeApproved(true);
             setPaymentError(null);
           }
@@ -387,9 +428,7 @@ export default function CheckoutView({
     // Check if age is verified
     let currentAgeVerified = isAgeApproved;
     if (typeof window !== 'undefined') {
-      const stored = window.localStorage.getItem('agechecked-approved');
-      const storedVerified = window.localStorage.getItem('ageVerified');
-      if (stored === 'true' || storedVerified === 'true') {
+      if (hasCurrentAgeApproval()) {
         currentAgeVerified = true;
         setIsAgeApproved(true);
       }

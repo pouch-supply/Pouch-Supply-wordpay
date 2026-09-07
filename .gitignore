@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Database exports contain customer PII and order history — never commit them.
+backups/

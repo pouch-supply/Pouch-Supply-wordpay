@@ -5,6 +5,7 @@ export interface RoyalMailSettingsData {
   apiKey: string;
   integrationName: string;
   enabled: boolean;
+  autoCreateShipmentOnPayment: boolean;
   defaultServiceCode: string;
   defaultPackageType: string;
   defaultWeightGrams: number;
@@ -21,22 +22,26 @@ export interface RoyalMailSettingsData {
 }
 
 export const RoyalMailSettingsCard: React.FC = () => {
+  // The sender identity starts empty on purpose. These values are printed on
+  // real Royal Mail labels and used as the returns address, so a placeholder
+  // saved by accident would send undeliverable parcels to a fictional address.
   const [settings, setSettings] = useState<RoyalMailSettingsData>({
     apiKey: '',
     integrationName: 'Pouch-Supply',
     enabled: true,
+    autoCreateShipmentOnPayment: false,
     defaultServiceCode: 'TPS24',
     defaultPackageType: 'Parcel',
     defaultWeightGrams: 350,
     senderAddress: {
-      companyName: 'Pouch Supply Ltd',
-      addressLine1: 'Unit 4, Commerce Way',
-      addressLine2: 'Industrial Estate',
-      city: 'London',
-      postcode: 'EC1A 1BB',
+      companyName: '',
+      addressLine1: '',
+      addressLine2: '',
+      city: '',
+      postcode: '',
       countryCode: 'GB',
-      contactEmail: 'orders@pouch-supply.com',
-      contactPhone: '+44 20 7946 0912'
+      contactEmail: '',
+      contactPhone: ''
     }
   });
 
@@ -356,6 +361,21 @@ export const RoyalMailSettingsCard: React.FC = () => {
                 />
               </div>
             </div>
+
+            <label className="flex items-start gap-2.5 pt-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.autoCreateShipmentOnPayment}
+                onChange={(e) => setSettings({ ...settings, autoCreateShipmentOnPayment: e.target.checked })}
+                className="mt-0.5 h-4 w-4 accent-rose-600 cursor-pointer"
+              />
+              <span className="text-xs text-slate-700 leading-relaxed">
+                <span className="font-bold block text-slate-900">Create shipment automatically on payment</span>
+                Registers a Click &amp; Drop order the moment an order is paid. Leave off to
+                create shipments when orders are actually packed &mdash; otherwise the
+                dispatch email goes out alongside the order confirmation.
+              </span>
+            </label>
           </div>
         </div>
 

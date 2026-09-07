@@ -53,12 +53,33 @@ function loadMemoryCacheFromBackup() {
 
 function persistMemoryCacheToBackup() {
   try {
-    fs.writeFileSync(BACKUP_FILE_PATH, JSON.stringify(memoryCache, null, 2), 'utf8');
+    // Never let an empty cache overwrite a populated snapshot. When Neon is
+    // unreachable (it auto-suspends on the free tier) the cache starts empty,
+    // and writing that out would destroy the local copy of the whole store.
+    const populatedKeys = Object.keys(memoryCache).filter(
+      k => Array.isArray(memoryCache[k]) && memoryCache[k].length > 0
+    );
+    if (populatedKeys.length === 0) {
+      return;
+    }
+
+    const payload = JSON.stringify(memoryCache, null, 2);
+    if (fs.existsSync(BACKUP_FILE_PATH)) {
+      const existing = fs.readFileSync(BACKUP_FILE_PATH, 'utf8');
+      if (existing === payload) {
+        return;
+      }
+    }
+    fs.writeFileSync(BACKUP_FILE_PATH, payload, 'utf8');
   } catch (err) {
     console.warn('[Local Backup] Could not write to local_store_data.json backup:', err);
   }
 }
 
+// The database is authoritative when it is reachable. The local snapshot is
+// seeded regardless so that a suspended or unreachable Neon instance degrades
+// to the last known good data instead of an empty store — hydration overwrites
+// it as soon as the connection succeeds.
 loadMemoryCacheFromBackup();
 
 let isTablesInitialized = false;
@@ -402,20 +423,7 @@ export async function hydrateMemoryCacheFromDatabase(): Promise<void> {
         const list = Array.from(mergedMap.values());
         memoryCache[resName] = list;
       } else {
-        // Table in Neon DB is empty; if memoryCache has default items, seed Neon DB now
-        const defaultItems = memoryCache[resName] || [];
-        if (defaultItems.length > 0) {
-          console.log(`[Database Hydration] Seeding initial ${resName} into Neon DB (${defaultItems.length} items)...`);
-          for (const item of defaultItems) {
-            const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
-            await prisma.storeResource.upsert({
-              where: { resource_itemId: { resource: resName, itemId } },
-              update: { data: item },
-              create: { resource: resName, itemId, data: item }
-            }).catch(() => {});
-            syncToPrismaModel(resName, item).catch(() => {});
-          }
-        }
+        memoryCache[resName] = [];
       }
     }
 
@@ -1196,34 +1204,9 @@ export async function fetchResource(resource: string): Promise<any[]> {
         return list;
       }
 
-      // Pre-seed Neon PostgreSQL if table for resource is empty
-      const defaultList = memoryCache[normResource] || memoryCache[resource] || [];
-      if (defaultList.length > 0) {
-        console.log(`[Neon DB] Seeding initial ${normResource} (${defaultList.length} items)...`);
-        const BATCH_SIZE = 25;
-        for (let i = 0; i < defaultList.length; i += BATCH_SIZE) {
-          const batch = defaultList.slice(i, i + BATCH_SIZE);
-          await Promise.all(batch.map(async (item) => {
-            const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
-            await prisma.storeResource.upsert({
-              where: {
-                resource_itemId: {
-                  resource: normResource,
-                  itemId
-                }
-              },
-              update: { data: item },
-              create: {
-                resource: normResource,
-                itemId,
-                data: item
-              }
-            }).catch(() => {});
-            syncToPrismaModel(normResource, item).catch(() => {});
-          }));
-        }
-      }
-      return defaultList;
+      // A connected but empty database must remain empty; never substitute local data.
+      memoryCache[normResource] = [];
+      return [];
     } catch (err) {
       console.error(`[Neon DB] Error fetching resource ${normResource}:`, err);
     }
@@ -1283,8 +1266,16 @@ export async function saveResource(resource: string, list: any[] | any): Promise
             }
           }).catch((e: any) => console.warn(`[StoreResource Sync] ${normResource} ${itemId} warning:`, e?.message));
 
-          // Dual sync to dedicated Prisma model table
-          syncToPrismaModel(normResource, item).catch(() => {});
+          // Dual sync to dedicated Prisma model table. Failures are logged, not
+          // swallowed: a silent failure here is how the typed tables drifted out
+          // of step with the StoreResource blobs (subscription billing intervals
+          // ended up different in each).
+          syncToPrismaModel(normResource, item).catch((e: any) =>
+            console.error(
+              `[Model Sync FAILED] ${normResource}/${itemId} — typed table is now stale:`,
+              e?.message
+            )
+          );
         }));
       }
 
@@ -1523,7 +1514,12 @@ export async function saveSingleItem(resource: string, item: any): Promise<any> 
           data: item
         }
       });
-      syncToPrismaModel(normResource, item).catch(() => {});
+      syncToPrismaModel(normResource, item).catch((e: any) =>
+        console.error(
+          `[Model Sync FAILED] ${normResource}/${itemId} — typed table is now stale:`,
+          e?.message
+        )
+      );
     } catch (err) {
       console.error(`[Neon DB] Error saving single item ${normResource}/${itemId}:`, err);
     }

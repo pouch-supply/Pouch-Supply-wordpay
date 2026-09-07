@@ -39,8 +39,10 @@ export async function createExpressApp() {
 
   // Hydrate environment variables (including Cloudinary) from stored layout settings
   try {
-    await fetchLayoutSettings();
-    await fetchDevSettings();
+    await Promise.race([
+      Promise.all([fetchLayoutSettings(), fetchDevSettings()]),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Database settings hydration timed out')), 8000))
+    ]);
   } catch (err) {}
 
   app.use((req, res, next) => {
