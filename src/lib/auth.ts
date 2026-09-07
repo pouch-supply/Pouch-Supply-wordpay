@@ -118,6 +118,26 @@ export async function signInWithGoogle(): Promise<{ customer: Customer; user: an
             },
             error_callback: (err: any) => {
               console.warn('[Google GSI] Initialization or popup error:', err);
+              // This previously only logged, so a failure here left the promise
+              // pending forever and the UI span with no explanation.
+              if (resolved) return;
+              resolved = true;
+
+              const type = String(err?.type || err?.error || '').toLowerCase();
+              const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
+              if (type.includes('origin') || type.includes('mismatch')) {
+                return reject(
+                  new Error(
+                    `Google rejected this site's origin (${origin}). Add it under "Authorized JavaScript origins" ` +
+                      `for this OAuth client in the Google Cloud Console, then retry.`
+                  )
+                );
+              }
+              if (type.includes('popup_closed') || type.includes('popup_failed')) {
+                return reject(new Error('Google Sign-In was cancelled or the popup was blocked.'));
+              }
+              return reject(new Error(err?.message || 'Google Sign-In could not be started.'));
             }
           });
 

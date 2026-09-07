@@ -5,14 +5,25 @@ import { sendWelcomeEmail } from '../services/emailService';
 const router = Router();
 
 function getRedirectUri(req: Request): string {
-  // 1. Check if NEXTAUTH_URL or APP_URL is explicitly set
+  const clientOrigin = (req.query.origin || req.headers['x-client-origin']) as string;
+  const isLocalOrigin = Boolean(
+    clientOrigin && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(clientOrigin.replace(/\/+$/, ''))
+  );
+
+  // 1. A local development origin always wins. NEXTAUTH_URL points at the
+  // deployed site, so preferring it here sent developers signing in from
+  // localhost off to the production domain mid-flow.
+  if (isLocalOrigin) {
+    return `${clientOrigin.replace(/\/+$/, '')}/auth/google/callback`;
+  }
+
+  // 2. Otherwise honour an explicitly configured deployment URL.
   const envUrl = process.env.NEXTAUTH_URL || process.env.APP_URL;
   if (envUrl && !envUrl.includes('localhost') && envUrl !== 'MY_APP_URL') {
     return `${envUrl.replace(/\/+$/, '')}/auth/google/callback`;
   }
 
-  // 2. Check client passed query origin or header
-  const clientOrigin = (req.query.origin || req.headers['x-client-origin']) as string;
+  // 3. Fall back to the origin the browser reported.
   if (clientOrigin && (clientOrigin.startsWith('http://') || clientOrigin.startsWith('https://'))) {
     return `${clientOrigin.replace(/\/+$/, '')}/auth/google/callback`;
   }

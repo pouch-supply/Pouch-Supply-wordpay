@@ -325,7 +325,9 @@ router.get("/status", async (req: Request, res: Response) => {
   const agecheckid = String(req.query.agecheckid || "").trim();
   const email = String(req.query.email || "").toLowerCase().trim();
 
-  // A status lookup must belong to an initialized AC0130 transaction.
+  // A status lookup must belong to an initialized AC0130 transaction. Kept
+  // alongside the TTL cache below: this rejects lookups that carry no
+  // transaction identifier at all, the TTL handles ones that have expired.
   if (!agecheckid && !reference) {
     return res.json({ success: false, approved: false, status: "0", statusText: "Pending" });
   }
@@ -430,6 +432,50 @@ router.post("/approve", async (req: Request, res: Response) => {
   }
 
   return res.status(400).json({ success: false, approved: false, message: "Verification not completed or session ID is missing." });
+});
+
+// POST /api/agechecked/reset - Clears a persisted approval so re-verification can be tested/forced
+router.post("/reset", async (req: Request, res: Response) => {
+  const { reference, email, agecheckid } = req.body || {};
+  const normalizedEmail = email ? String(email).toLowerCase().trim() : undefined;
+  const keys = [reference, agecheckid, normalizedEmail].filter(
+    (k): k is string => Boolean(k && typeof k === "string" && k.trim())
+  );
+
+  for (const key of keys) {
+    verifiedSessions.delete(key.trim());
+  }
+
+  try {
+    if (keys.length > 0) {
+      await prisma.storeResource.deleteMany({
+        where: { resource: "age_verification", itemId: { in: keys } }
+      });
+    }
+
+    if (normalizedEmail) {
+      const existingCustomer = await prisma.customer.findUnique({ where: { email: normalizedEmail } });
+      if (existingCustomer) {
+        const currentData = (existingCustomer.data && typeof existingCustomer.data === 'object') ? (existingCustomer.data as Record<string, any>) : {};
+        await prisma.customer.update({
+          where: { email: normalizedEmail },
+          data: {
+            data: {
+              ...currentData,
+              ageVerified: false,
+              ageChecked: false,
+              ageCheckId: null,
+              ageVerifiedAt: null
+            }
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[AgeChecked] Reset error:", err);
+  }
+
+  return res.json({ success: true });
 });
 
 // POST /api/agechecked/reset - Clears a persisted approval so re-verification can be tested/forced

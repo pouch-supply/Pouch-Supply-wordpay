@@ -1,6 +1,6 @@
 // src/components/AgeGate.tsx
 import React, { useEffect, useState, useImperativeHandle, forwardRef, useRef, useCallback } from "react";
-import { ShieldCheck, CheckCircle2, Lock, AlertCircle, RefreshCw, X } from "lucide-react";
+import { ShieldCheck, CheckCircle2, Lock, AlertCircle, RefreshCw, X, ExternalLink } from "lucide-react";
 import { trackAgeVerified } from "../utils/klaviyo";
 
 const AGE_APPROVED_STORAGE_KEY = "agechecked-approved";
@@ -16,13 +16,19 @@ function hasValidStoredApproval(): boolean {
   if (storedApproved !== "true" && storedVerified !== "true") return false;
 
   const verifiedAt = window.localStorage.getItem(AGE_APPROVED_AT_STORAGE_KEY);
+  // An approval is only trustworthy if it is tied to a real AgeChecked
+  // transaction id, not just a leftover "true" flag in localStorage.
   const storedAgeCheckId = window.localStorage.getItem("agechecked-id");
   if (!storedAgeCheckId) return false;
+
   const verifiedAtMs = verifiedAt ? Date.parse(verifiedAt) : NaN;
   if (Number.isFinite(verifiedAtMs) && Date.now() - verifiedAtMs > AGE_VERIFICATION_TTL_MS) {
     window.localStorage.removeItem(AGE_APPROVED_STORAGE_KEY);
     window.localStorage.removeItem(AGE_VERIFIED_STORAGE_KEY);
     window.localStorage.removeItem(AGE_APPROVED_AT_STORAGE_KEY);
+    // Clear the transaction id too, so an expired verification cannot be
+    // revived by a later write of the approved flag alone.
+    window.localStorage.removeItem("agechecked-id");
     return false;
   }
   return true;
@@ -134,6 +140,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   });
   const [isVerifying, setIsVerifying] = useState(false);
   const [activePortalUrl, setActivePortalUrl] = useState<string>("");
+  // True only when the browser refused to open the verification popup. The
+  // in-page iframe modal is the fallback for that case.
+  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState(
     approved
       ? "Your age (18+) has been verified successfully."
@@ -375,6 +384,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (typeof window === "undefined" || approved) return;
 
     const handleVisibilityOrFocus = () => {
+      // Gated on isVerifying: a returning visitor with a still-valid stored
+      // approval is already handled by the mount check above. These listeners
+      // exist to catch the moment an in-progress verification completes.
       if (isVerifying && hasValidStoredApproval()) {
         markApproved();
         return;
@@ -539,6 +551,8 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   const resetApproval = () => {
     if (typeof window === "undefined") return;
 
+    // Must be cleared here: markApproved() early-returns unless this ref is
+    // true, so leaving it set would let a late callback approve after a reset.
     verificationActiveRef.current = false;
 
     // Clear the server-side persisted record too, otherwise the next verification attempt
@@ -582,7 +596,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   const openPortal = async (): Promise<boolean> => {
     if (typeof window === "undefined") return approved;
 
-    // Check localStorage immediately
+    // Check localStorage immediately. `agecheckId` is seeded from the same
+    // "agechecked-id" key that hasValidStoredApproval() requires, so this pair
+    // is equivalent to the stored check while stating the dependency outright.
     if (hasValidStoredApproval() && agecheckId) {
       setApproved(true);
       return true;
@@ -683,7 +699,30 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
         windowRef.current = null;
 
-        setStatusMessage("AgeChecked 18+ verification in progress. Complete the secure check below.");
+        // Centre the popup on the shopper's screen.
+        const width = 840;
+        const height = 760;
+        const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+        const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+        const windowFeatures = `width=${width},height=${height},top=${top},left=${left},status=yes,scrollbars=yes,resizable=yes`;
+
+        // A dedicated popup is the primary surface: AgeChecked needs camera
+        // access and a top-level origin, which an iframe cannot reliably give
+        // it. The in-page modal below is only used when the popup is blocked,
+        // so the shopper never sees the portal in two places at once.
+        const newWin =
+          window.open(rawRedirectUrl, "AgeCheckedPortal", windowFeatures) ||
+          window.open(rawRedirectUrl, "_blank");
+
+        if (newWin) {
+          windowRef.current = newWin;
+          newWin.focus();
+          setPopupBlocked(false);
+          setStatusMessage("AgeChecked 18+ verification in progress. Please complete verification in the opened window or on your phone.");
+        } else {
+          setPopupBlocked(true);
+          setStatusMessage("AgeChecked 18+ verification in progress. Complete the secure check below.");
+        }
 
         // Start active background polling (every 700ms)
         if (pollingTimerRef.current) {
@@ -691,6 +730,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }
 
         pollingTimerRef.current = window.setInterval(async () => {
+          // Auto-close the popup once it has navigated back to our own
+          // checkout URL carrying the agecheckid — that means the provider
+          // finished and the shopper has nothing left to do in that window.
           const popup = windowRef.current;
           if (popup && !popup.closed) {
             try {
@@ -747,7 +789,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
   return (
     <>
-      {isVerifying && activePortalUrl && (
+      {isVerifying && activePortalUrl && popupBlocked && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-3 sm:p-6">
           <div className="flex h-[min(760px,calc(100vh-1.5rem))] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
@@ -866,6 +908,24 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
                 )}
               </button>
               
+              {/* Lets the shopper get the portal back if they closed it, or
+                  open it properly once they have allowed popups. */}
+              {isVerifying && activePortalUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newWin = window.open(activePortalUrl, "AgeCheckedPortal", "width=840,height=760,resizable=yes,scrollbars=yes");
+                    if (newWin) {
+                      windowRef.current = newWin;
+                      newWin.focus();
+                      setPopupBlocked(false);
+                    }
+                  }}
+                  className="text-[11px] font-bold text-sky-700 hover:text-sky-900 underline flex items-center gap-1 cursor-pointer"
+                >
+                  <ExternalLink className="h-3 w-3" /> Reopen Window
+                </button>
+              )}
             </div>
           ) : (
             <button
