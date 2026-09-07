@@ -475,31 +475,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           ) : null}
                         </div>
 
-                        {/* If subscription order, display selected products with variant name below the plan name */}
-                        {isSubOrder(order) && (() => {
-                          const subDetails = getSubscriptionDetails(order);
-                          if (!subDetails.selectedProducts || subDetails.selectedProducts.length === 0) return null;
-                          return (
-                            <div className="mt-2 bg-indigo-50/80 border border-indigo-100 rounded-lg p-2 max-w-xs shadow-2xs space-y-1">
-                              <div className="text-[9px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1">
-                                <Package className="w-3 h-3 text-indigo-600" />
-                                Selected Box Products:
-                              </div>
-                              <div className="space-y-0.5">
-                                {subDetails.selectedProducts.map((p: any, pIdx: number) => (
-                                  <div key={pIdx} className="flex justify-between items-center text-[10px] text-slate-700 font-semibold gap-1">
-                                    <span className="truncate text-slate-850">
-                                      • {p.name} {p.variant && p.variant !== 'Standard' ? <span className="text-indigo-600 font-extrabold">({p.variant})</span> : ''}
-                                    </span>
-                                    <span className="shrink-0 bg-white border border-indigo-200 px-1.5 py-0.2 rounded font-black text-slate-900 text-[9px]">
-                                      × {p.quantity}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })()}
+                        {/* The selected box products are intentionally NOT listed
+                            here — they belong to the order detail view, which
+                            shows the full breakdown under "Selected Plan
+                            Products & Variants". Keeping the list row compact. */}
 
                         {Array.isArray(order.tags) && order.tags.includes('Withdrawal Requested') && (
                           <span className="inline-block text-[8.5px] bg-rose-50 text-rose-700 border border-rose-150 uppercase font-black px-1.5 py-0.5 rounded mt-1 animate-pulse select-none">

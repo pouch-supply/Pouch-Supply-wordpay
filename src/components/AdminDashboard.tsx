@@ -649,17 +649,32 @@ export default function AdminDashboard({
     db: 'diagnostics'
   };
 
-  const getInitialTab = (): SidebarTab => {
+  /**
+   * Splits /admin-dashboard/<section>/<recordId> into its parts.
+   * The record id lets a detail view (e.g. a single order) be deep-linked and
+   * survive a reload or a browser Back press.
+   */
+  const parseAdminPath = (): { section: string; recordId: string | null } => {
     try {
       const path = window.location.pathname;
-      if (path.startsWith('/admin-dashboard/')) {
-        const sub = path.replace('/admin-dashboard/', '');
-        if (pathToTabMap[sub]) {
-          return pathToTabMap[sub];
-        }
-      }
+      if (!path.startsWith('/admin-dashboard')) return { section: '', recordId: null };
+      const segments = path.replace('/admin-dashboard', '').split('/').filter(Boolean);
+      return {
+        section: segments[0] ? decodeURIComponent(segments[0]) : '',
+        recordId: segments[1] ? decodeURIComponent(segments[1]) : null
+      };
     } catch (e) {
-      console.warn('[AdminDashboard] Failed to read initial path:', e);
+      console.warn('[AdminDashboard] Failed to read path:', e);
+      return { section: '', recordId: null };
+    }
+  };
+
+  const getInitialTab = (): SidebarTab => {
+    const { section } = parseAdminPath();
+    // Match on the first segment only, so /orders/PS12345 still resolves to the
+    // orders tab instead of falling through to analytics.
+    if (section && pathToTabMap[section]) {
+      return pathToTabMap[section];
     }
     return 'analytics';
   };
@@ -669,10 +684,16 @@ export default function AdminDashboard({
   // Sync state to URL
   useEffect(() => {
     try {
-      const path = window.location.pathname;
       const subPath = tabToPathMap[activeTab];
+      const { section } = parseAdminPath();
+
+      // If the URL already points at this section, leave it alone — it may
+      // carry a record id such as /admin-dashboard/orders/PS12345 that this
+      // effect would otherwise strip on every render.
+      if (section && pathToTabMap[section] === activeTab) return;
+
       const targetUrl = `/admin-dashboard/${subPath}`;
-      if (path !== targetUrl) {
+      if (window.location.pathname !== targetUrl) {
         window.history.pushState({}, '', targetUrl);
       }
     } catch (e) {
@@ -685,10 +706,10 @@ export default function AdminDashboard({
     const handlePopState = () => {
       try {
         const path = window.location.pathname;
-        if (path.startsWith('/admin-dashboard/')) {
-          const sub = path.replace('/admin-dashboard/', '');
-          if (pathToTabMap[sub] && pathToTabMap[sub] !== activeTab) {
-            setActiveTab(pathToTabMap[sub]);
+        const { section } = parseAdminPath();
+        if (section && pathToTabMap[section]) {
+          if (pathToTabMap[section] !== activeTab) {
+            setActiveTab(pathToTabMap[section]);
           }
         } else if (path === '/admin-dashboard') {
           setActiveTab('analytics');
@@ -1362,6 +1383,59 @@ export default function AdminDashboard({
   const [blogTagsInput, setBlogTagsInput] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'All' | 'Unfulfilled' | 'Fulfilled'>('All');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+
+  // ---------------------------------------------------------------
+  // Deep-linkable order detail: /admin-dashboard/orders/<orderId>
+  // ---------------------------------------------------------------
+
+  // Opening or closing an order rewrites the URL, so the detail view can be
+  // linked, bookmarked and reloaded rather than living in invisible state.
+  const orderUrlSyncMounted = useRef(false);
+  useEffect(() => {
+    if (activeTab !== 'orders') return;
+
+    // On the first pass the URL is the source of truth, not this state. Writing
+    // here on mount would strip the order id out of a deep link before the
+    // resolver below has had a chance to select that order.
+    if (!orderUrlSyncMounted.current) {
+      orderUrlSyncMounted.current = true;
+      return;
+    }
+
+    try {
+      const targetUrl = selectedOrder
+        ? `/admin-dashboard/orders/${encodeURIComponent(String(selectedOrder.id))}`
+        : '/admin-dashboard/orders';
+      if (window.location.pathname !== targetUrl) {
+        window.history.pushState({}, '', targetUrl);
+      }
+    } catch (e) {
+      console.warn('[AdminDashboard] Failed to sync order URL:', e);
+    }
+  }, [selectedOrder, activeTab]);
+
+  // Resolve an order id in the URL to the actual record — on first load and
+  // whenever the user navigates with the browser Back/Forward buttons.
+  useEffect(() => {
+    const applyOrderFromUrl = () => {
+      const { section, recordId } = parseAdminPath();
+      if (!section || pathToTabMap[section] !== 'orders') return;
+
+      if (!recordId) {
+        setSelectedOrder(null);
+        return;
+      }
+      if (selectedOrder && String(selectedOrder.id) === recordId) return;
+
+      const match = orders.find(o => String(o.id) === recordId);
+      if (match) setSelectedOrder(match);
+    };
+
+    applyOrderFromUrl();
+    window.addEventListener('popstate', applyOrderFromUrl);
+    return () => window.removeEventListener('popstate', applyOrderFromUrl);
+  }, [orders, selectedOrder]);
+
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [trackingNumberInput, setTrackingNumberInput] = useState('');
   const [carrierInput, setCarrierInput] = useState('Royal Mail');
