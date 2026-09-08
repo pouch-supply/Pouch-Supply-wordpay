@@ -113,6 +113,14 @@ function getAgeCheckedMessageOrigins(portalUrl?: string, activeUrl?: string) {
     "https://portal.agechecked.com"
   ]);
 
+  // AgeChecked finishes by redirecting the panel to our own
+  // /api/agechecked/callback page, which reports the result back up. Without
+  // our origin here that final message is dropped and the panel stays open on
+  // the provider's closing screen.
+  if (typeof window !== "undefined" && window.location?.origin) {
+    origins.add(window.location.origin);
+  }
+
   for (const candidate of [portalUrl, activeUrl]) {
     if (!candidate) continue;
     try {
@@ -183,7 +191,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
   const activeResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const pollingTimerRef = useRef<number | null>(null);
-  const windowRef = useRef<Window | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const verificationActiveRef = useRef(false);
 
@@ -236,35 +243,17 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       } catch (_e) {}
     }
 
-    // 2. Stop polling & close popup if open
+    // 2. Stop polling and dismiss the verification panel
     if (pollingTimerRef.current) {
       window.clearInterval(pollingTimerRef.current);
       pollingTimerRef.current = null;
-    }
-    // Retry closing the popup a few times - a close() call issued right as the
-    // provider's page is mid-navigation/redirect can silently no-op the first time.
-    const winToClose = windowRef.current;
-    if (winToClose) {
-      let attempts = 0;
-      const tryClose = () => {
-        attempts += 1;
-        try {
-          if (!winToClose.closed) {
-            winToClose.close();
-          }
-        } catch (_e) {}
-        if (!winToClose.closed && attempts < 6) {
-          window.setTimeout(tryClose, 250);
-        } else {
-          windowRef.current = null;
-        }
-      };
-      tryClose();
     }
 
     // 3. Update React states
     setApproved(true);
     setIsVerifying(false);
+    setShowVerificationFrame(false);
+    setActivePortalUrl("");
     setCheckStatusNotice(null);
     setStatusMessage("Your age (18+) has been verified successfully.");
 
@@ -595,10 +584,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
       window.clearInterval(pollingTimerRef.current);
       pollingTimerRef.current = null;
     }
-    if (windowRef.current && !windowRef.current.closed) {
-      try { windowRef.current.close(); } catch (_e) {}
-    }
-    windowRef.current = null;
     if (activeResolverRef.current) {
       activeResolverRef.current(false);
       activeResolverRef.current = null;
@@ -613,7 +598,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     onApprovedChangeRef.current?.(false);
   };
 
-  // Start AgeChecked AC0130 verification directly in a dedicated verification popup window
+  // Runs AgeChecked AC0130 verification in the in-page panel. There is no
+  // separate browser window: the provider needs a top-level-looking surface
+  // with camera access, which the panel iframe grants via its allow list.
   const openPortal = async (): Promise<boolean> => {
     if (typeof window === "undefined") return approved;
 
@@ -723,7 +710,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         setAgecheckId(resolvedSessionId);
         setActivePortalUrl(rawRedirectUrl);
 
-        windowRef.current = null;
         setShowVerificationFrame(true);
         setStatusMessage("AgeChecked 18+ verification in progress. Complete the secure check below.");
 
@@ -732,27 +718,9 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           window.clearInterval(pollingTimerRef.current);
         }
 
+        // A safety net only. The panel normally closes as soon as the callback
+        // page reports back; this catches the case where that message is lost.
         pollingTimerRef.current = window.setInterval(async () => {
-          // Auto-close the popup once it has navigated back to our own
-          // checkout URL carrying the agecheckid — that means the provider
-          // finished and the shopper has nothing left to do in that window.
-          const popup = windowRef.current;
-          if (popup && !popup.closed) {
-            try {
-              const popupUrl = new URL(popup.location.href);
-              if (
-                popupUrl.origin === window.location.origin &&
-                popupUrl.pathname.includes('/pages/checkout') &&
-                popupUrl.searchParams.has('agecheckid')
-              ) {
-                popup.close();
-                windowRef.current = null;
-              }
-            } catch (_e) {
-              // The popup is still on the provider's origin; keep polling until it returns.
-            }
-          }
-
           if (hasValidStoredApproval()) {
             if (pollingTimerRef.current) {
               window.clearInterval(pollingTimerRef.current);

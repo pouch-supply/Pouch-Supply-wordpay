@@ -18,6 +18,9 @@ interface PendingCheckout {
   customerName: string;
   customerEmail: string;
   destination: string;
+  // The address as separate fields. The destination string is the joined display
+  // form; Royal Mail needs the town and postcode on their own.
+  shippingAddress?: Record<string, string>;
   items: any[];
   total: number;
   subtotal?: number;
@@ -389,6 +392,9 @@ async function saveVerifiedOrder(
     customerName,
     customerEmail,
     destination,
+    // The separate address fields ride along with the order so Royal Mail can
+    // read the town and postcode directly.
+    shippingAddress: pending?.shippingAddress || (details as any).shippingAddress || null,
     items,
     total,
     subtotal: calculatedSubtotal,
@@ -481,6 +487,7 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       customerName,
       customerEmail,
       destination,
+      shippingAddress,
       address,
       items,
       discountApplied,
@@ -517,6 +524,9 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       customerName: customerName || 'Valued Customer',
       customerEmail: (customerEmail || 'customer@pouch-supply.com').toLowerCase().trim(),
       destination: destination || address || 'United Kingdom',
+      // Kept as separate fields so the shipping label can be produced without
+      // having to take the joined string apart again.
+      shippingAddress: shippingAddress && typeof shippingAddress === 'object' ? shippingAddress : undefined,
       items: Array.isArray(items) ? items.map((it: any) => {
         let planName = it.subscriptionPlan || '';
         const rawPlan = (it.subscriptionPlan || '').toLowerCase();

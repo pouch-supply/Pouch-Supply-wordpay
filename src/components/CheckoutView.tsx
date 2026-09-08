@@ -107,29 +107,47 @@ export default function CheckoutView({
     );
   });
 
-  // AgeChecked may return the popup to the registered checkout URL on another origin.
-  // Let the popup close itself because the opener cannot inspect a cross-origin URL.
+  // AgeChecked can send the shopper back to the registered checkout URL, which
+  // loads this page inside the verification panel. When that happens the panel
+  // host is notified so it can dismiss itself.
+  //
+  // The panel is an iframe, so the host is window.parent. window.opener is only
+  // set by the old popup flow and is still handled so a session that started
+  // before this change can finish.
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.opener || window.opener === window) return;
+    if (typeof window === 'undefined') return;
+
+    const host = (window.parent && window.parent !== window ? window.parent : null) || window.opener;
+    if (!host || host === window) return;
 
     const agecheckId = new URLSearchParams(window.location.search).get('agecheckid');
     if (!agecheckId) return;
 
-    try {
-      window.opener.postMessage({
+    const messages = [
+      {
         type: 'AGECHECKED_VERIFIED',
         verified: true,
         approved: true,
         data: { id: agecheckId, agecheckid: agecheckId, status: 'approved' }
-      }, '*');
-      window.opener.postMessage({
+      },
+      {
         type: 'agechecked-approved',
         status: 'approved',
         approved: true,
         verified: true,
         agecheckid: agecheckId
-      }, '*');
-    } finally {
+      }
+    ];
+
+    for (const message of messages) {
+      try {
+        host.postMessage(message, '*');
+      } catch (_e) {}
+    }
+
+    // Only a real popup can be closed. Calling close() from inside the panel
+    // is a no-op, and the messages above already dismiss it.
+    if (window.opener && window.opener !== window && host === window.opener) {
       try {
         window.open('', '_self');
         window.close();
@@ -348,7 +366,7 @@ export default function CheckoutView({
             orderId: orderId,
             customerName: orderData.customerName || fullName,
             customerEmail: orderData.customerEmail || email,
-            destination: orderData.destination || `${addressLine}, ${city}, ${postcode}, ${country}`,
+            destination: orderData.destination || buildDestinationString(),
             total: orderData.total || finalTotalToPay,
             items: orderData.items || cartItems
           });
@@ -417,6 +435,36 @@ export default function CheckoutView({
   const storeCreditApplied = applyStoreCredit ? Math.min(storeCreditAvailable, finalTotal) : 0;
   const finalTotalToPay = Math.max(0, finalTotal - storeCreditApplied);
 
+  // The saved address a returning shopper is prefilled with is itself a joined
+  // "line, town, postcode, country" string. Appending the town, postcode and
+  // country to it again produced destinations such as
+  // "Daari, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
+  // so each part is only added when the line does not already carry it.
+  const buildDestinationString = () => {
+    const line = addressLine.trim();
+    const lineLower = line.toLowerCase();
+    const parts = [line];
+    for (const part of [city, postcode, country]) {
+      const value = String(part || '').trim();
+      if (!value) continue;
+      if (lineLower.includes(value.toLowerCase())) continue;
+      parts.push(value);
+    }
+    return parts.filter(Boolean).join(', ');
+  };
+
+  // The address as separate fields. Royal Mail needs the town and postcode on
+  // their own, and reading them back out of a joined string is guesswork.
+  const buildShippingAddress = () => ({
+    fullName: fullName.trim(),
+    addressLine1: addressLine.trim(),
+    city: city.trim(),
+    postcode: postcode.trim().toUpperCase(),
+    countryCode: country.trim().toLowerCase() === 'united kingdom' ? 'GB' : country.trim(),
+    country: country.trim(),
+    email: email.trim()
+  });
+
   // Process live payment with Worldpay HPP
   const executePaymentProcess = async (skipAgeCheck = false) => {
     // Validate shipping info
@@ -464,7 +512,8 @@ export default function CheckoutView({
           orderId: generatedOrderId,
           customerName: fullName,
           customerEmail: email,
-          address: `${addressLine}, ${city}, ${postcode}, ${country}`,
+          address: buildDestinationString(),
+          shippingAddress: buildShippingAddress(),
           total: 0,
           discountApplied: currentDiscount,
           items: cartItems.map(item => {
@@ -569,7 +618,8 @@ export default function CheckoutView({
         deliveryMethod: 'Royal Mail Tracked 24/48',
         customerName: fullName,
         customerEmail: email,
-        destination: `${addressLine}, ${city}, ${postcode}, ${country}`,
+        destination: buildDestinationString(),
+        shippingAddress: buildShippingAddress(),
         items: cartItems.map(item => {
           let planName = (item as any).subscriptionPlan || '';
           const titleLower = (item.productTitle || '').toLowerCase();
@@ -616,7 +666,8 @@ export default function CheckoutView({
           deliveryMethod: 'Royal Mail Tracked 24/48',
           customerName: fullName,
           customerEmail: email,
-          destination: `${addressLine}, ${city}, ${postcode}, ${country}`,
+          destination: buildDestinationString(),
+          shippingAddress: buildShippingAddress(),
           items: pendingOrderObj.items,
           discountApplied: currentDiscount,
           storeCreditApplied: storeCreditApplied

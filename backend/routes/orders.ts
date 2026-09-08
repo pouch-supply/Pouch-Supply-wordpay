@@ -356,6 +356,12 @@ export async function saveSingleOrder(orderData: any) {
     deliveryCost: typeof orderData.deliveryCost === 'number' ? orderData.deliveryCost : (typeof orderData.shippingCost === 'number' ? orderData.shippingCost : (typeof existingOrder?.deliveryCost === 'number' ? existingOrder.deliveryCost : undefined)),
     storeCreditApplied: typeof orderData.storeCreditApplied === 'number' ? orderData.storeCreditApplied : parseFloat(orderData.storeCreditApplied) || existingOrder?.storeCreditApplied || 0,
     destination: orderData.destination || orderData.address || existingOrder?.destination || 'United Kingdom',
+    // The address as separate fields, kept alongside the joined display string
+    // so a shipping label can be produced without parsing it back apart.
+    shippingAddress:
+      (orderData.shippingAddress && typeof orderData.shippingAddress === 'object' ? orderData.shippingAddress : null) ||
+      existingOrder?.shippingAddress ||
+      null,
     date: orderData.date || existingOrder?.date || (new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
     deliveryMethod: orderData.deliveryMethod || existingOrder?.deliveryMethod || 'Royal Mail Tracked 24/48',
     subscriptionId: orderData.subscriptionId || existingOrder?.subscriptionId || null,
@@ -370,6 +376,10 @@ export async function saveSingleOrder(orderData: any) {
       deliveryCost: orderData.deliveryCost ?? existingOrder?.data?.deliveryCost,
       subtotal: orderData.subtotal ?? existingOrder?.data?.subtotal,
       address: orderData.address || existingOrder?.data?.address,
+      shippingAddress:
+        (orderData.shippingAddress && typeof orderData.shippingAddress === 'object' ? orderData.shippingAddress : null) ||
+        existingOrder?.data?.shippingAddress ||
+        undefined,
       paymentMethod: orderData.paymentMethod || existingOrder?.data?.paymentMethod,
       // Merge rather than overwrite: a caller passing its own `data` block must
       // not be able to wipe the record of what has already been emailed.

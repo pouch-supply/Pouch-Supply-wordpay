@@ -206,8 +206,8 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
     errors.push('Postcode / Postal Code is required');
   } else {
     // Basic UK Postcode formatting & check if country is GB
-    const country = (address.countryCode || 'GB').toUpperCase();
-    if (country === 'GB' || country === 'UK') {
+    const country = normalizeCountryCode(address.countryCode);
+    if (country === 'GB') {
       const ukPostcodeRegex = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
       if (!ukPostcodeRegex.test(address.postcode.trim())) {
         errors.push('Postcode format does not appear to be a valid UK postcode (e.g. EC1A 1BB or SW1A 1AA)');
@@ -223,7 +223,7 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
     city: (address.city || '').trim(),
     county: (address.county || '').trim(),
     postcode: (address.postcode || '').trim().toUpperCase(),
-    countryCode: (address.countryCode || 'GB').toUpperCase(),
+    countryCode: normalizeCountryCode(address.countryCode),
     email: (address.email || '').trim(),
     phone: (address.phone || '').trim()
   };
@@ -310,6 +310,106 @@ export function getShippingRates(weightGrams: number = 350, countryCode: string 
 }
 
 /**
+ * Royal Mail expects an ISO country code. Checkout stores a display name
+ * ("United Kingdom"), which would otherwise reach the API verbatim.
+ */
+export function normalizeCountryCode(value?: string): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 'GB';
+  if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase() === 'UK' ? 'GB' : raw.toUpperCase();
+  const mapped = COUNTRY_TOKENS[raw.toLowerCase()];
+  return mapped || raw.toUpperCase();
+}
+
+const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
+
+const COUNTRY_TOKENS: Record<string, string> = {
+  'united kingdom': 'GB',
+  'great britain': 'GB',
+  uk: 'GB',
+  gb: 'GB',
+  england: 'GB',
+  scotland: 'GB',
+  wales: 'GB',
+  'northern ireland': 'GB',
+  ireland: 'IE',
+  'republic of ireland': 'IE'
+};
+
+/**
+ * Recovers a postable address from the single-line destination string that
+ * checkout writes ("39 Tonks Drive, telford, tf4 2tq, United Kingdom").
+ *
+ * The shopper does enter the town and postcode separately; only the joined
+ * string survives on older orders, so the parts are read back out of it rather
+ * than reported as missing. Nothing is invented: a segment that cannot be
+ * identified is left empty and validation still rejects the order.
+ */
+export function parseAddressString(raw: string, fallbackName = ''): Partial<AddressPayload> {
+  const text = String(raw || '').trim();
+  if (!text) return { fullName: fallbackName };
+
+  let segments = text
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  // Checkout seeded its address line from a previously saved full address and
+  // then appended town/postcode/country again, so the tail can repeat verbatim.
+  // Consecutive duplicates are collapsed before anything is read positionally.
+  const deduped: string[] = [];
+  for (const seg of segments) {
+    if (!deduped.some(existing => existing.toLowerCase() === seg.toLowerCase())) {
+      deduped.push(seg);
+    }
+  }
+  segments = deduped;
+
+  let countryCode = '';
+  let postcode = '';
+  let city = '';
+
+  // Country: only ever the trailing segment, and only when it is a country name.
+  if (segments.length > 1) {
+    const last = segments[segments.length - 1].toLowerCase();
+    if (COUNTRY_TOKENS[last]) {
+      countryCode = COUNTRY_TOKENS[last];
+      segments.pop();
+    }
+  }
+
+  // Postcode: taken from wherever it appears, since some addresses put it on
+  // the same segment as the town ("London EC1A 1BB").
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const match = segments[i].match(UK_POSTCODE_RE);
+    if (!match) continue;
+    postcode = `${match[1]} ${match[2]}`.toUpperCase();
+    const remainder = segments[i].replace(match[0], '').trim().replace(/^[,\s-]+|[,\s-]+$/g, '');
+    if (remainder) {
+      segments[i] = remainder;
+    } else {
+      segments.splice(i, 1);
+    }
+    break;
+  }
+
+  // Town: the last segment left once country and postcode are out of the way.
+  // A single remaining segment is the street, not the town.
+  if (segments.length > 1) {
+    city = segments.pop() as string;
+  }
+
+  return {
+    fullName: fallbackName,
+    addressLine1: segments[0] || '',
+    addressLine2: segments.slice(1).join(', '),
+    city,
+    postcode,
+    countryCode: countryCode || 'GB'
+  };
+}
+
+/**
  * Resolves the recipient address from a stored order.
  *
  * Returns the parsed address plus any validation errors. Nothing is defaulted:
@@ -317,7 +417,15 @@ export function getShippingRates(weightGrams: number = 350, countryCode: string 
  * because a placeholder would ship a real parcel to an address nobody lives at.
  */
 function resolveRecipientFromOrder(order: any): { valid: boolean; errors: string[]; recipient: AddressPayload } {
-  const rawAddr = order.data?.address || order.shippingAddress || order.destination || '';
+  // A structured address is preferred wherever checkout recorded one; the flat
+  // destination string is the fallback for orders placed before it did.
+  const structured =
+    (order.shippingAddress && typeof order.shippingAddress === 'object' ? order.shippingAddress : null) ||
+    (order.data?.shippingAddress && typeof order.data.shippingAddress === 'object' ? order.data.shippingAddress : null) ||
+    (order.data?.address && typeof order.data.address === 'object' ? order.data.address : null) ||
+    (order.address && typeof order.address === 'object' ? order.address : null);
+
+  const rawAddr = structured || order.data?.address || order.address || order.shippingAddress || order.destination || '';
   let addressObj: Partial<AddressPayload> = {};
 
   if (rawAddr && typeof rawAddr === 'object') {
@@ -334,15 +442,18 @@ function resolveRecipientFromOrder(order: any): { valid: boolean; errors: string
       phone: rawAddr.phone || order.customerPhone || ''
     };
   } else {
-    // A free-text destination string carries no structured address. It cannot
-    // be turned into a postable address, so it is reported as invalid.
+    // The town and postcode the shopper typed are still present in the joined
+    // destination string, so they are read back out of it instead of being
+    // reported as missing. Anything genuinely absent stays empty and is caught
+    // by validateAddress below.
+    const parsedFromString = parseAddressString(
+      typeof rawAddr === 'string' ? rawAddr : '',
+      order.customerName || ''
+    );
     addressObj = {
-      fullName: order.customerName,
-      addressLine1: typeof rawAddr === 'string' ? rawAddr.trim() : '',
-      city: '',
-      postcode: '',
-      countryCode: 'GB',
-      email: order.customerEmail
+      ...parsedFromString,
+      email: order.customerEmail,
+      phone: order.customerPhone || ''
     };
   }
 
