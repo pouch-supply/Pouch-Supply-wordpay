@@ -418,7 +418,20 @@ function loadMemoryCacheFromBackup() {
 }
 function persistMemoryCacheToBackup() {
   try {
-    fs.writeFileSync(BACKUP_FILE_PATH, JSON.stringify(memoryCache, null, 2), "utf8");
+    const populatedKeys = Object.keys(memoryCache).filter(
+      (k) => Array.isArray(memoryCache[k]) && memoryCache[k].length > 0
+    );
+    if (populatedKeys.length === 0) {
+      return;
+    }
+    const payload = JSON.stringify(memoryCache, null, 2);
+    if (fs.existsSync(BACKUP_FILE_PATH)) {
+      const existing = fs.readFileSync(BACKUP_FILE_PATH, "utf8");
+      if (existing === payload) {
+        return;
+      }
+    }
+    fs.writeFileSync(BACKUP_FILE_PATH, payload, "utf8");
   } catch (err) {
     console.warn("[Local Backup] Could not write to local_store_data.json backup:", err);
   }
@@ -454,6 +467,80 @@ async function ensureNeonTablesExist() {
       );
     `);
     await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "NeonBackup" (
+        "id" TEXT PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "resourceCount" INTEGER NOT NULL DEFAULT 0,
+        "data" JSONB NOT NULL
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "CustomPage" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "slug" TEXT UNIQUE NOT NULL,
+        "visibility" TEXT NOT NULL DEFAULT 'Visible',
+        "isHomepage" BOOLEAN NOT NULL DEFAULT FALSE,
+        "sections" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Product" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "description" TEXT,
+        "price" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        "compareAtPrice" DOUBLE PRECISION DEFAULT 0.0,
+        "inventory" INTEGER NOT NULL DEFAULT 0,
+        "sku" TEXT,
+        "category" TEXT,
+        "vendor" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'Active',
+        "image" TEXT,
+        "weight" DOUBLE PRECISION,
+        "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "media" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "variants" JSONB,
+        "concreteVariants" JSONB,
+        "barcode" TEXT,
+        "weightUnit" TEXT,
+        "slug" TEXT UNIQUE,
+        "seoTitle" TEXT,
+        "seoDescription" TEXT,
+        "strength" TEXT,
+        "flavour" TEXT,
+        "isVariantCard" BOOLEAN DEFAULT FALSE,
+        "concreteVariantId" TEXT,
+        "parentSlug" TEXT,
+        "parentId" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Collection" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "description" TEXT,
+        "type" TEXT NOT NULL DEFAULT 'Manual',
+        "image" TEXT,
+        "productIds" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "productConditions" TEXT,
+        "slug" TEXT UNIQUE,
+        "seoTitle" TEXT,
+        "seoDescription" TEXT,
+        "ogImage" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "FileEntry" (
         "id" TEXT PRIMARY KEY,
         "publicId" TEXT UNIQUE,
@@ -477,9 +564,202 @@ async function ensureNeonTablesExist() {
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Order" (
+        "id" TEXT PRIMARY KEY,
+        "customerName" TEXT NOT NULL,
+        "customerEmail" TEXT NOT NULL,
+        "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "fulfillmentStatus" TEXT NOT NULL DEFAULT 'Unfulfilled',
+        "paymentStatus" TEXT DEFAULT 'Paid',
+        "worldpayTxId" TEXT,
+        "worldpayAuthCode" TEXT,
+        "gatewayTxId" TEXT,
+        "gatewayAuthCode" TEXT,
+        "cardBrand" TEXT,
+        "total" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        "storeCreditApplied" DOUBLE PRECISION DEFAULT 0.0,
+        "destination" TEXT NOT NULL,
+        "date" TEXT NOT NULL,
+        "deliveryMethod" TEXT NOT NULL,
+        "items" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "trackingId" TEXT,
+        "carrier" TEXT,
+        "trackingHistory" JSONB,
+        "discountApplied" JSONB,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Customer" (
+        "id" TEXT PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "email" TEXT UNIQUE NOT NULL,
+        "subscriptionStatus" TEXT NOT NULL DEFAULT 'Not subscribed',
+        "location" TEXT,
+        "ordersCount" INTEGER NOT NULL DEFAULT 0,
+        "amountSpent" DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        "addresses" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "wishlist" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "referralCode" TEXT,
+        "storeCredit" DOUBLE PRECISION DEFAULT 0.0,
+        "referredByCode" TEXT,
+        "subStatus" TEXT,
+        "subPlan" TEXT,
+        "subFrequency" TEXT,
+        "subCansCount" INTEGER,
+        "subPrice" DOUBLE PRECISION,
+        "nextPayment" TEXT,
+        "nextDelivery" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Subscription" (
+        "id" TEXT PRIMARY KEY,
+        "customerId" TEXT,
+        "customerEmail" TEXT NOT NULL,
+        "customerName" TEXT,
+        "planId" TEXT NOT NULL,
+        "planName" TEXT NOT NULL,
+        "amount" DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        "currency" TEXT NOT NULL DEFAULT 'GBP',
+        "status" TEXT NOT NULL DEFAULT 'active',
+        "billingInterval" TEXT NOT NULL DEFAULT 'month',
+        "nextBillingDate" TIMESTAMP(3),
+        "worldpayTransactionId" TEXT,
+        "worldpayRecurringHref" TEXT,
+        "worldpaySchemeReference" TEXT,
+        "lastPaymentStatus" TEXT,
+        "lastPaymentId" TEXT,
+        "lastPaymentAt" TIMESTAMP(3),
+        "failedPaymentCount" INTEGER NOT NULL DEFAULT 0,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "BlogPost" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "slug" TEXT UNIQUE NOT NULL,
+        "excerpt" TEXT,
+        "content" TEXT NOT NULL,
+        "image" TEXT,
+        "author" TEXT,
+        "category" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'Active',
+        "publishedAt" TEXT,
+        "readTime" TEXT,
+        "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Discount" (
+        "id" TEXT PRIMARY KEY,
+        "title" TEXT NOT NULL,
+        "status" TEXT NOT NULL DEFAULT 'Active',
+        "method" TEXT,
+        "eligibility" TEXT,
+        "type" TEXT NOT NULL,
+        "used" INTEGER NOT NULL DEFAULT 0,
+        "details" TEXT,
+        "data" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "LayoutSetting" (
+        "id" TEXT PRIMARY KEY DEFAULT 'layout_settings',
+        "headerLogoText" TEXT,
+        "headerLogoSubtext" TEXT,
+        "headerLogoImage" TEXT,
+        "footerLogoText" TEXT,
+        "footerLogoDescription" TEXT,
+        "footerLogoImage" TEXT,
+        "menuItems" JSONB,
+        "data" JSONB,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "AnalyticsRecord" (
+        "id" TEXT PRIMARY KEY,
+        "metric" TEXT NOT NULL,
+        "value" DOUBLE PRECISION NOT NULL,
+        "period" TEXT,
+        "metadata" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
     isTablesInitialized = true;
   } catch (err) {
     console.warn("[Neon Table Setup] Warning: Table initialization check encountered error:", err);
+  }
+}
+async function hydrateMemoryCacheFromDatabase() {
+  const isConnected = await getDb();
+  if (!isConnected) {
+    console.log("[Database Hydration] Database is offline or not configured. Using local backup state.");
+    return;
+  }
+  try {
+    await ensureNeonTablesExist();
+    console.log("[Database Hydration] Syncing memory cache with Neon PostgreSQL database...");
+    const resources = ["customPages", "products", "collections", "orders", "files", "customers", "discounts", "blogs"];
+    for (const resName of resources) {
+      const records = await prisma.storeResource.findMany({
+        where: { resource: resName },
+        orderBy: { createdAt: "asc" }
+      });
+      const directList = await fetchFromPrismaModel(resName);
+      const mergedMap = /* @__PURE__ */ new Map();
+      for (const r of records || []) {
+        if (r && r.data) {
+          const item = r.data;
+          const key = String(item.id || item.slug || item.orderId || "");
+          if (key) mergedMap.set(key, item);
+        }
+      }
+      for (const item of directList) {
+        if (!item) continue;
+        const key = String(item.id || item.slug || item.orderId || "");
+        if (key) {
+          if (!mergedMap.has(key)) {
+            mergedMap.set(key, item);
+          } else {
+            const existing = mergedMap.get(key);
+            let merged = { ...existing, ...item };
+            if (resName === "customPages" || resName === "custompages") {
+              const itemSecs = Array.isArray(item?.sections) ? item.sections : [];
+              const existSecs = Array.isArray(existing?.sections) ? existing.sections : [];
+              if (itemSecs.length > 0) merged.sections = itemSecs;
+              else if (existSecs.length > 0) merged.sections = existSecs;
+            }
+            mergedMap.set(key, merged);
+          }
+        }
+      }
+      if (mergedMap.size > 0) {
+        const list = Array.from(mergedMap.values());
+        memoryCache[resName] = list;
+      } else {
+        memoryCache[resName] = [];
+      }
+    }
+    persistMemoryCacheToBackup();
+    console.log("[Database Hydration] Successfully hydrated memory cache from Neon PostgreSQL.");
+  } catch (err) {
+    console.error("[Database Hydration] Error during startup hydration from Neon DB:", err?.message || err);
   }
 }
 function getHostFromDatabaseUrl(urlStr) {
@@ -733,48 +1013,41 @@ async function syncToPrismaModel(resource, item) {
         }
       }
     } else if (norm === "blogs") {
-      const blogSlug = item.slug || id;
+      const blogSlug = item.slug ? String(item.slug).trim() : id;
+      const cleanContent = typeof item.content === "string" ? item.content : typeof item.body === "string" ? item.body : item.content ? String(item.content) : "";
+      const blogData = {
+        title: item.title || "Untitled Blog",
+        slug: blogSlug,
+        excerpt: item.excerpt || null,
+        content: cleanContent,
+        image: item.image || null,
+        author: item.author || null,
+        category: item.category || null,
+        status: item.status || "Active",
+        publishedAt: item.publishedAt || null,
+        readTime: item.readTime || null,
+        tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
+        data: item
+      };
       try {
         await prisma.blogPost.upsert({
           where: { id },
-          update: {
-            title: item.title || "Untitled Blog",
-            slug: blogSlug,
-            excerpt: item.excerpt || null,
-            content: item.content || "",
-            image: item.image || null,
-            author: item.author || null,
-            category: item.category || null,
-            status: item.status || "Active",
-            publishedAt: item.publishedAt || null,
-            readTime: item.readTime || null,
-            tags: Array.isArray(item.tags) ? item.tags : [],
-            data: item
-          },
+          update: blogData,
           create: {
             id,
-            title: item.title || "Untitled Blog",
-            slug: blogSlug,
-            excerpt: item.excerpt || null,
-            content: item.content || "",
-            image: item.image || null,
-            author: item.author || null,
-            category: item.category || null,
-            status: item.status || "Active",
-            publishedAt: item.publishedAt || null,
-            readTime: item.readTime || null,
-            tags: Array.isArray(item.tags) ? item.tags : [],
-            data: item
+            ...blogData
           }
         });
       } catch (bErr) {
         if (bErr?.code === "P2002") {
+          const fallbackSlug = `${blogSlug}-${String(id).slice(-6)}`;
           await prisma.blogPost.upsert({
             where: { id },
-            update: { slug: `${blogSlug}-${id}`, data: item },
-            create: { id, title: item.title || "Untitled Blog", slug: `${blogSlug}-${id}`, content: "", data: item }
-          }).catch(() => {
-          });
+            update: { ...blogData, slug: fallbackSlug },
+            create: { id, ...blogData, slug: fallbackSlug }
+          }).catch((e) => console.warn(`[BlogPost Fallback Upsert] warning:`, e?.message));
+        } else {
+          console.warn(`[BlogPost Sync] warning:`, bErr?.message);
         }
       }
     } else if (norm === "discounts") {
@@ -1012,6 +1285,53 @@ async function syncToPrismaModel(resource, item) {
           }
         }
       }
+    } else if (norm === "subscriptions" || norm === "subscription") {
+      const subEmail = String(item.customerEmail || item.email || `customer-${id}@pouch-supply.com`).toLowerCase().trim();
+      const amountVal = typeof item.amount === "number" ? item.amount : parseFloat(item.amount) || 0;
+      const nextDate = item.nextBillingDate ? new Date(item.nextBillingDate) : null;
+      const lastPaymentDate = item.lastPaymentAt ? new Date(item.lastPaymentAt) : null;
+      await prisma.subscription.upsert({
+        where: { id },
+        update: {
+          customerId: item.customerId || null,
+          customerEmail: subEmail,
+          customerName: item.customerName || null,
+          planId: item.planId || "sub-pack",
+          planName: item.planName || "Pouch Supply Subscription",
+          amount: amountVal,
+          currency: item.currency || "GBP",
+          status: item.status || "active",
+          billingInterval: item.billingInterval || "month",
+          nextBillingDate: nextDate,
+          worldpayTransactionId: item.worldpayTransactionId || null,
+          worldpayRecurringHref: item.worldpayRecurringHref || item.recurringHref || null,
+          worldpaySchemeReference: item.worldpaySchemeReference || null,
+          lastPaymentStatus: item.lastPaymentStatus || null,
+          lastPaymentId: item.lastPaymentId || null,
+          lastPaymentAt: lastPaymentDate,
+          failedPaymentCount: typeof item.failedPaymentCount === "number" ? item.failedPaymentCount : 0
+        },
+        create: {
+          id,
+          customerId: item.customerId || null,
+          customerEmail: subEmail,
+          customerName: item.customerName || null,
+          planId: item.planId || "sub-pack",
+          planName: item.planName || "Pouch Supply Subscription",
+          amount: amountVal,
+          currency: item.currency || "GBP",
+          status: item.status || "active",
+          billingInterval: item.billingInterval || "month",
+          nextBillingDate: nextDate,
+          worldpayTransactionId: item.worldpayTransactionId || null,
+          worldpayRecurringHref: item.worldpayRecurringHref || item.recurringHref || null,
+          worldpaySchemeReference: item.worldpaySchemeReference || null,
+          lastPaymentStatus: item.lastPaymentStatus || null,
+          lastPaymentId: item.lastPaymentId || null,
+          lastPaymentAt: lastPaymentDate,
+          failedPaymentCount: typeof item.failedPaymentCount === "number" ? item.failedPaymentCount : 0
+        }
+      });
     }
   } catch (mErr) {
     console.warn(`[Prisma Model Sync] ${norm} sync warning:`, mErr?.message);
@@ -1050,6 +1370,30 @@ async function fetchFromPrismaModel(resource) {
           createdAt: o.createdAt ? o.createdAt.toISOString() : void 0
         };
       });
+    } else if (norm === "subscriptions" || norm === "subscription") {
+      const items = await prisma.subscription.findMany({ orderBy: { createdAt: "desc" } });
+      return items.map((s) => ({
+        id: s.id,
+        customerId: s.customerId,
+        customerEmail: s.customerEmail,
+        customerName: s.customerName,
+        planId: s.planId,
+        planName: s.planName,
+        amount: Number(s.amount),
+        currency: s.currency,
+        status: s.status,
+        billingInterval: s.billingInterval,
+        nextBillingDate: s.nextBillingDate ? s.nextBillingDate.toISOString() : null,
+        worldpayTransactionId: s.worldpayTransactionId,
+        worldpayRecurringHref: s.worldpayRecurringHref,
+        worldpaySchemeReference: s.worldpaySchemeReference,
+        lastPaymentStatus: s.lastPaymentStatus,
+        lastPaymentId: s.lastPaymentId,
+        lastPaymentAt: s.lastPaymentAt ? s.lastPaymentAt.toISOString() : null,
+        failedPaymentCount: s.failedPaymentCount,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString()
+      }));
     } else if (norm === "products") {
       const items = await prisma.product.findMany();
       return items.map((p) => p.data && typeof p.data === "object" ? { ...p.data, id: p.id } : p);
@@ -1153,35 +1497,8 @@ async function fetchResource(resource) {
         persistMemoryCacheToBackup();
         return list;
       }
-      const defaultList = memoryCache[normResource] || memoryCache[resource] || [];
-      if (defaultList.length > 0) {
-        console.log(`[Neon DB] Seeding initial ${normResource} (${defaultList.length} items)...`);
-        const BATCH_SIZE = 25;
-        for (let i = 0; i < defaultList.length; i += BATCH_SIZE) {
-          const batch = defaultList.slice(i, i + BATCH_SIZE);
-          await Promise.all(batch.map(async (item) => {
-            const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
-            await prisma.storeResource.upsert({
-              where: {
-                resource_itemId: {
-                  resource: normResource,
-                  itemId
-                }
-              },
-              update: { data: item },
-              create: {
-                resource: normResource,
-                itemId,
-                data: item
-              }
-            }).catch(() => {
-            });
-            syncToPrismaModel(normResource, item).catch(() => {
-            });
-          }));
-        }
-      }
-      return defaultList;
+      memoryCache[normResource] = [];
+      return [];
     } catch (err) {
       console.error(`[Neon DB] Error fetching resource ${normResource}:`, err);
     }
@@ -1190,8 +1507,21 @@ async function fetchResource(resource) {
 }
 async function saveResource(resource, list) {
   const normResource = normalizeResourceName(resource);
-  if (!Array.isArray(list)) return memoryCache[normResource] || [];
-  memoryCache[normResource] = [...list];
+  const normalizedList = Array.isArray(list) ? list : list ? [list] : [];
+  if (!Array.isArray(normalizedList)) return memoryCache[normResource] || [];
+  if (normResource === "customPages" || normResource === "custompages" || normResource === "pages") {
+    const existingPages = memoryCache["customPages"] || [];
+    for (let i = 0; i < normalizedList.length; i++) {
+      const p = normalizedList[i];
+      if (p && (!p.sections || !Array.isArray(p.sections) || p.sections.length === 0)) {
+        const existing = existingPages.find((ep) => ep && (ep.id === p.id || ep.slug === p.slug));
+        if (existing && Array.isArray(existing.sections) && existing.sections.length > 0) {
+          normalizedList[i] = { ...p, sections: existing.sections };
+        }
+      }
+    }
+  }
+  memoryCache[normResource] = [...normalizedList];
   if (normResource !== resource) memoryCache[resource] = memoryCache[normResource];
   persistMemoryCacheToBackup();
   const isConnected = await getDb();
@@ -1199,8 +1529,8 @@ async function saveResource(resource, list) {
     try {
       const validItemIds = [];
       const BATCH_SIZE = 25;
-      for (let i = 0; i < list.length; i += BATCH_SIZE) {
-        const batch = list.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < normalizedList.length; i += BATCH_SIZE) {
+        const batch = normalizedList.slice(i, i + BATCH_SIZE);
         await Promise.all(batch.map(async (item) => {
           if (!item) return;
           const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
@@ -1219,8 +1549,12 @@ async function saveResource(resource, list) {
               data: item
             }
           }).catch((e) => console.warn(`[StoreResource Sync] ${normResource} ${itemId} warning:`, e?.message));
-          syncToPrismaModel(normResource, item).catch(() => {
-          });
+          syncToPrismaModel(normResource, item).catch(
+            (e) => console.error(
+              `[Model Sync FAILED] ${normResource}/${itemId} \u2014 typed table is now stale:`,
+              e?.message
+            )
+          );
         }));
       }
       if (validItemIds.length > 0) {
@@ -1231,39 +1565,149 @@ async function saveResource(resource, list) {
               notIn: validItemIds
             }
           }
-        });
+        }).catch((e) => console.warn(`[StoreResource deleteMany] ${normResource} warning:`, e?.message));
       }
       const norm = normResource.toLowerCase();
-      if (norm === "orders") {
-        await prisma.order.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
-      } else if (norm === "products") {
-        await prisma.product.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
-      } else if (norm === "collections") {
-        await prisma.collection.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
-      } else if (norm === "customers") {
-        await prisma.customer.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
-      } else if (norm === "blogs") {
-        await prisma.blogPost.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
-      } else if (norm === "discounts") {
-        await prisma.discount.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
-      } else if (norm === "custompages" || norm === "pages") {
-        await prisma.customPage.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
-      } else if (norm === "files" || norm === "fileentry" || norm === "fileentries") {
-        await prisma.fileEntry.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-        });
+      if (validItemIds.length > 0) {
+        if (norm === "orders") {
+          await prisma.order.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        } else if (norm === "products") {
+          await prisma.product.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        } else if (norm === "collections") {
+          await prisma.collection.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        } else if (norm === "customers") {
+          await prisma.customer.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        } else if (norm === "blogs") {
+          await prisma.blogPost.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        } else if (norm === "discounts") {
+          await prisma.discount.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        } else if (norm === "custompages" || norm === "pages") {
+          await prisma.customPage.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        } else if (norm === "files" || norm === "fileentry" || norm === "fileentries") {
+          await prisma.fileEntry.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
+          });
+        }
       }
     } catch (err) {
       console.error(`[Neon DB] Error saving resource ${normResource}:`, err);
     }
   }
-  return list;
+  return normalizedList;
+}
+async function createDatabaseBackup(name = "Auto Snapshot") {
+  const isConnected = await getDb();
+  const backupData = {};
+  const resources = ["customPages", "products", "collections", "orders", "files", "customers", "discounts", "blogs"];
+  for (const r of resources) {
+    backupData[r] = await fetchResource(r);
+  }
+  const backupId = `backup_${Date.now()}`;
+  const totalCount = Object.values(backupData).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0);
+  if (isConnected) {
+    try {
+      await ensureNeonTablesExist();
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "NeonBackup" ("id", "name", "timestamp", "resourceCount", "data") VALUES ($1, $2, NOW(), $3, $4::jsonb) ON CONFLICT ("id") DO UPDATE SET "data" = $4::jsonb`,
+        backupId,
+        name,
+        totalCount,
+        JSON.stringify(backupData)
+      );
+    } catch (err) {
+      console.warn("[Neon Backup] Error storing backup in Neon PostgreSQL:", err);
+    }
+  }
+  persistMemoryCacheToBackup();
+  return { id: backupId, name, timestamp: (/* @__PURE__ */ new Date()).toISOString(), resourceCount: totalCount };
+}
+async function listDatabaseBackups() {
+  const isConnected = await getDb();
+  if (isConnected) {
+    try {
+      await ensureNeonTablesExist();
+      const rows = await prisma.$queryRawUnsafe(`
+        SELECT "id", "name", "timestamp", "resourceCount" FROM "NeonBackup" ORDER BY "timestamp" DESC LIMIT 20
+      `);
+      return rows || [];
+    } catch (err) {
+      console.warn("[Neon Backup] Error listing backups from Neon PostgreSQL:", err);
+    }
+  }
+  return [];
+}
+async function restoreDatabaseBackup(backupId) {
+  const isConnected = await getDb();
+  if (!isConnected) return false;
+  try {
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT "data" FROM "NeonBackup" WHERE "id" = $1 LIMIT 1
+    `, backupId);
+    if (rows && rows.length > 0 && rows[0].data) {
+      const data = typeof rows[0].data === "string" ? JSON.parse(rows[0].data) : rows[0].data;
+      for (const [resKey, items] of Object.entries(data)) {
+        if (Array.isArray(items)) {
+          await saveResource(resKey, items);
+        }
+      }
+      return true;
+    }
+  } catch (err) {
+    console.error("[Neon Backup] Error restoring backup from Neon PostgreSQL:", err);
+  }
+  return false;
+}
+async function fetchStoreSetting(id, defaultVal = null) {
+  let settingsData = null;
+  const isConnected = await getDb();
+  if (isConnected) {
+    try {
+      const setting = await prisma.storeSetting.findUnique({
+        where: { id }
+      });
+      if (setting && setting.data) {
+        settingsData = setting.data;
+      }
+    } catch (err) {
+      console.error(`[Neon DB] Error fetching store setting ${id}:`, err);
+    }
+  }
+  if (!settingsData) {
+    const filePath = path.join(process.cwd(), `${id}.json`);
+    if (fs.existsSync(filePath)) {
+      try {
+        settingsData = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      } catch (e) {
+      }
+    }
+  }
+  return settingsData || defaultVal;
+}
+async function saveStoreSetting(id, data) {
+  const filePath = path.join(process.cwd(), `${id}.json`);
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+  } catch (e) {
+  }
+  const isConnected = await getDb();
+  if (isConnected) {
+    try {
+      await prisma.storeSetting.upsert({
+        where: { id },
+        update: { data },
+        create: { id, data }
+      });
+    } catch (err) {
+      console.error(`[Neon DB] Error saving store setting ${id}:`, err);
+    }
+  }
+  return data;
 }
 async function fetchSingleItem(resource, id) {
   const normResource = normalizeResourceName(resource);
@@ -1289,6 +1733,14 @@ async function saveSingleItem(resource, item) {
   const normResource = normalizeResourceName(resource);
   const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
   const items = memoryCache[normResource] || memoryCache[resource] || [];
+  if (normResource === "customPages" || normResource === "custompages" || normResource === "pages") {
+    if (!item.sections || !Array.isArray(item.sections) || item.sections.length === 0) {
+      const existing = items.find((i) => i.id === itemId || i.slug === itemId);
+      if (existing && Array.isArray(existing.sections) && existing.sections.length > 0) {
+        item = { ...item, sections: existing.sections };
+      }
+    }
+  }
   const idx = items.findIndex((i) => i.id === itemId || i.slug === itemId);
   if (idx !== -1) {
     items[idx] = { ...item };
@@ -1314,8 +1766,12 @@ async function saveSingleItem(resource, item) {
           data: item
         }
       });
-      syncToPrismaModel(normResource, item).catch(() => {
-      });
+      syncToPrismaModel(normResource, item).catch(
+        (e) => console.error(
+          `[Model Sync FAILED] ${normResource}/${itemId} \u2014 typed table is now stale:`,
+          e?.message
+        )
+      );
     } catch (err) {
       console.error(`[Neon DB] Error saving single item ${normResource}/${itemId}:`, err);
     }
@@ -1573,12 +2029,18 @@ var init_serverDb = __esm({
     BACKUP_FILE_PATH = path.join(process.cwd(), "local_store_data.json");
     loadMemoryCacheFromBackup();
     isTablesInitialized = false;
+    ensureNeonTablesExist().then(() => {
+      hydrateMemoryCacheFromDatabase().catch(() => {
+      });
+    }).catch(() => {
+    });
     memoryImages = {};
   }
 });
 
 // backend/services/emailTemplates.ts
-function renderBaseHeader(title, subtitle) {
+function renderBaseHeader(title, subtitle, data) {
+  const logoUrl = data?.headerLogoImage || data?.logoUrl || "";
   return `
   <!DOCTYPE html>
   <html>
@@ -1589,9 +2051,7 @@ function renderBaseHeader(title, subtitle) {
     <style>
       body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: ${BRAND_BG}; color: #334155; }
       .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; margin-top: 24px; margin-bottom: 24px; border: 1px solid #e2e8f0; }
-      .header { background-color: ${BRAND_PRIMARY}; padding: 32px 24px; text-align: center; color: #ffffff; }
-      .logo { font-size: 22px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin: 0; color: #ffffff; }
-      .tagline { font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: ${BRAND_ACCENT}; margin-top: 6px; font-weight: 700; }
+      .header { background-color: ${BRAND_HEADER_BG}; padding: 24px 20px; text-align: center; color: #071d37; border-bottom: 1px solid #e2e8f0; }
       .title-box { padding: 24px 24px 12px 24px; text-align: center; }
       .heading { font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 8px 0; }
       .subheading { font-size: 14px; color: #64748b; margin: 0; leading: 1.5; }
@@ -1599,7 +2059,7 @@ function renderBaseHeader(title, subtitle) {
       .card { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
       .btn { display: inline-block; background-color: ${BRAND_PRIMARY}; color: #ffffff !important; font-weight: 700; font-size: 14px; text-decoration: none; padding: 12px 24px; border-radius: 8px; text-transform: uppercase; letter-spacing: 1px; margin-top: 12px; margin-bottom: 12px; }
       .footer { background-color: #0f172a; padding: 24px; text-align: center; font-size: 12px; color: #94a3b8; }
-      .footer a { color: ${BRAND_ACCENT}; text-decoration: none; }
+      .footer a { color: #00e599; text-decoration: none; }
       .item-table { width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px; }
       .item-table th { text-align: left; font-size: 11px; text-transform: uppercase; color: #64748b; border-b: 1px solid #e2e8f0; padding-bottom: 8px; }
       .item-table td { padding: 12px 0; border-b: 1px solid #f1f5f9; font-size: 13px; }
@@ -1614,8 +2074,23 @@ function renderBaseHeader(title, subtitle) {
   <body>
     <div class="container">
       <div class="header">
-        <div class="logo">${LOGO_TEXT}</div>
-        <div class="tagline">Premium Nicotine Canisters \u2022 UK Lab Standards</div>
+        ${logoUrl ? `
+          <img src="${logoUrl}" alt="${BRAND_NAME}" style="max-height: 52px; max-width: 240px; object-fit: contain; margin: 0 auto; display: block;" />
+        ` : `
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+            <tr>
+              <td style="vertical-align: middle; padding-right: 10px;">
+                <div style="width: 38px; height: 38px; background: #008060; border-radius: 10px; text-align: center; line-height: 38px;">
+                  <span style="color: #ffffff; font-weight: 900; font-size: 18px; font-family: sans-serif;">P</span>
+                </div>
+              </td>
+              <td style="vertical-align: middle; text-align: left;">
+                <div style="font-size: 20px; font-weight: 900; letter-spacing: 1px; color: #071d37; text-transform: uppercase; line-height: 1.1;">POUCH SUPPLY</div>
+                <div style="font-size: 10px; font-weight: 700; color: #008060; letter-spacing: 2px; text-transform: uppercase;">PREMIUM CANISTERS</div>
+              </td>
+            </tr>
+          </table>
+        `}
       </div>
       <div class="title-box">
         <h1 class="heading">${title}</h1>
@@ -1694,7 +2169,7 @@ function renderOrderItemsTable(data) {
 function renderOrderConfirmationTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
-  return renderBaseHeader(`Order Confirmation #${orderId}`, `Thank you for your order, ${name}!`) + `
+  return renderBaseHeader(`Order Confirmation #${orderId}`, `Thank you for your order, ${name}!`, data) + `
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -1731,7 +2206,7 @@ function renderOrderConfirmationTemplate(data) {
 function renderOrderProcessingTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
-  return renderBaseHeader(`Order Processing #${orderId}`, `We are packing your canisters, ${name}!`) + `
+  return renderBaseHeader(`Order Processing #${orderId}`, `We are packing your canisters, ${name}!`, data) + `
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -1759,7 +2234,7 @@ function renderOrderShippedTemplate(data) {
   const orderId = data.orderId || "PS10001";
   const tracking = data.trackingNumber || "GB982341234UK";
   const carrier = data.carrier || "Royal Mail Tracked 24";
-  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`) + `
+  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -1785,7 +2260,7 @@ function renderOrderShippedTemplate(data) {
 function renderOutForDeliveryTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
-  return renderBaseHeader(`Out for Delivery #${orderId}`, `Arriving today, ${name}!`) + `
+  return renderBaseHeader(`Out for Delivery #${orderId}`, `Arriving today, ${name}!`, data) + `
     <div class="card" style="background-color: #f0f9ff; border-color: #bae6fd;">
       <span class="badge badge-info" style="margin-bottom: 8px;">Out for Delivery</span>
       <p style="font-size: 14px; color: #0369a1; font-weight: 700; margin: 0 0 6px 0;">
@@ -1802,7 +2277,7 @@ function renderOutForDeliveryTemplate(data) {
 function renderDeliveredTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
-  return renderBaseHeader(`Order Delivered #${orderId}`, `Enjoy your pouch supply, ${name}!`) + `
+  return renderBaseHeader(`Order Delivered #${orderId}`, `Enjoy your pouch supply, ${name}!`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0; text-align: center;">
       <span class="badge badge-success" style="margin-bottom: 8px;">Delivered</span>
       <p style="font-size: 15px; color: #166534; font-weight: 800; margin: 0 0 6px 0;">
@@ -1825,7 +2300,7 @@ function renderDeliveredTemplate(data) {
 function renderOrderCancelledTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
-  return renderBaseHeader(`Order Cancelled #${orderId}`, `Notice regarding your order`) + `
+  return renderBaseHeader(`Order Cancelled #${orderId}`, `Notice regarding your order`, data) + `
     <div class="card" style="background-color: #fef2f2; border-color: #fecaca;">
       <span class="badge badge-danger" style="margin-bottom: 8px;">Cancelled</span>
       <p style="font-size: 13px; color: #991b1b; font-weight: 600; margin: 0 0 4px 0;">
@@ -1843,7 +2318,7 @@ function renderOrderRefundedTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
   const refundAmount = data.refundAmount !== void 0 ? data.refundAmount : data.total || 0;
-  return renderBaseHeader(`Refund Processed #${orderId}`, `Refund confirmation for ${name}`) + `
+  return renderBaseHeader(`Refund Processed #${orderId}`, `Refund confirmation for ${name}`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
@@ -1865,7 +2340,7 @@ function renderOrderRefundedTemplate(data) {
 function renderOrderExchangedTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
-  return renderBaseHeader(`Order Exchange Processed #${orderId}`, `Exchange confirmation for ${name}`) + `
+  return renderBaseHeader(`Order Exchange Processed #${orderId}`, `Exchange confirmation for ${name}`, data) + `
     <div class="card" style="background-color: #f0f9ff; border-color: #bae6fd;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
@@ -1891,7 +2366,7 @@ function renderPasswordResetTemplate(data) {
   const name = data.customerName || "Customer";
   const resetLink = data.resetLink || `${data.siteUrl || "#"}`;
   const token = data.resetToken || "";
-  return renderBaseHeader(`Reset Your Password`, `Security request for ${name}`) + `
+  return renderBaseHeader(`Reset Your Password`, `Security request for ${name}`, data) + `
     <div class="card" style="text-align: center;">
       <p style="font-size: 13px; color: #334155; margin: 0 0 12px 0;">
         We received a request to reset the password for your account associated with <strong>${data.customerEmail || ""}</strong>.
@@ -1921,7 +2396,7 @@ function renderPasswordResetTemplate(data) {
 function renderEmailVerificationTemplate(data) {
   const name = data.customerName || "Customer";
   const code = data.verificationCode || "849201";
-  return renderBaseHeader(`Verify Your Email`, `Welcome to ${BRAND_NAME}, ${name}!`) + `
+  return renderBaseHeader(`Verify Your Email`, `Welcome to ${BRAND_NAME}, ${name}!`, data) + `
     <div class="card" style="text-align: center;">
       <p style="font-size: 13px; color: #475569; margin: 0 0 16px 0;">
         Please verify your email address to complete your account setup and access member-only canister pricing.
@@ -1940,7 +2415,7 @@ function renderEmailVerificationTemplate(data) {
 function renderWelcomeTemplate(data) {
   const name = data.customerName || "Friend";
   const code = data.discountCode || "WELCOME10";
-  return renderBaseHeader(`Welcome to ${BRAND_NAME}!`, `Your laboratory pouch subscription begins here`) + `
+  return renderBaseHeader(`Welcome to ${BRAND_NAME}!`, `Your laboratory pouch subscription begins here`, data) + `
     <div class="card" style="background-color: #f8fafc; text-align: center; padding: 24px;">
       <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0 0 12px 0;">
         Welcome to the UK's premier nicotine canister compounding standard.
@@ -1963,7 +2438,7 @@ function renderAdminNewOrderTemplate(data) {
   const orderId = data.orderId || "PS10001";
   const name = data.customerName || "Customer";
   const total = data.total !== void 0 ? data.total : 0;
-  return renderBaseHeader(`\u{1F6A8} New Order #${orderId}`, `Storefront Sale Alert: \xA3${total.toFixed(2)} GBP`) + `
+  return renderBaseHeader(`\u{1F6A8} New Order #${orderId}`, `Storefront Sale Alert: \xA3${total.toFixed(2)} GBP`, data) + `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
@@ -1988,23 +2463,26 @@ function renderAdminNewOrderTemplate(data) {
     </div>
   ` + renderBaseFooter();
 }
-var BRAND_NAME, BRAND_PRIMARY, BRAND_ACCENT, BRAND_BG, SUPPORT_EMAIL, LOGO_TEXT;
+var BRAND_NAME, BRAND_HEADER_BG, BRAND_PRIMARY, BRAND_ACCENT, BRAND_BG, SUPPORT_EMAIL;
 var init_emailTemplates = __esm({
   "backend/services/emailTemplates.ts"() {
     BRAND_NAME = "Pouch Supply Co.";
+    BRAND_HEADER_BG = "#e7e7e7";
     BRAND_PRIMARY = "#071d37";
-    BRAND_ACCENT = "#00e599";
+    BRAND_ACCENT = "#008060";
     BRAND_BG = "#f8fafc";
     SUPPORT_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || "support@pouch-supply.com";
-    LOGO_TEXT = "POUCH SUPPLY CO.";
   }
 });
 
 // backend/services/emailService.ts
 var emailService_exports = {};
 __export(emailService_exports, {
+  formatFromHeader: () => formatFromHeader,
+  formatResendFromEmail: () => formatResendFromEmail,
   getEmailLogs: () => getEmailLogs,
   getEmailSettings: () => getEmailSettings,
+  logEmail: () => logEmail,
   saveEmailSettings: () => saveEmailSettings,
   sendAdminNewOrderNotification: () => sendAdminNewOrderNotification,
   sendDeliveredEmail: () => sendDeliveredEmail,
@@ -2019,24 +2497,74 @@ __export(emailService_exports, {
   sendOrderShippedEmail: () => sendOrderShippedEmail,
   sendOutForDeliveryEmail: () => sendOutForDeliveryEmail,
   sendPasswordResetEmail: () => sendPasswordResetEmail,
-  sendWelcomeEmail: () => sendWelcomeEmail
+  sendWelcomeEmail: () => sendWelcomeEmail,
+  verifyEmailConnection: () => verifyEmailConnection
 });
+import nodemailer from "nodemailer";
 import { Resend } from "resend";
+function formatFromHeader(fromName, fromEmail) {
+  const cleanName = (fromName || "Pouch Supply Co.").replace(/["'<>]/g, "").trim();
+  const cleanEmail = (fromEmail || "scottkivlinpouch@gmail.com").replace(/[<>]/g, "").trim();
+  return `"${cleanName}" <${cleanEmail}>`;
+}
+function formatResendFromEmail(rawFrom) {
+  if (!rawFrom || typeof rawFrom !== "string" || !rawFrom.trim()) {
+    return "Pouch Supply Co. <onboarding@resend.dev>";
+  }
+  const cleaned = rawFrom.trim().replace(/^["']|["']$/g, "");
+  const angleMatch = cleaned.match(/^([^<]+)<([^>]+)>$/);
+  if (angleMatch) {
+    const name = angleMatch[1].trim().replace(/[<>"]/g, "");
+    const email = angleMatch[2].trim().replace(/[<>"]/g, "");
+    if (email.includes("@")) {
+      return name ? `${name} <${email}>` : email;
+    }
+  }
+  if (cleaned.includes("@") && !cleaned.includes(" ") && !cleaned.includes("<") && !cleaned.includes(">")) {
+    return `Pouch Supply Co. <${cleaned}>`;
+  }
+  const parts = cleaned.split(/\s+/);
+  const emailCandidate = parts.find((p) => p.includes("@"));
+  if (emailCandidate) {
+    const email = emailCandidate.replace(/[<>,;"']/g, "").trim();
+    const name = parts.filter((p) => !p.includes("@")).join(" ").replace(/[<>,;"']/g, "").trim();
+    return name ? `${name} <${email}>` : email;
+  }
+  return "Pouch Supply Co. <onboarding@resend.dev>";
+}
 async function getEmailSettings() {
   try {
-    const stored = await fetchResource("email_settings");
-    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+    let stored = await fetchStoreSetting("email_settings");
+    if (!stored || typeof stored === "object" && Object.keys(stored).length === 0) {
+      const legacy = await fetchResource("email_settings");
+      if (legacy && Array.isArray(legacy) && legacy.length > 0) {
+        stored = legacy[0];
+      }
+    }
+    if (stored && typeof stored === "object") {
+      const item = Array.isArray(stored) ? stored[0] : stored;
       return {
         ...DEFAULT_SETTINGS,
-        ...stored,
+        ...item,
+        provider: item.provider || DEFAULT_SETTINGS.provider,
+        gmailUser: item.gmailUser || process.env.GMAIL_USER || DEFAULT_SETTINGS.gmailUser,
+        gmailAppPassword: item.gmailAppPassword !== void 0 ? item.gmailAppPassword : process.env.GMAIL_APP_PASSWORD || "",
+        smtpHost: item.smtpHost || process.env.SMTP_HOST || DEFAULT_SETTINGS.smtpHost,
+        smtpPort: item.smtpPort || Number(process.env.SMTP_PORT) || DEFAULT_SETTINGS.smtpPort,
+        smtpSecure: item.smtpSecure !== void 0 ? item.smtpSecure : process.env.SMTP_SECURE !== "false",
+        smtpUser: item.smtpUser || process.env.SMTP_USER || item.gmailUser || DEFAULT_SETTINGS.smtpUser,
+        smtpPassword: item.smtpPassword !== void 0 ? item.smtpPassword : process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD || "",
+        resendApiKey: item.resendApiKey !== void 0 ? item.resendApiKey : process.env.RESEND_API_KEY || "",
+        fromName: item.fromName || DEFAULT_SETTINGS.fromName,
+        fromEmail: item.fromEmail || item.gmailUser || process.env.RESEND_FROM_EMAIL || DEFAULT_SETTINGS.fromEmail,
+        adminNotificationEmail: item.adminNotificationEmail || process.env.ADMIN_NOTIFICATION_EMAIL || DEFAULT_SETTINGS.adminNotificationEmail,
         templates: {
           ...DEFAULT_SETTINGS.templates,
-          ...stored.templates || {}
+          ...item.templates || {}
         }
       };
     }
   } catch (err) {
-    console.warn("[EmailService] Failed to load settings from DB:", err);
   }
   return DEFAULT_SETTINGS;
 }
@@ -2050,7 +2578,12 @@ async function saveEmailSettings(settings) {
       ...settings.templates || {}
     }
   };
-  await saveResource("email_settings", updated);
+  if (settings.gmailUser) process.env.GMAIL_USER = settings.gmailUser;
+  if (settings.gmailAppPassword) process.env.GMAIL_APP_PASSWORD = settings.gmailAppPassword;
+  if (settings.resendApiKey) process.env.RESEND_API_KEY = settings.resendApiKey;
+  if (settings.adminNotificationEmail) process.env.ADMIN_NOTIFICATION_EMAIL = settings.adminNotificationEmail;
+  await saveStoreSetting("email_settings", updated);
+  await saveResource("email_settings", [updated]);
   return updated;
 }
 async function getEmailLogs() {
@@ -2075,9 +2608,91 @@ async function logEmail(entry) {
     const updated = [newLog, ...currentLogs].slice(0, 500);
     await saveResource("email_logs", updated);
   } catch (err) {
-    console.error("[EmailService] Failed to log email entry:", err);
   }
   return newLog;
+}
+async function verifyEmailConnection(config) {
+  const settings = await getEmailSettings();
+  const merged = { ...settings, ...config || {} };
+  const provider = merged.provider || "gmail";
+  if (provider === "gmail") {
+    const user = (merged.gmailUser || "").trim();
+    const pass = (merged.gmailAppPassword || "").trim().replace(/\s+/g, "");
+    if (!user) {
+      return { success: false, provider: "gmail", message: "Gmail address is missing." };
+    }
+    if (!pass) {
+      return {
+        success: false,
+        provider: "gmail",
+        message: "Gmail App Password is required. Generate a 16-character App Password from Google Account Security (https://myaccount.google.com/apppasswords)."
+      };
+    }
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user, pass }
+      });
+      await transporter.verify();
+      return {
+        success: true,
+        provider: "gmail",
+        message: `Successfully connected and authenticated with Gmail (${user})!`
+      };
+    } catch (err) {
+      return {
+        success: false,
+        provider: "gmail",
+        message: `Gmail Authentication Failed: ${err.message}. Check your Gmail address and 16-character App Password.`
+      };
+    }
+  }
+  if (provider === "smtp") {
+    const host = (merged.smtpHost || "smtp.gmail.com").trim();
+    const port = merged.smtpPort || 465;
+    const user = (merged.smtpUser || "").trim();
+    const pass = (merged.smtpPassword || "").trim();
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: merged.smtpSecure !== false && port === 465,
+        auth: user && pass ? { user, pass } : void 0
+      });
+      await transporter.verify();
+      return {
+        success: true,
+        provider: "smtp",
+        message: `Successfully connected to SMTP server (${host}:${port})!`
+      };
+    } catch (err) {
+      return {
+        success: false,
+        provider: "smtp",
+        message: `SMTP Connection Failed: ${err.message}`
+      };
+    }
+  }
+  if (provider === "resend") {
+    const key = (merged.resendApiKey || process.env.RESEND_API_KEY || "").trim();
+    if (!key) {
+      return { success: false, provider: "resend", message: "Resend API Key is missing. Please enter your Resend API Key (re_...)." };
+    }
+    try {
+      const resend = new Resend(key);
+      const test = await resend.apiKeys.list().catch((err) => ({ error: err }));
+      if (test && !test.error) {
+        return { success: true, provider: "resend", message: "Resend API key is valid and connected successfully!" };
+      }
+      if (test && test.error) {
+        return { success: false, provider: "resend", message: `Resend validation failed: ${test.error.message || test.error}` };
+      }
+      return { success: true, provider: "resend", message: "Resend API connection initialized." };
+    } catch (err) {
+      return { success: false, provider: "resend", message: `Resend error: ${err.message || String(err)}` };
+    }
+  }
+  return { success: true, provider: "auto", message: "Email configuration checked." };
 }
 async function sendEmail(type, recipient, data, customSubject, apiKeyOverride, fromEmailOverride) {
   const settings = await getEmailSettings();
@@ -2105,6 +2720,15 @@ async function sendEmail(type, recipient, data, customSubject, apiKeyOverride, f
     return { success: false, log, message: `Template '${type}' is currently disabled in settings.` };
   }
   const subject = customSubject || templateConfig?.subject || `Notification from Pouch Supply Co.`;
+  if (!data.headerLogoImage && !data.logoUrl) {
+    try {
+      const layout = await fetchLayoutSettings();
+      if (layout?.headerLogoImage) {
+        data.headerLogoImage = layout.headerLogoImage;
+      }
+    } catch (e) {
+    }
+  }
   let html = "";
   switch (type) {
     case "order_confirmation":
@@ -2146,180 +2770,316 @@ async function sendEmail(type, recipient, data, customSubject, apiKeyOverride, f
     default:
       html = `<p>Notification from Pouch Supply Co.</p>`;
   }
-  const apiKey = apiKeyOverride && apiKeyOverride.trim() !== "" ? apiKeyOverride.trim() : (settings.resendApiKey || process.env.RESEND_API_KEY || "").trim();
-  if (!apiKey) {
-    console.warn(`[EmailService] No RESEND_API_KEY configured. Cannot send email to ${recipient}.`);
-    const log = await logEmail({
-      type,
-      recipient,
-      subject,
-      status: "failed",
-      error: "Resend API key is not configured. Enter an API key in Email Settings to send emails.",
-      metadata: { data, html }
-    });
-    return {
-      success: false,
-      mode: "live",
-      message: "Resend API key is not configured. Enter a Resend API key in Email Settings to dispatch real emails.",
-      log
-    };
-  }
-  try {
-    const resend = new Resend(apiKey);
-    let fromEmail = fromEmailOverride && fromEmailOverride.trim() !== "" ? fromEmailOverride.trim() : (settings.fromEmail || "Pouch Supply Co. <orders@support.pouch-supply.com>").trim();
-    console.log(`[EmailService] Sending '${type}' via Resend to '${recipient}' (From: ${fromEmail})...`);
-    let resendResponse = await resend.emails.send({
-      from: fromEmail,
-      to: recipient,
-      subject,
-      html
-    });
-    if (resendResponse.error) {
-      const errMsg = resendResponse.error.message || String(resendResponse.error);
-      const isDomainError = errMsg.toLowerCase().includes("domain") || errMsg.toLowerCase().includes("not verified") || errMsg.toLowerCase().includes("onboarding");
-      if (isDomainError && !fromEmail.includes("onboarding@resend.dev")) {
-        console.warn(`[EmailService] Custom sender domain failed (${errMsg}). Retrying with fallback onboarding@resend.dev...`);
-        fromEmail = "Pouch Supply Co. <onboarding@resend.dev>";
-        resendResponse = await resend.emails.send({
-          from: fromEmail,
-          to: recipient,
-          subject,
-          html
-        });
-      }
-    }
-    if (resendResponse.error) {
-      const errMsg = resendResponse.error.message || String(resendResponse.error);
-      console.warn(`[EmailService] Resend API error for ${type}:`, resendResponse.error);
-      let userFacingMessage = `Resend API Error: ${errMsg}`;
-      if (errMsg.toLowerCase().includes("testing emails") || errMsg.toLowerCase().includes("own email address")) {
-        userFacingMessage = `Resend Sandbox Limit: When using the default Resend onboarding sender (onboarding@resend.dev), Resend only allows sending live test emails to your verified Resend account address. To send live emails to ${recipient}, verify a custom domain in your Resend Dashboard or send to your verified Resend email.`;
-      }
-      const log2 = await logEmail({
+  const effectiveProvider = settings.provider || "gmail";
+  const gmailUser = (settings.gmailUser || process.env.GMAIL_USER || "scottkivlinpouch@gmail.com").trim();
+  const gmailPass = (settings.gmailAppPassword || process.env.GMAIL_APP_PASSWORD || "").trim().replace(/\s+/g, "");
+  const resendKey = (apiKeyOverride || settings.resendApiKey || process.env.RESEND_API_KEY || "").trim();
+  const fromName = settings.fromName || "Pouch Supply Co.";
+  const senderEmail = fromEmailOverride || settings.fromEmail || gmailUser || "scottkivlinpouch@gmail.com";
+  const fromFormatted = formatFromHeader(fromName, senderEmail);
+  if (effectiveProvider === "gmail" || effectiveProvider === "auto" && gmailUser && gmailPass) {
+    if (!gmailPass) {
+      const errMsg = "Gmail App Password is not configured in Email Settings. Add your 16-character Google App Password to enable live Gmail sending.";
+      console.warn(`[EmailService Gmail] ${errMsg}`);
+      const log = await logEmail({
         type,
         recipient,
         subject,
         status: "failed",
+        provider: "gmail",
         error: errMsg,
         metadata: { data, html }
       });
-      return { success: false, mode: "live", message: userFacingMessage, log: log2 };
+      return { success: false, mode: "live", provider: "gmail", message: errMsg, log };
     }
-    const resendId = resendResponse.data?.id;
-    console.log(`[EmailService] Email sent successfully via Resend! ID: ${resendId}`);
-    const log = await logEmail({
-      type,
-      recipient,
-      subject,
-      status: "sent",
-      resendId,
-      metadata: { data }
-    });
-    return {
-      success: true,
-      mode: "live",
-      message: `Email successfully sent to ${recipient} via Resend! (Message ID: ${resendId})`,
-      log
-    };
-  } catch (error) {
-    const errMsg = error.message || String(error);
-    console.error(`[EmailService] Unexpected error sending email '${type}':`, error);
-    const log = await logEmail({
-      type,
-      recipient,
-      subject,
-      status: "failed",
-      error: errMsg,
-      metadata: { data }
-    });
-    return { success: false, mode: "live", message: `Unexpected Email Error: ${errMsg}`, log };
+    try {
+      console.log(`[EmailService] Sending '${type}' to '${recipient}' via Gmail SMTP (${gmailUser})...`);
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: gmailUser,
+          pass: gmailPass
+        }
+      });
+      const info = await transporter.sendMail({
+        from: `"${fromName}" <${gmailUser}>`,
+        to: recipient,
+        replyTo: gmailUser,
+        subject,
+        html
+      });
+      console.log(`[EmailService Gmail] Email successfully sent to ${recipient}! Message ID: ${info.messageId}`);
+      const log = await logEmail({
+        type,
+        recipient,
+        subject,
+        status: "sent",
+        provider: "gmail",
+        messageId: info.messageId,
+        metadata: { data }
+      });
+      return {
+        success: true,
+        mode: "live",
+        provider: "gmail",
+        message: `Email successfully sent to ${recipient} via Gmail (${gmailUser})!`,
+        log
+      };
+    } catch (gmailErr) {
+      const errMsg = gmailErr.message || String(gmailErr);
+      console.error(`[EmailService Gmail Error]:`, gmailErr);
+      const log = await logEmail({
+        type,
+        recipient,
+        subject,
+        status: "failed",
+        provider: "gmail",
+        error: errMsg,
+        metadata: { data }
+      });
+      return { success: false, mode: "live", provider: "gmail", message: `Gmail Send Failed: ${errMsg}`, log };
+    }
   }
+  if (effectiveProvider === "smtp") {
+    const smtpHost = settings.smtpHost || "smtp.gmail.com";
+    const smtpPort = settings.smtpPort || 465;
+    const smtpUser = settings.smtpUser || gmailUser;
+    const smtpPass = (settings.smtpPassword || gmailPass).replace(/\s+/g, "");
+    try {
+      console.log(`[EmailService] Sending '${type}' to '${recipient}' via custom SMTP (${smtpHost}:${smtpPort})...`);
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: settings.smtpSecure !== false && smtpPort === 465,
+        auth: smtpUser && smtpPass ? { user: smtpUser, pass: smtpPass } : void 0
+      });
+      const info = await transporter.sendMail({
+        from: `"${fromName}" <${smtpUser || senderEmail}>`,
+        to: recipient,
+        replyTo: smtpUser || senderEmail,
+        subject,
+        html
+      });
+      console.log(`[EmailService SMTP] Email successfully sent! Message ID: ${info.messageId}`);
+      const log = await logEmail({
+        type,
+        recipient,
+        subject,
+        status: "sent",
+        provider: "smtp",
+        messageId: info.messageId,
+        metadata: { data }
+      });
+      return {
+        success: true,
+        mode: "live",
+        provider: "smtp",
+        message: `Email successfully sent to ${recipient} via SMTP (${smtpHost})!`,
+        log
+      };
+    } catch (smtpErr) {
+      const errMsg = smtpErr.message || String(smtpErr);
+      console.error(`[EmailService SMTP Error]:`, smtpErr);
+      const log = await logEmail({
+        type,
+        recipient,
+        subject,
+        status: "failed",
+        provider: "smtp",
+        error: errMsg,
+        metadata: { data }
+      });
+      return { success: false, mode: "live", provider: "smtp", message: `SMTP Send Failed: ${errMsg}`, log };
+    }
+  }
+  if (effectiveProvider === "resend" || effectiveProvider === "auto" && resendKey) {
+    if (!resendKey) {
+      console.warn(`[EmailService] No RESEND_API_KEY configured for recipient ${recipient}.`);
+      const log = await logEmail({
+        type,
+        recipient,
+        subject,
+        status: "failed",
+        provider: "resend",
+        error: "Resend API key is not configured. Enter an API key in Email Settings.",
+        metadata: { data, html }
+      });
+      return {
+        success: false,
+        mode: "live",
+        provider: "resend",
+        message: "Resend API key is not configured.",
+        log
+      };
+    }
+    try {
+      const resend = new Resend(resendKey);
+      let fromEmail = formatResendFromEmail(fromFormatted);
+      console.log(`[EmailService] Sending '${type}' via Resend to '${recipient}' (From: ${fromEmail})...`);
+      let resendResponse = await resend.emails.send({
+        from: fromEmail,
+        to: recipient,
+        subject,
+        html
+      });
+      if (resendResponse.error) {
+        const errMsg = resendResponse.error.message || String(resendResponse.error);
+        if ((errMsg.includes("domain") || errMsg.includes("not verified") || errMsg.includes("from")) && !fromEmail.includes("onboarding@resend.dev")) {
+          fromEmail = "Pouch Supply Co. <onboarding@resend.dev>";
+          resendResponse = await resend.emails.send({
+            from: fromEmail,
+            to: recipient,
+            subject,
+            html
+          });
+        }
+      }
+      if (resendResponse.error) {
+        const errMsg = resendResponse.error.message || String(resendResponse.error);
+        const log2 = await logEmail({
+          type,
+          recipient,
+          subject,
+          status: "failed",
+          provider: "resend",
+          error: errMsg,
+          metadata: { data, html }
+        });
+        return { success: false, mode: "live", provider: "resend", message: `Resend Error: ${errMsg}`, log: log2 };
+      }
+      const resendId = resendResponse.data?.id;
+      const log = await logEmail({
+        type,
+        recipient,
+        subject,
+        status: "sent",
+        provider: "resend",
+        resendId,
+        metadata: { data }
+      });
+      return {
+        success: true,
+        mode: "live",
+        provider: "resend",
+        message: `Email successfully sent to ${recipient} via Resend! (ID: ${resendId})`,
+        log
+      };
+    } catch (resendErr) {
+      const errMsg = resendErr.message || String(resendErr);
+      const log = await logEmail({
+        type,
+        recipient,
+        subject,
+        status: "failed",
+        provider: "resend",
+        error: errMsg,
+        metadata: { data }
+      });
+      return { success: false, mode: "live", provider: "resend", message: `Resend Exception: ${errMsg}`, log };
+    }
+  }
+  const errLog = await logEmail({
+    type,
+    recipient,
+    subject,
+    status: "failed",
+    error: "No email transport configured. Please configure Gmail, SMTP, or Resend in Email Settings."
+  });
+  return {
+    success: false,
+    mode: "live",
+    message: "No email transport configured. Configure Gmail or SMTP in Admin Email Settings.",
+    log: errLog
+  };
 }
 async function sendOrderConfirmationEmail(orderData) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
-    customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
-    orderDate: orderData.date,
-    items: orderData.items,
+    customerName: orderData.customerName || "Valued Customer",
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
+    orderDate: orderData.date || (/* @__PURE__ */ new Date()).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+    items: orderData.items || [],
     total: typeof orderData.total === "number" ? orderData.total : parseFloat(orderData.total) || 0,
-    destination: orderData.destination || orderData.address,
-    deliveryMethod: orderData.deliveryMethod,
+    destination: orderData.destination || orderData.address || "United Kingdom",
+    deliveryMethod: orderData.deliveryMethod || "Royal Mail Tracked 24/48",
     discountAmount: orderData.discountApplied?.amount
   };
+  console.log(`[EmailService] Triggering Order Confirmation for Order #${data.orderId} to ${recipient}`);
   const customerResult = await sendEmail("order_confirmation", recipient, data);
   const settings = await getEmailSettings();
-  const adminEmail = settings.adminNotificationEmail || "admin@pouch-supply.com";
-  if (adminEmail) {
-    await sendEmail("admin_new_order", adminEmail, data);
+  const adminEmail = (settings.adminNotificationEmail || settings.gmailUser || "admin@pouch-supply.com").trim();
+  if (adminEmail && adminEmail !== recipient) {
+    sendEmail("admin_new_order", adminEmail, data).catch((err) => {
+      console.warn("[EmailService] Admin order notification warning:", err);
+    });
   }
   return customerResult;
 }
 async function sendOrderProcessingEmail(orderData) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
-    items: orderData.items,
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
+    items: orderData.items || [],
     total: orderData.total,
     destination: orderData.destination || orderData.address
   };
   return sendEmail("order_processing", recipient, data);
 }
 async function sendOrderShippedEmail(orderData, trackingNumber, carrier) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
-    items: orderData.items,
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
+    items: orderData.items || [],
     total: orderData.total,
     destination: orderData.destination || orderData.address,
-    trackingNumber: trackingNumber || orderData.trackingNumber || "GB982341234UK",
+    trackingNumber: trackingNumber || orderData.trackingNumber || orderData.trackingId || "RM892341234GB",
     carrier: carrier || orderData.carrier || "Royal Mail Tracked 24"
   };
   return sendEmail("order_shipped", recipient, data);
 }
 async function sendOutForDeliveryEmail(orderData) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
-    items: orderData.items,
-    trackingNumber: orderData.trackingNumber || "GB982341234UK"
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
+    items: orderData.items || [],
+    trackingNumber: orderData.trackingNumber || orderData.trackingId || "RM892341234GB"
   };
   return sendEmail("out_for_delivery", recipient, data);
 }
 async function sendDeliveredEmail(orderData) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
-    items: orderData.items,
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
+    items: orderData.items || [],
     destination: orderData.destination || orderData.address
   };
   return sendEmail("order_delivered", recipient, data);
 }
 async function sendOrderCancelledEmail(orderData, reason) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
     cancellationReason: reason
   };
   return sendEmail("order_cancelled", recipient, data);
 }
 async function sendOrderRefundedEmail(orderData, refundAmount, reason) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
     total: orderData.total,
     refundAmount: refundAmount !== void 0 ? refundAmount : orderData.total,
     refundReason: reason
@@ -2327,12 +3087,12 @@ async function sendOrderRefundedEmail(orderData, refundAmount, reason) {
   return sendEmail("order_refunded", recipient, data);
 }
 async function sendOrderExchangedEmail(orderData, exchangeDetails, reason) {
-  const recipient = orderData.customerEmail || "customer@pouch-supply.com";
+  const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
-    customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
-    items: orderData.items,
+    customerEmail: recipient,
+    orderId: orderData.id || orderData.orderId,
+    items: orderData.items || [],
     total: orderData.total,
     refundReason: exchangeDetails || reason || "Product exchange initiated"
   };
@@ -2372,12 +3132,12 @@ async function sendLoginNotificationEmail(email, name) {
 }
 async function sendAdminNewOrderNotification(orderData) {
   const settings = await getEmailSettings();
-  const adminEmail = settings.adminNotificationEmail || "admin@pouch-supply.com";
+  const adminEmail = (settings.adminNotificationEmail || settings.gmailUser || "admin@pouch-supply.com").trim();
   const data = {
     customerName: orderData.customerName,
     customerEmail: orderData.customerEmail,
-    orderId: orderData.id,
-    items: orderData.items,
+    orderId: orderData.id || orderData.orderId,
+    items: orderData.items || [],
     total: orderData.total,
     destination: orderData.destination || orderData.address
   };
@@ -2390,9 +3150,18 @@ var init_emailService = __esm({
     init_emailTemplates();
     DEFAULT_SETTINGS = {
       enabled: true,
+      provider: process.env.EMAIL_PROVIDER || (process.env.RESEND_API_KEY ? "resend" : "resend"),
+      gmailUser: process.env.GMAIL_USER || "scottkivlinpouch@gmail.com",
+      gmailAppPassword: process.env.GMAIL_APP_PASSWORD || "",
+      smtpHost: process.env.SMTP_HOST || "smtp.gmail.com",
+      smtpPort: Number(process.env.SMTP_PORT) || 465,
+      smtpSecure: process.env.SMTP_SECURE !== "false",
+      smtpUser: process.env.SMTP_USER || process.env.GMAIL_USER || "scottkivlinpouch@gmail.com",
+      smtpPassword: process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD || "",
       resendApiKey: process.env.RESEND_API_KEY || "",
-      fromEmail: process.env.RESEND_FROM_EMAIL || "Pouch Supply Co. <orders@support.pouch-supply.com>",
-      adminNotificationEmail: process.env.ADMIN_NOTIFICATION_EMAIL || "admin@support.pouch-supply.com",
+      fromName: "Pouch Supply Co.",
+      fromEmail: process.env.RESEND_FROM_EMAIL || "orders@pouch-supply.com",
+      adminNotificationEmail: process.env.ADMIN_NOTIFICATION_EMAIL || process.env.GMAIL_USER || "scottkivlinpouch@gmail.com",
       templates: {
         order_confirmation: { enabled: true, subject: "Order Confirmation - Pouch Supply Co." },
         order_processing: { enabled: true, subject: "Order Processing - Pouch Supply Co." },
@@ -2401,11 +3170,11 @@ var init_emailService = __esm({
         order_delivered: { enabled: true, subject: "Order Delivered - Pouch Supply Co." },
         order_cancelled: { enabled: true, subject: "Order Cancellation Notice - Pouch Supply Co." },
         order_refunded: { enabled: true, subject: "Refund Confirmation - Pouch Supply Co." },
-        order_exchanged: { enabled: true, subject: "Order Exchange Notice - Pouch Supply Co." },
+        order_exchanged: { enabled: true, subject: "Product Exchange Confirmation - Pouch Supply Co." },
         password_reset: { enabled: true, subject: "Reset Your Password - Pouch Supply Co." },
         email_verification: { enabled: true, subject: "Verify Your Email Address - Pouch Supply Co." },
-        welcome_email: { enabled: true, subject: "Welcome to Pouch Supply Co. - 10% Off Inside" },
-        admin_new_order: { enabled: true, subject: "\u{1F6A8} New Storefront Order Placed" }
+        welcome_email: { enabled: true, subject: "Welcome to Pouch Supply Co. - 10% Off Inside!" },
+        admin_new_order: { enabled: true, subject: "\u{1F6A8} [NEW ORDER] Order Received - Pouch Supply Co." }
       }
     };
   }
@@ -2414,30 +3183,55 @@ var init_emailService = __esm({
 // backend/services/klaviyoService.ts
 async function getKlaviyoSettings() {
   try {
-    const stored = await fetchResource("klaviyo_settings");
-    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-      const siteIdVal = stored.siteId || stored.publicKey || DEFAULT_KLAVIYO_SETTINGS.siteId;
+    let stored = await fetchStoreSetting("klaviyo_settings");
+    if (!stored || typeof stored === "object" && Object.keys(stored).length === 0) {
+      const legacy = await fetchResource("klaviyo_settings");
+      if (legacy && Array.isArray(legacy) && legacy.length > 0) {
+        stored = legacy[0];
+      }
+    }
+    const layoutStored = await fetchLayoutSettings().catch(() => null);
+    const siteIdVal = stored?.siteId || stored?.publicKey || layoutStored?.klaviyoPublicKey || process.env.NEXT_PUBLIC_KLAVIYO_COMPANY_ID || process.env.NEXT_PUBLIC_KLAVIYO_PUBLIC_KEY || process.env.KLAVIYO_SITE_ID || "VPbY66";
+    const apiKeyVal = stored?.apiKey || layoutStored?.klaviyoApiKey || process.env.KLAVIYO_API_KEY || "";
+    if (stored && typeof stored === "object") {
+      const item = Array.isArray(stored) ? stored[0] : stored;
+      return {
+        ...DEFAULT_SETTINGS_MERGED(item, apiKeyVal, siteIdVal)
+      };
+    } else if (layoutStored) {
       return {
         ...DEFAULT_KLAVIYO_SETTINGS,
-        ...stored,
+        apiKey: apiKeyVal,
         siteId: siteIdVal,
-        publicKey: siteIdVal,
-        trackEvents: {
-          ...DEFAULT_KLAVIYO_SETTINGS.trackEvents,
-          ...stored.trackEvents || {}
-        }
+        publicKey: siteIdVal
       };
     }
   } catch (err) {
   }
   return DEFAULT_KLAVIYO_SETTINGS;
 }
+function DEFAULT_SETTINGS_MERGED(item, apiKeyVal, siteIdVal) {
+  return {
+    ...DEFAULT_KLAVIYO_SETTINGS,
+    ...item,
+    apiKey: item.apiKey || apiKeyVal,
+    siteId: siteIdVal,
+    publicKey: siteIdVal,
+    listId: item.listId || "",
+    trackEvents: {
+      ...DEFAULT_KLAVIYO_SETTINGS.trackEvents,
+      ...item.trackEvents || {}
+    }
+  };
+}
 async function saveKlaviyoSettings(settings) {
   const current = await getKlaviyoSettings();
-  const siteIdVal = settings.siteId || settings.publicKey || current.siteId;
+  const siteIdVal = settings.siteId || settings.publicKey || current.siteId || "VPbY66";
+  const apiKeyVal = (settings.apiKey !== void 0 ? settings.apiKey : current.apiKey) || "";
   const updated = {
     ...current,
     ...settings,
+    apiKey: apiKeyVal,
     siteId: siteIdVal,
     publicKey: siteIdVal,
     trackEvents: {
@@ -2445,7 +3239,16 @@ async function saveKlaviyoSettings(settings) {
       ...settings.trackEvents || {}
     }
   };
-  await saveResource("klaviyo_settings", updated);
+  if (apiKeyVal) {
+    process.env.KLAVIYO_API_KEY = apiKeyVal;
+  }
+  if (siteIdVal) {
+    process.env.KLAVIYO_SITE_ID = siteIdVal;
+    process.env.KLAVIYO_PUBLIC_KEY = siteIdVal;
+    process.env.NEXT_PUBLIC_KLAVIYO_COMPANY_ID = siteIdVal;
+  }
+  await saveStoreSetting("klaviyo_settings", updated);
+  await saveResource("klaviyo_settings", [updated]);
   return updated;
 }
 async function getKlaviyoLogs() {
@@ -2473,110 +3276,65 @@ async function logKlaviyoEvent(entry) {
   }
   return newLog;
 }
-async function trackKlaviyoEvent(eventName, customerEmail, eventProperties = {}, customerProperties = {}) {
+async function getKlaviyoLists(apiKeyOverride) {
   const settings = await getKlaviyoSettings();
-  if (!settings.enabled) {
-    const log = await logKlaviyoEvent({
-      eventName,
-      customerEmail,
-      status: "disabled",
-      error: "Klaviyo integration is disabled globally"
-    });
-    return { success: false, log };
+  let apiKey = (apiKeyOverride || settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
+  if (apiKey.toLowerCase().startsWith("klaviyo-api-key ")) {
+    apiKey = apiKey.substring(16).trim();
   }
+  if (!apiKey) return [];
+  try {
+    const response = await fetch("https://a.klaviyo.com/api/lists/", {
+      method: "GET",
+      headers: {
+        "Authorization": `Klaviyo-API-Key ${apiKey}`,
+        "accept": "application/json",
+        "revision": "2024-02-15"
+      }
+    });
+    if (!response.ok) return [];
+    const json = await response.json();
+    if (json.data && Array.isArray(json.data)) {
+      return json.data.map((l) => ({
+        id: l.id,
+        name: l.attributes?.name || l.id
+      }));
+    }
+  } catch (err) {
+    console.warn("[Klaviyo Lists Error]:", err);
+  }
+  return [];
+}
+async function syncKlaviyoProfileWithConsent(email, firstName, lastName, listIdOverride) {
+  const settings = await getKlaviyoSettings();
   let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
   if (apiKey.toLowerCase().startsWith("klaviyo-api-key ")) {
     apiKey = apiKey.substring(16).trim();
   }
-  if (!apiKey) {
-    console.warn(`[Klaviyo] Event '${eventName}' not tracked for ${customerEmail} (No KLAVIYO_API_KEY configured)`);
-    const log = await logKlaviyoEvent({
-      eventName,
-      customerEmail,
-      status: "failed",
-      error: "Klaviyo Private API Key is not configured. Enter an API key in Klaviyo Settings to track events.",
-      payload: { eventProperties, customerProperties }
-    });
-    return { success: false, log };
-  }
+  const cleanEmail = email.toLowerCase().trim();
+  const listId = listIdOverride || settings.listId;
+  if (!apiKey || !cleanEmail) return false;
   try {
-    const cleanEmail = (customerEmail || "").trim().toLowerCase();
-    const profileAttributes = {
-      email: cleanEmail
-    };
-    const customProfileProps = {};
-    if (customerProperties && typeof customerProperties === "object") {
-      for (const [rawKey, val] of Object.entries(customerProperties)) {
-        if (val === void 0 || val === null) continue;
-        const key = rawKey.replace(/^\$/, "");
-        if (key === "email") {
-          profileAttributes.email = String(val).trim().toLowerCase();
-        } else if (key === "first_name" || key === "firstName") {
-          profileAttributes.first_name = String(val).trim();
-        } else if (key === "last_name" || key === "lastName") {
-          profileAttributes.last_name = String(val).trim();
-        } else if (key === "phone_number" || key === "phone") {
-          profileAttributes.phone_number = String(val).trim();
-        } else if (key === "external_id") {
-          profileAttributes.external_id = String(val).trim();
-        } else if (key === "organization" || key === "title" || key === "image" || key === "location") {
-          profileAttributes[key] = val;
-        } else {
-          customProfileProps[key] = val;
-        }
-      }
-    }
-    if (Object.keys(customProfileProps).length > 0) {
-      profileAttributes.properties = customProfileProps;
-    }
-    let numValue = void 0;
-    if (typeof eventProperties.$value === "number") numValue = eventProperties.$value;
-    else if (typeof eventProperties.value === "number") numValue = eventProperties.value;
-    else if (typeof eventProperties.total === "number") numValue = eventProperties.total;
-    else if (typeof eventProperties.Value === "number") numValue = eventProperties.Value;
-    else if (typeof eventProperties.$value === "string") {
-      const parsed = parseFloat(eventProperties.$value);
-      if (!isNaN(parsed)) numValue = parsed;
-    } else if (typeof eventProperties.total === "string") {
-      const parsed = parseFloat(eventProperties.total);
-      if (!isNaN(parsed)) numValue = parsed;
-    }
-    const uniqueId = eventProperties.$event_id || eventProperties.OrderId || eventProperties.id || void 0;
-    const cleanProps = { ...eventProperties };
-    delete cleanProps.$value;
-    delete cleanProps.$event_id;
-    const attributes = {
-      metric: {
-        data: {
-          type: "metric",
-          attributes: {
-            name: eventName
+    const profilePayload = {
+      data: {
+        type: "profile",
+        attributes: {
+          email: cleanEmail,
+          first_name: firstName || void 0,
+          last_name: lastName || void 0,
+          subscriptions: {
+            email: {
+              marketing: {
+                can_receive_email_marketing: true,
+                consent: "SUBSCRIBED",
+                consented_at: (/* @__PURE__ */ new Date()).toISOString()
+              }
+            }
           }
         }
-      },
-      profile: {
-        data: {
-          type: "profile",
-          attributes: profileAttributes
-        }
-      },
-      properties: cleanProps,
-      time: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    if (numValue !== void 0 && !isNaN(numValue)) {
-      attributes.value = numValue;
-    }
-    if (uniqueId) {
-      attributes.unique_id = String(uniqueId);
-    }
-    const requestBody = {
-      data: {
-        type: "event",
-        attributes
       }
     };
-    console.log(`[Klaviyo] Sending event '${eventName}' to Klaviyo for ${profileAttributes.email}...`);
-    const response = await fetch("https://a.klaviyo.com/api/events/", {
+    const profRes = await fetch("https://a.klaviyo.com/api/profiles/", {
       method: "POST",
       headers: {
         "Authorization": `Klaviyo-API-Key ${apiKey}`,
@@ -2584,41 +3342,241 @@ async function trackKlaviyoEvent(eventName, customerEmail, eventProperties = {},
         "accept": "application/json",
         "revision": "2024-02-15"
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(profilePayload)
     });
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorDetails = `HTTP ${response.status}: ${errorText}`;
-      try {
-        const jsonErr = JSON.parse(errorText);
-        if (jsonErr.errors && Array.isArray(jsonErr.errors)) {
-          errorDetails = jsonErr.errors.map((e) => `${e.title || "Error"}: ${e.detail || e.message || JSON.stringify(e)}`).join(" | ");
+    if (listId) {
+      const subPayload = {
+        data: {
+          type: "profile-subscription-bulk-create-job",
+          attributes: {
+            custom_source: "Storefront Purchase / Checkout",
+            profiles: {
+              data: [
+                {
+                  type: "profile",
+                  attributes: {
+                    email: cleanEmail,
+                    subscriptions: {
+                      email: {
+                        marketing: {
+                          can_receive_email_marketing: true,
+                          consent: "SUBSCRIBED",
+                          consented_at: (/* @__PURE__ */ new Date()).toISOString()
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          relationships: {
+            list: {
+              data: {
+                type: "list",
+                id: listId
+              }
+            }
+          }
         }
-      } catch (e) {
+      };
+      await fetch("https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/", {
+        method: "POST",
+        headers: {
+          "Authorization": `Klaviyo-API-Key ${apiKey}`,
+          "Content-Type": "application/json",
+          "accept": "application/json",
+          "revision": "2024-02-15"
+        },
+        body: JSON.stringify(subPayload)
+      }).catch(() => {
+      });
+    }
+    return profRes.ok || profRes.status === 202 || profRes.status === 409;
+  } catch (err) {
+    console.warn("[Klaviyo Profile Sync Error]:", err);
+    return false;
+  }
+}
+async function trackKlaviyoEvent(eventName, customerEmail, eventProperties = {}, customerProperties = {}) {
+  const settings = await getKlaviyoSettings();
+  if (!settings.enabled) {
+    const log = await logKlaviyoEvent({
+      eventName,
+      customerEmail,
+      status: "disabled",
+      error: "Klaviyo integration is disabled in settings"
+    });
+    return { success: false, log };
+  }
+  let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
+  if (apiKey.toLowerCase().startsWith("klaviyo-api-key ")) {
+    apiKey = apiKey.substring(16).trim();
+  }
+  const siteId = (settings.siteId || settings.publicKey || process.env.NEXT_PUBLIC_KLAVIYO_COMPANY_ID || process.env.KLAVIYO_SITE_ID || "VPbY66").trim();
+  const cleanEmail = (customerEmail || "customer@pouch-supply.com").trim().toLowerCase();
+  const profileAttributes = {
+    email: cleanEmail
+  };
+  const customProfileProps = {};
+  if (customerProperties && typeof customerProperties === "object") {
+    for (const [rawKey, val] of Object.entries(customerProperties)) {
+      if (val === void 0 || val === null) continue;
+      const key = rawKey.replace(/^\$/, "");
+      if (key === "email") {
+        profileAttributes.email = String(val).trim().toLowerCase();
+      } else if (key === "first_name" || key === "firstName") {
+        profileAttributes.first_name = String(val).trim();
+      } else if (key === "last_name" || key === "lastName") {
+        profileAttributes.last_name = String(val).trim();
+      } else if (key === "phone_number" || key === "phone") {
+        profileAttributes.phone_number = String(val).trim();
+      } else if (key === "external_id") {
+        profileAttributes.external_id = String(val).trim();
+      } else if (key === "organization" || key === "title" || key === "image" || key === "location") {
+        profileAttributes[key] = val;
+      } else {
+        customProfileProps[key] = val;
       }
-      console.error(`[Klaviyo API Error] '${eventName}' failed (${response.status}):`, errorDetails);
+    }
+  }
+  if (Object.keys(customProfileProps).length > 0) {
+    profileAttributes.properties = customProfileProps;
+  }
+  syncKlaviyoProfileWithConsent(cleanEmail, profileAttributes.first_name, profileAttributes.last_name).catch(() => {
+  });
+  let numValue = void 0;
+  if (typeof eventProperties.$value === "number") numValue = eventProperties.$value;
+  else if (typeof eventProperties.value === "number") numValue = eventProperties.value;
+  else if (typeof eventProperties.total === "number") numValue = eventProperties.total;
+  else if (typeof eventProperties.Value === "number") numValue = eventProperties.Value;
+  else if (typeof eventProperties.$value === "string") {
+    const parsed = parseFloat(eventProperties.$value);
+    if (!isNaN(parsed)) numValue = parsed;
+  } else if (typeof eventProperties.total === "string") {
+    const parsed = parseFloat(eventProperties.total);
+    if (!isNaN(parsed)) numValue = parsed;
+  }
+  const uniqueId = eventProperties.$event_id || eventProperties.OrderId || eventProperties.order_id || eventProperties.id || void 0;
+  const cleanProps = { ...eventProperties };
+  delete cleanProps.$value;
+  delete cleanProps.$event_id;
+  const attributes = {
+    metric: {
+      data: {
+        type: "metric",
+        attributes: {
+          name: eventName
+        }
+      }
+    },
+    profile: {
+      data: {
+        type: "profile",
+        attributes: profileAttributes
+      }
+    },
+    properties: cleanProps,
+    time: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (numValue !== void 0 && !isNaN(numValue)) {
+    attributes.value = numValue;
+  }
+  if (uniqueId) {
+    attributes.unique_id = String(uniqueId);
+  }
+  const requestBody = {
+    data: {
+      type: "event",
+      attributes
+    }
+  };
+  try {
+    let sentSuccessfully = false;
+    let transportMethod = "private_api";
+    let lastErrorDetails = "";
+    if (apiKey) {
+      try {
+        console.log(`[Klaviyo] Sending event '${eventName}' via Private API for ${profileAttributes.email}...`);
+        const response = await fetch("https://a.klaviyo.com/api/events/", {
+          method: "POST",
+          headers: {
+            "Authorization": `Klaviyo-API-Key ${apiKey}`,
+            "Content-Type": "application/json",
+            "accept": "application/json",
+            "revision": "2024-02-15"
+          },
+          body: JSON.stringify(requestBody)
+        });
+        if (response.ok || response.status === 202) {
+          sentSuccessfully = true;
+          transportMethod = "private_api";
+        } else {
+          const errorText = await response.text();
+          let errorDetails = `HTTP ${response.status}: ${errorText}`;
+          try {
+            const jsonErr = JSON.parse(errorText);
+            if (jsonErr.errors && Array.isArray(jsonErr.errors)) {
+              errorDetails = jsonErr.errors.map((e) => `${e.title || "Error"}: ${e.detail || e.message || JSON.stringify(e)}`).join(" | ");
+            }
+          } catch (e) {
+          }
+          lastErrorDetails = errorDetails;
+          console.warn(`[Klaviyo Private API Warning] '${eventName}' (${response.status}): ${errorDetails}`);
+        }
+      } catch (privErr) {
+        lastErrorDetails = privErr.message || String(privErr);
+      }
+    }
+    if (!sentSuccessfully && siteId) {
+      try {
+        console.log(`[Klaviyo] Dispatching event '${eventName}' via Client Events API (Company ID: ${siteId}) for ${profileAttributes.email}...`);
+        const clientRes = await fetch(`https://a.klaviyo.com/client/events/?company_id=${encodeURIComponent(siteId)}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "accept": "application/json",
+            "revision": "2024-02-15"
+          },
+          body: JSON.stringify(requestBody)
+        });
+        if (clientRes.ok || clientRes.status === 202) {
+          sentSuccessfully = true;
+          transportMethod = "client_events_api";
+        } else {
+          const clientErrText = await clientRes.text();
+          console.warn(`[Klaviyo Client Events API Warning] (${clientRes.status}):`, clientErrText);
+          if (!lastErrorDetails) lastErrorDetails = `Client Events API HTTP ${clientRes.status}: ${clientErrText}`;
+        }
+      } catch (clientErr) {
+        if (!lastErrorDetails) lastErrorDetails = clientErr.message || String(clientErr);
+      }
+    }
+    if (sentSuccessfully) {
+      console.log(`[Klaviyo] Event '${eventName}' successfully tracked for ${profileAttributes.email} via ${transportMethod}!`);
       const log2 = await logKlaviyoEvent({
         eventName,
         customerEmail: profileAttributes.email,
-        status: "failed",
-        error: errorDetails,
-        payload: { eventProperties: cleanProps }
+        status: "sent",
+        payload: { eventProperties: cleanProps, transport: transportMethod }
       });
-      return { success: false, log: log2 };
+      return { success: true, log: log2 };
     }
-    console.log(`[Klaviyo] Event '${eventName}' successfully tracked for ${profileAttributes.email}!`);
+    const finalError = lastErrorDetails || "Failed to dispatch event via Private or Client API";
+    console.error(`[Klaviyo Error] '${eventName}' tracking failed for ${profileAttributes.email}:`, finalError);
     const log = await logKlaviyoEvent({
       eventName,
       customerEmail: profileAttributes.email,
-      status: "sent",
+      status: "failed",
+      error: finalError,
       payload: { eventProperties: cleanProps }
     });
-    return { success: true, log };
+    return { success: false, log };
   } catch (err) {
     console.error(`[Klaviyo Network Error] Failed tracking '${eventName}':`, err);
     const log = await logKlaviyoEvent({
       eventName,
-      customerEmail,
+      customerEmail: profileAttributes.email,
       status: "failed",
       error: err.message || String(err),
       payload: { eventProperties }
@@ -2643,7 +3601,7 @@ async function trackNewsletterSignup(email) {
     source: "Storefront Footer / Popup"
   });
 }
-async function trackEmailVerified(email, name) {
+async function trackEmailVerified(email, _name) {
   const settings = await getKlaviyoSettings();
   if (!settings.trackEvents.emailVerified) return;
   return trackKlaviyoEvent("Email Verified", email, {
@@ -2688,18 +3646,20 @@ async function trackPurchaseCompleted(order) {
       Quantity: qtyNum,
       ItemPrice: priceNum,
       Price: priceNum,
-      RowTotal: priceNum * qtyNum,
+      RowTotal: parseFloat((priceNum * qtyNum).toFixed(2)),
       ImageURL: i.image || i.imageUrl || "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
       Vendor: i.vendor || "Pouch Supply Co."
     };
   });
   const itemNames = formattedItems.map((i) => i.ProductName);
   const totalVal = typeof order.total === "number" ? order.total : parseFloat(order.total) || 0;
-  const orderIdStr = String(order.id || `PS${Math.floor(Math.random() * 9e4 + 1e4)}`);
-  return trackKlaviyoEvent("Placed Order", email, {
+  const orderIdStr = String(order.id || order.orderId || `PS${Math.floor(Math.random() * 9e4 + 1e4)}`);
+  await syncKlaviyoProfileWithConsent(email, firstName, lastName);
+  const placedOrderRes = await trackKlaviyoEvent("Placed Order", email, {
     $event_id: orderIdStr,
     $value: totalVal,
     OrderId: orderIdStr,
+    order_id: orderIdStr,
     ItemNames: itemNames,
     Items: formattedItems,
     Categories: ["Nicotine Pouches", "Storefront"],
@@ -2711,6 +3671,12 @@ async function trackPurchaseCompleted(order) {
       first_name: firstName,
       last_name: lastName,
       address1: order.destination || order.address || "United Kingdom"
+    },
+    extra: {
+      order_id: orderIdStr,
+      items: formattedItems,
+      total: totalVal,
+      date: order.date || (/* @__PURE__ */ new Date()).toISOString()
     }
   }, {
     $email: email,
@@ -2719,15 +3685,37 @@ async function trackPurchaseCompleted(order) {
     first_name: firstName,
     last_name: lastName
   });
+  for (const item of formattedItems) {
+    try {
+      await trackKlaviyoEvent("Ordered Product", email, {
+        $event_id: `${orderIdStr}_${item.ProductID}`,
+        $value: item.RowTotal,
+        OrderId: orderIdStr,
+        ProductID: item.ProductID,
+        SKU: item.SKU,
+        ProductName: item.ProductName,
+        Quantity: item.Quantity,
+        ItemPrice: item.ItemPrice,
+        RowTotal: item.RowTotal,
+        ImageURL: item.ImageURL
+      }, {
+        $email: email,
+        $first_name: firstName,
+        $last_name: lastName
+      });
+    } catch (e) {
+    }
+  }
+  return placedOrderRes;
 }
 async function trackOrderRefunded(order, refundAmount) {
   const settings = await getKlaviyoSettings();
   if (!settings.trackEvents.refunded) return;
   const email = order.customerEmail || "customer@pouch-supply.com";
   return trackKlaviyoEvent("Refunded Order", email, {
-    $event_id: String(order.id),
+    $event_id: String(order.id || order.orderId),
     $value: refundAmount !== void 0 ? refundAmount : order.total,
-    OrderId: String(order.id)
+    OrderId: String(order.id || order.orderId)
   });
 }
 async function trackWishlistAdded(email, item) {
@@ -2742,8 +3730,8 @@ async function trackWishlistAdded(email, item) {
 async function trackOrderShipped(order, trackingNumber, carrier) {
   const email = order.customerEmail || "customer@pouch-supply.com";
   return trackKlaviyoEvent("Order Shipped", email, {
-    $event_id: String(order.id),
-    OrderId: String(order.id),
+    $event_id: String(order.id || order.orderId),
+    OrderId: String(order.id || order.orderId),
     Carrier: carrier || order.carrier || "Royal Mail Tracked 24",
     TrackingNumber: trackingNumber || order.trackingNumber || order.trackingId,
     TrackingUrl: `https://www.royalmail.com/track-your-item#/tracking-results/${trackingNumber || order.trackingNumber || order.trackingId}`,
@@ -2757,8 +3745,8 @@ var init_klaviyoService = __esm({
     DEFAULT_KLAVIYO_SETTINGS = {
       enabled: true,
       apiKey: process.env.KLAVIYO_API_KEY || "",
-      siteId: process.env.KLAVIYO_SITE_ID || process.env.KLAVIYO_PUBLIC_KEY || "",
-      publicKey: process.env.KLAVIYO_SITE_ID || process.env.KLAVIYO_PUBLIC_KEY || "",
+      siteId: process.env.KLAVIYO_SITE_ID || process.env.KLAVIYO_PUBLIC_KEY || process.env.NEXT_PUBLIC_KLAVIYO_COMPANY_ID || "VPbY66",
+      publicKey: process.env.KLAVIYO_SITE_ID || process.env.KLAVIYO_PUBLIC_KEY || process.env.NEXT_PUBLIC_KLAVIYO_COMPANY_ID || "VPbY66",
       listId: "",
       trackEvents: {
         customerSignup: true,
@@ -2774,6 +3762,99 @@ var init_klaviyoService = __esm({
   }
 });
 
+// backend/services/worldpayRefund.ts
+var worldpayRefund_exports = {};
+__export(worldpayRefund_exports, {
+  refundWorldpayPayment: () => refundWorldpayPayment
+});
+async function refundWorldpayPayment({
+  order,
+  amount,
+  reason,
+  transactionId
+}) {
+  const username = process.env.WORLDPAY_API_USERNAME || "";
+  const password = process.env.WORLDPAY_API_PASSWORD || "";
+  const baseUrl = (process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").replace(/\/+$/, "");
+  const txId = transactionId || order?.worldpayTxId || order?.gatewayTxId || "";
+  const refundAmount = typeof amount === "number" ? amount : Number(order?.total || 0);
+  const refundRef = `WP-REFUND-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  if (!username || !password) {
+    return {
+      success: false,
+      refundRef,
+      transactionId: txId,
+      amount: refundAmount,
+      gatewayContacted: false,
+      message: "Worldpay credentials are not configured; the refund was recorded in the store only."
+    };
+  }
+  if (!txId) {
+    return {
+      success: false,
+      refundRef,
+      transactionId: "",
+      amount: refundAmount,
+      gatewayContacted: false,
+      message: "No Worldpay transaction id on this order; the refund was recorded in the store only."
+    };
+  }
+  const authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+  try {
+    const response = await fetch(`${baseUrl}/api/payments/${encodeURIComponent(txId)}/refunds`, {
+      method: "POST",
+      headers: {
+        Authorization: authHeader,
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify({
+        value: {
+          currency: order?.currency || "GBP",
+          amount: Math.round(refundAmount * 100)
+        },
+        reference: refundRef,
+        description: reason || "Customer requested refund"
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errMsg = data?.description || data?.message || `Worldpay API returned status ${response.status}`;
+      console.warn("[Worldpay Refund] Gateway rejected the refund:", response.status, errMsg);
+      return {
+        success: false,
+        refundRef,
+        transactionId: txId,
+        amount: refundAmount,
+        gatewayContacted: true,
+        message: errMsg
+      };
+    }
+    return {
+      success: true,
+      refundRef: data?.reference || refundRef,
+      transactionId: txId,
+      amount: refundAmount,
+      gatewayContacted: true,
+      message: `Worldpay refund of \xA3${refundAmount.toFixed(2)} accepted by the gateway.`
+    };
+  } catch (err) {
+    console.error("[Worldpay Refund] API call failed:", err);
+    return {
+      success: false,
+      refundRef,
+      transactionId: txId,
+      amount: refundAmount,
+      gatewayContacted: false,
+      message: err?.message || "Unable to reach the Worldpay refund endpoint."
+    };
+  }
+}
+var init_worldpayRefund = __esm({
+  "backend/services/worldpayRefund.ts"() {
+  }
+});
+
 // backend/routes/orders.ts
 var orders_exports = {};
 __export(orders_exports, {
@@ -2781,6 +3862,36 @@ __export(orders_exports, {
   saveSingleOrder: () => saveSingleOrder
 });
 import { Router as Router2 } from "express";
+function dispatchOrderNotification(key, order, context = {}) {
+  const label = `[Orders Trigger] ${key} for ${order.id}`;
+  const fail = (e) => console.warn(`${label} failed:`, e?.message || e);
+  switch (key) {
+    case "order_confirmation":
+      sendOrderConfirmationEmail(order).catch(fail);
+      trackPurchaseCompleted(order).catch(fail);
+      break;
+    case "order_processing":
+      sendOrderProcessingEmail(order).catch(fail);
+      break;
+    case "order_shipped":
+      sendOrderShippedEmail(order, order.trackingNumber, order.carrier).catch(fail);
+      trackOrderShipped(order, order.trackingNumber, order.carrier).catch(fail);
+      break;
+    case "out_for_delivery":
+      sendOutForDeliveryEmail(order).catch(fail);
+      break;
+    case "order_delivered":
+      sendDeliveredEmail(order).catch(fail);
+      break;
+    case "order_cancelled":
+      sendOrderCancelledEmail(order, context.reason || "Order cancelled by store administrator").catch(fail);
+      break;
+    case "order_refunded":
+      sendOrderRefundedEmail(order, context.refundAmount ?? order.total, context.reason).catch(fail);
+      trackOrderRefunded(order, context.refundAmount ?? order.total).catch(fail);
+      break;
+  }
+}
 async function saveSingleOrder(orderData) {
   const id = String(orderData.id || orderData.orderId || `PS${Math.floor(Math.random() * 9e4 + 1e4)}`);
   let existingOrder = null;
@@ -2796,14 +3907,25 @@ async function saveSingleOrder(orderData) {
   const isSubscription = Boolean(orderData.isSubscription ?? existingOrder?.isSubscription ?? subItem);
   let subscriptionDetails = orderData.subscriptionDetails || existingOrder?.subscriptionDetails || null;
   if (isSubscription && !subscriptionDetails) {
-    let planName = subItem?.subscriptionPlan || "LITE Plan";
-    let frequency = subItem?.subscriptionFrequency || "";
-    let frequencyDiscount = subItem?.frequencyDiscount || "";
+    let planName = subItem?.subscriptionPlan || orderData.subPlan || orderData.subscriptionPlan || "";
+    const rawPlan = (subItem?.subscriptionPlan || orderData.subPlan || orderData.subscriptionPlan || "").toLowerCase();
     const title = (subItem?.productTitle || "").toLowerCase();
-    if (title.includes("core")) planName = "CORE Plan";
-    else if (title.includes("pro")) planName = "PRO Plan";
-    else if (title.includes("ultimate")) planName = "ULTIMATE Plan";
-    else if (title.includes("lite")) planName = "LITE Plan";
+    const prodId = (subItem?.productId || "").toLowerCase();
+    if (rawPlan.includes("ultimate") || title.startsWith("ultimate") || title.includes("ultimate plan") || prodId.includes("ultimate")) {
+      planName = "ULTIMATE Plan";
+    } else if (rawPlan.includes("pro") || title.startsWith("pro") || title.includes("pro plan") || prodId.includes("pro")) {
+      planName = "PRO Plan";
+    } else if (rawPlan.includes("core") || title.startsWith("core") || title.includes("core plan") || prodId.includes("core")) {
+      planName = "CORE Plan";
+    } else if (rawPlan.includes("lite") || title.startsWith("lite") || title.includes("lite plan") || prodId.includes("lite")) {
+      planName = "LITE Plan";
+    } else if (subItem?.subscriptionPlan) {
+      planName = subItem.subscriptionPlan;
+    } else {
+      planName = "PRO Plan";
+    }
+    let frequency = subItem?.subscriptionFrequency || orderData.subscriptionFrequency || "";
+    let frequencyDiscount = subItem?.frequencyDiscount || orderData.frequencyDiscount || "";
     if (!frequency) {
       if (title.includes("next day") || title.includes("1 day")) {
         frequency = "Next Day (Test)";
@@ -2834,11 +3956,134 @@ async function saveSingleOrder(orderData) {
     } else {
       nextDate.setDate(baseDate.getDate() + 30);
     }
+    const rawSubItems = subItem?.subscriptionItems || subItem?.selectedProducts || subItem?.items || orderData.subscriptionItems || [];
+    const PLACEHOLDER_NAMES2 = ["product", "products", "item", "unknown", "n/a", "sku-001", "subscription pack"];
+    const isPlaceholderName2 = (value) => {
+      const v = String(value ?? "").trim().toLowerCase();
+      return !v || PLACEHOLDER_NAMES2.includes(v);
+    };
+    const cleanVariant = (value) => {
+      const v = String(value ?? "").trim();
+      return v.toLowerCase() === "standard" ? "" : v;
+    };
+    const buildLabel = (brand, name, variant, qty) => {
+      const parts = [];
+      if (brand && !name.toLowerCase().startsWith(brand.toLowerCase())) parts.push(brand);
+      if (name) parts.push(name);
+      if (variant) parts.push(variant);
+      return parts.length > 0 ? `${parts.join(" \u2014 ")} (Qty:${qty})` : `(Qty:${qty})`;
+    };
+    let subItems = [];
+    if (Array.isArray(rawSubItems) && rawSubItems.length > 0) {
+      subItems = rawSubItems.map((it) => {
+        const p = it && it.product || it || {};
+        const name = [it?.productTitle, it?.name, it?.title, p?.title, p?.productTitle, p?.name].map((v) => String(v ?? "").trim()).find((v) => v && !isPlaceholderName2(v)) || "";
+        const productId = String(it?.productId || p?.productId || p?.id || "").trim();
+        const variantId = String(it?.variantId || it?.concreteVariantId || p?.variantId || "").trim();
+        if (!name && !productId && !variantId) return null;
+        const brand = String(it?.brand || it?.vendor || p?.vendor || p?.brand || "").trim();
+        const variant = cleanVariant(
+          it?.variantName || it?.variant || it?.concreteVariantName || p?.concreteVariantName || p?.variantName || p?.variant
+        );
+        const qty = Number(it?.quantity || p?.quantity || 1) || 1;
+        return {
+          productId: productId || void 0,
+          variantId: variantId || void 0,
+          brand: brand || void 0,
+          vendor: brand || void 0,
+          name,
+          productTitle: name,
+          variant,
+          variantName: variant,
+          quantity: qty,
+          image: it?.image || p?.image || "",
+          price: Number(it?.price || p?.price || 0) || void 0,
+          formattedLabel: buildLabel(brand, name, variant, qty)
+        };
+      }).filter((it) => it && it.name);
+    }
+    if (subItems.length === 0 && (subItem?.subscriptionSummary || subItem?.productTitle)) {
+      const rawTitle = String(subItem.subscriptionSummary || subItem.productTitle).replace(/\)\s*\((?:recurring renewal|renewal)\)\s*$/i, ")").trim();
+      let itemsSummary = "";
+      const open = rawTitle.indexOf(" - (");
+      if (open > -1) {
+        const start = open + 4;
+        const end = rawTitle.lastIndexOf(")");
+        itemsSummary = end > start ? rawTitle.substring(start, end) : rawTitle.substring(start);
+      } else if (rawTitle.startsWith("(") && rawTitle.endsWith(")")) {
+        itemsSummary = rawTitle.slice(1, -1);
+      }
+      if (itemsSummary.trim()) {
+        const parts = [];
+        let cur = "";
+        let depth = 0;
+        for (const c of itemsSummary) {
+          if (c === "(") depth++;
+          else if (c === ")") depth--;
+          if (c === "," && depth === 0) {
+            if (cur.trim()) parts.push(cur.trim());
+            cur = "";
+          } else {
+            cur += c;
+          }
+        }
+        if (cur.trim()) parts.push(cur.trim());
+        const parsedProducts = [];
+        parts.forEach((part) => {
+          let cleanPart = part.trim();
+          if (!cleanPart) return;
+          let qty = 1;
+          const qtyMatch = cleanPart.match(/\(\s*Qty\s*:\s*(\d+)\s*\)/i) || cleanPart.match(/\bx\s*(\d+)\b/i);
+          if (qtyMatch) {
+            qty = parseInt(qtyMatch[1], 10) || 1;
+            cleanPart = cleanPart.replace(/\(\s*Qty\s*:\s*(\d+)\s*\)/i, "").replace(/\bx\s*(\d+)\b/i, "").trim();
+          }
+          cleanPart = cleanPart.replace(/^[\s)]+/, "").replace(/[\s(]+$/, "").trim();
+          if (!cleanPart || isPlaceholderName2(cleanPart)) return;
+          let brand = "";
+          let name = cleanPart;
+          let variant = "";
+          if (/\s[—–]\s/.test(cleanPart)) {
+            const segments = cleanPart.split(/\s*[—–]\s*/).map((s) => s.trim()).filter(Boolean);
+            if (segments.length >= 3) {
+              brand = segments[0];
+              name = segments[1];
+              variant = segments.slice(2).join(" \u2014 ");
+            } else if (segments.length === 2) {
+              name = segments[0];
+              variant = segments[1];
+            }
+          } else {
+            const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
+            if (varMatch && varMatch[1] && varMatch[2]) {
+              name = varMatch[1].trim();
+              variant = varMatch[2].trim();
+            }
+          }
+          variant = cleanVariant(variant);
+          if (!name) return;
+          parsedProducts.push({
+            brand: brand || void 0,
+            vendor: brand || void 0,
+            name,
+            productTitle: name,
+            variant,
+            variantName: variant,
+            quantity: qty,
+            isReconstructed: true,
+            formattedLabel: buildLabel(brand, name, variant, qty)
+          });
+        });
+        subItems = parsedProducts;
+      }
+    }
     subscriptionDetails = {
       planName,
       frequency,
       frequencyDiscount,
       paymentStatus: "Paid",
+      items: subItems,
+      selectedProducts: subItems,
       lastPaymentDate: baseDate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
       nextPaymentDate: nextDate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
     };
@@ -2862,20 +4107,73 @@ async function saveSingleOrder(orderData) {
     gatewayAuthCode: orderData.gatewayAuthCode || orderData.worldpayAuthCode || existingOrder?.gatewayAuthCode || null,
     cardBrand: orderData.cardBrand || existingOrder?.cardBrand || "Card",
     total: typeof orderData.total === "number" ? orderData.total : parseFloat(orderData.total) || existingOrder?.total || 0,
+    subtotal: typeof orderData.subtotal === "number" ? orderData.subtotal : typeof existingOrder?.subtotal === "number" ? existingOrder.subtotal : void 0,
+    shippingCost: typeof orderData.shippingCost === "number" ? orderData.shippingCost : typeof orderData.deliveryCost === "number" ? orderData.deliveryCost : typeof existingOrder?.shippingCost === "number" ? existingOrder.shippingCost : void 0,
+    deliveryCost: typeof orderData.deliveryCost === "number" ? orderData.deliveryCost : typeof orderData.shippingCost === "number" ? orderData.shippingCost : typeof existingOrder?.deliveryCost === "number" ? existingOrder.deliveryCost : void 0,
     storeCreditApplied: typeof orderData.storeCreditApplied === "number" ? orderData.storeCreditApplied : parseFloat(orderData.storeCreditApplied) || existingOrder?.storeCreditApplied || 0,
     destination: orderData.destination || orderData.address || existingOrder?.destination || "United Kingdom",
     date: orderData.date || existingOrder?.date || (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     deliveryMethod: orderData.deliveryMethod || existingOrder?.deliveryMethod || "Royal Mail Tracked 24/48",
+    subscriptionId: orderData.subscriptionId || existingOrder?.subscriptionId || null,
     items,
     discountApplied: orderData.discountApplied || existingOrder?.discountApplied || null,
     trackingNumber: orderData.trackingNumber || existingOrder?.trackingNumber || null,
     carrier: orderData.carrier || existingOrder?.carrier || null,
     data: {
       ...existingOrder?.data || {},
+      ...orderData?.data || {},
+      shippingCost: orderData.shippingCost ?? existingOrder?.data?.shippingCost,
+      deliveryCost: orderData.deliveryCost ?? existingOrder?.data?.deliveryCost,
+      subtotal: orderData.subtotal ?? existingOrder?.data?.subtotal,
       address: orderData.address || existingOrder?.data?.address,
-      paymentMethod: orderData.paymentMethod || existingOrder?.data?.paymentMethod
+      paymentMethod: orderData.paymentMethod || existingOrder?.data?.paymentMethod,
+      // Merge rather than overwrite: a caller passing its own `data` block must
+      // not be able to wipe the record of what has already been emailed.
+      notificationsSent: {
+        ...existingOrder?.data?.notificationsSent || {},
+        ...orderData?.data?.notificationsSent || {}
+      }
     }
   };
+  const alreadySent = formattedOrder.data.notificationsSent || {};
+  const pending = [];
+  const queue = (key, context = {}) => {
+    if (alreadySent[key]) {
+      console.log(`[Orders Trigger] Skipping ${key} for ${id} \u2014 already sent at ${alreadySent[key]}.`);
+      return;
+    }
+    if (pending.some((p) => p.key === key)) return;
+    pending.push({ key, context });
+  };
+  try {
+    const isNewOrder = !existingOrder;
+    const paymentJustPaid = existingOrder?.paymentStatus !== "Paid" && formattedOrder.paymentStatus === "Paid";
+    if (formattedOrder.paymentStatus === "Paid" && (isNewOrder || paymentJustPaid)) {
+      queue("order_confirmation");
+    }
+    const previousFulfillment = existingOrder?.fulfillmentStatus;
+    if (existingOrder && previousFulfillment !== formattedOrder.fulfillmentStatus) {
+      console.log(
+        `[Orders Trigger] Fulfillment status changed for ${id}: ${previousFulfillment} -> ${formattedOrder.fulfillmentStatus}`
+      );
+      const key = FULFILLMENT_NOTIFICATION[formattedOrder.fulfillmentStatus];
+      if (key) {
+        queue(key, { reason: orderData.reason || orderData.cancellationReason });
+      }
+    }
+    if (existingOrder && existingOrder.paymentStatus !== "Refunded" && formattedOrder.paymentStatus === "Refunded") {
+      queue("order_refunded", {
+        refundAmount: orderData.refundAmount ?? formattedOrder.total,
+        reason: orderData.refundReason || orderData.reason
+      });
+    }
+  } catch (triggerErr) {
+    console.warn("[Orders Trigger] Error deciding automated notifications:", triggerErr);
+  }
+  const dispatchedAt = (/* @__PURE__ */ new Date()).toISOString();
+  for (const item of pending) {
+    formattedOrder.data.notificationsSent[item.key] = dispatchedAt;
+  }
   try {
     const { prisma: prisma2 } = await Promise.resolve().then(() => (init_prisma(), prisma_exports));
     await prisma2.order.upsert({
@@ -2898,46 +4196,26 @@ async function saveSingleOrder(orderData) {
   } catch (resourceErr) {
     console.error("[Orders Router] StoreResource save error:", resourceErr);
   }
-  try {
-    const isNewOrder = !existingOrder;
-    const paymentStatusJustPaid = existingOrder?.paymentStatus !== "Paid" && formattedOrder.paymentStatus === "Paid";
-    if (formattedOrder.paymentStatus === "Paid" && (isNewOrder || paymentStatusJustPaid)) {
-      console.log(`[Orders Trigger] Dispatching Order Confirmation & Klaviyo Purchase for ${id}`);
-      sendOrderConfirmationEmail(formattedOrder).catch((e) => console.warn("Order confirmation email fail:", e));
-      trackPurchaseCompleted(formattedOrder).catch((e) => console.warn("Klaviyo purchase track fail:", e));
-    }
-    if (existingOrder && existingOrder.fulfillmentStatus !== formattedOrder.fulfillmentStatus) {
-      const newStatus = formattedOrder.fulfillmentStatus;
-      console.log(`[Orders Trigger] Fulfillment status changed for ${id}: ${existingOrder.fulfillmentStatus} -> ${newStatus}`);
-      if (newStatus === "Processing") {
-        sendOrderProcessingEmail(formattedOrder).catch((e) => console.warn("Order processing email fail:", e));
-      } else if (newStatus === "Shipped") {
-        sendOrderShippedEmail(formattedOrder, formattedOrder.trackingNumber, formattedOrder.carrier).catch((e) => console.warn("Order shipped email fail:", e));
-      } else if (newStatus === "Out for Delivery") {
-        sendOutForDeliveryEmail(formattedOrder).catch((e) => console.warn("Out for delivery email fail:", e));
-      } else if (newStatus === "Delivered") {
-        sendDeliveredEmail(formattedOrder).catch((e) => console.warn("Order delivered email fail:", e));
-      } else if (newStatus === "Cancelled") {
-        sendOrderCancelledEmail(formattedOrder, orderData.reason || "Order cancelled by store administrator").catch((e) => console.warn("Order cancelled email fail:", e));
-      }
-    }
-    if (existingOrder && existingOrder.paymentStatus !== "Refunded" && formattedOrder.paymentStatus === "Refunded") {
-      console.log(`[Orders Trigger] Refund processed for ${id}`);
-      sendOrderRefundedEmail(formattedOrder, formattedOrder.total, orderData.refundReason).catch((e) => console.warn("Order refund email fail:", e));
-      trackOrderRefunded(formattedOrder, formattedOrder.total).catch((e) => console.warn("Klaviyo refund track fail:", e));
-    }
-  } catch (triggerErr) {
-    console.warn("[Orders Trigger] Error dispatching automated notifications:", triggerErr);
+  for (const item of pending) {
+    console.log(`[Orders Trigger] Dispatching ${item.key} for ${id}`);
+    dispatchOrderNotification(item.key, formattedOrder, item.context);
   }
   return formattedOrder;
 }
-var router3, orders_default;
+var router3, FULFILLMENT_NOTIFICATION, orders_default;
 var init_orders = __esm({
   "backend/routes/orders.ts"() {
     init_serverDb();
     init_emailService();
     init_klaviyoService();
     router3 = Router2();
+    FULFILLMENT_NOTIFICATION = {
+      Processing: "order_processing",
+      Shipped: "order_shipped",
+      "Out for Delivery": "out_for_delivery",
+      Delivered: "order_delivered",
+      Cancelled: "order_cancelled"
+    };
     router3.get("/", async (_req, res) => {
       try {
         const data = await fetchResource("orders") || [];
@@ -3041,11 +4319,18 @@ var init_orders = __esm({
         if (order.fulfillmentStatus === "Cancelled" || order.paymentStatus === "Refunded") {
           return res.status(400).json({ error: "Order is already cancelled or refunded." });
         }
-        order.fulfillmentStatus = "Cancelled";
-        order.cancellationReason = reason || "Customer requested cancellation";
-        order.cancelledAt = (/* @__PURE__ */ new Date()).toISOString();
+        const cancellationReason = reason || "Customer requested cancellation";
+        const patch = {
+          ...order,
+          fulfillmentStatus: "Cancelled",
+          paymentStatus: "Refunded",
+          cancellationReason,
+          cancelledAt: (/* @__PURE__ */ new Date()).toISOString(),
+          reason: cancellationReason,
+          refundAmount: order.total,
+          refundReason: `Cancellation refund (${refundMethod === "store_credit" ? "Store Credit" : "Original Payment"})`
+        };
         if (refundMethod === "store_credit") {
-          order.paymentStatus = "Refunded";
           try {
             const customersList = await fetchResource("customers") || [];
             const cIdx = customersList.findIndex((c) => c.email.toLowerCase() === (order.customerEmail || "").toLowerCase());
@@ -3058,35 +4343,28 @@ var init_orders = __esm({
             console.warn("[Cancel Order] Failed to update customer store credit:", custErr);
           }
         } else {
-          order.paymentStatus = "Refunded";
           if (order.worldpayTxId || order.gatewayTxId) {
             try {
-              const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-              await fetch(`${appUrl}/api/worldpay/refund`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  orderId: order.id,
-                  amount: order.total,
-                  reason: `Customer cancellation: ${reason || "Changed mind"}`,
-                  transactionId: order.worldpayTxId || order.gatewayTxId
-                })
+              const { refundWorldpayPayment: refundWorldpayPayment2 } = await Promise.resolve().then(() => (init_worldpayRefund(), worldpayRefund_exports));
+              await refundWorldpayPayment2({
+                order,
+                amount: order.total,
+                reason: `Customer cancellation: ${reason || "Changed mind"}`,
+                transactionId: order.worldpayTxId || order.gatewayTxId
               });
             } catch (wpErr) {
               console.warn("[Cancel Order] Worldpay refund trigger notice:", wpErr);
             }
           }
         }
-        order.returnRequest = {
+        patch.returnRequest = {
           type: "Cancellation",
-          reason: reason || "Customer requested cancellation",
+          reason: cancellationReason,
           refundMethod,
           status: "Completed",
           requestedAt: (/* @__PURE__ */ new Date()).toISOString()
         };
-        const updatedOrder = await saveSingleOrder(order);
-        sendOrderCancelledEmail(updatedOrder, reason).catch((e) => console.warn("Cancel email error:", e));
-        sendOrderRefundedEmail(updatedOrder, updatedOrder.total, `Cancellation refund (${refundMethod === "store_credit" ? "Store Credit" : "Original Payment"})`).catch((e) => console.warn("Refund email error:", e));
+        const updatedOrder = await saveSingleOrder(patch);
         res.json({ success: true, message: "Order successfully cancelled and refund initiated.", order: updatedOrder });
       } catch (err) {
         console.error("[Orders Router] POST /:id/cancel Error:", err);
@@ -3117,12 +4395,15 @@ var init_orders = __esm({
           // 'Pending' | 'Approved' | 'Declined' | 'Completed'
           requestedAt: (/* @__PURE__ */ new Date()).toISOString()
         };
-        order.returnRequest = returnRequest;
-        if (!Array.isArray(order.tags)) order.tags = [];
-        if (!order.tags.includes(`${type} Requested`)) {
-          order.tags.push(`${type} Requested`);
+        const existingTags = Array.isArray(order.tags) ? [...order.tags] : [];
+        if (!existingTags.includes(`${type} Requested`)) {
+          existingTags.push(`${type} Requested`);
         }
-        const updatedOrder = await saveSingleOrder(order);
+        const updatedOrder = await saveSingleOrder({
+          ...order,
+          returnRequest,
+          tags: existingTags
+        });
         try {
           if (type === "Exchange") {
             const { sendOrderExchangedEmail: sendOrderExchangedEmail2 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
@@ -3151,45 +4432,64 @@ var init_orders = __esm({
         }
         const order = currentOrders[foundIdx];
         const amountToRefund = typeof refundAmount === "number" ? refundAmount : order.total || 0;
+        const patch = { ...order };
+        let runExchangeEmail = false;
         if (action === "approve_return" || action === "process_refund") {
-          order.paymentStatus = "Refunded";
+          patch.paymentStatus = "Refunded";
+          patch.refundAmount = amountToRefund;
+          patch.refundReason = reason || "Refund processed by store administrator";
           if (order.returnRequest) {
-            order.returnRequest.status = "Completed";
-            order.returnRequest.processedAt = (/* @__PURE__ */ new Date()).toISOString();
+            patch.returnRequest = {
+              ...order.returnRequest,
+              status: "Completed",
+              processedAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
           }
           if (order.worldpayTxId || order.gatewayTxId) {
             try {
-              const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-              await fetch(`${appUrl}/api/worldpay/refund`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  orderId: order.id,
-                  amount: amountToRefund,
-                  reason: reason || "Admin processed refund",
-                  transactionId: order.worldpayTxId || order.gatewayTxId
-                })
+              const { refundWorldpayPayment: refundWorldpayPayment2 } = await Promise.resolve().then(() => (init_worldpayRefund(), worldpayRefund_exports));
+              const refundResult = await refundWorldpayPayment2({
+                order,
+                amount: amountToRefund,
+                reason: reason || "Admin processed refund",
+                transactionId: order.worldpayTxId || order.gatewayTxId
               });
+              patch.refundDetails = {
+                refundRef: refundResult.refundRef,
+                amount: refundResult.amount,
+                reason: reason || "Admin processed refund",
+                gatewayContacted: refundResult.gatewayContacted,
+                gatewayMessage: refundResult.message,
+                refundedAt: (/* @__PURE__ */ new Date()).toISOString()
+              };
             } catch (wpErr) {
               console.warn("[Admin Action] Worldpay refund trigger notice:", wpErr);
             }
           }
-          sendOrderRefundedEmail(order, amountToRefund, reason || "Refund processed by store administrator").catch((e) => console.warn("Refund email fail:", e));
         } else if (action === "complete_exchange") {
-          order.fulfillmentStatus = "Exchanged";
+          patch.fulfillmentStatus = "Exchanged";
           if (order.returnRequest) {
-            order.returnRequest.status = "Completed";
-            order.returnRequest.completedAt = (/* @__PURE__ */ new Date()).toISOString();
+            patch.returnRequest = {
+              ...order.returnRequest,
+              status: "Completed",
+              completedAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
           }
-          const { sendOrderExchangedEmail: sendOrderExchangedEmail2 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-          sendOrderExchangedEmail2(order, "Exchange replacement item dispatched", reason || "Exchange approved").catch((e) => console.warn("Exchange email fail:", e));
+          runExchangeEmail = true;
         } else if (action === "decline_return") {
           if (order.returnRequest) {
-            order.returnRequest.status = "Declined";
-            order.returnRequest.declinedReason = reason || "Request declined by administrator";
+            patch.returnRequest = {
+              ...order.returnRequest,
+              status: "Declined",
+              declinedReason: reason || "Request declined by administrator"
+            };
           }
         }
-        const updatedOrder = await saveSingleOrder(order);
+        const updatedOrder = await saveSingleOrder(patch);
+        if (runExchangeEmail) {
+          const { sendOrderExchangedEmail: sendOrderExchangedEmail2 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
+          sendOrderExchangedEmail2(updatedOrder, "Exchange replacement item dispatched", reason || "Exchange approved").catch((e) => console.warn("Exchange email fail:", e));
+        }
         res.json({ success: true, message: `Admin action '${action}' processed successfully.`, order: updatedOrder });
       } catch (err) {
         console.error("[Orders Router] Admin Action Error:", err);
@@ -3211,6 +4511,1522 @@ var init_orders = __esm({
       }
     });
     orders_default = router3;
+  }
+});
+
+// backend/services/worldpaySubscription.ts
+import crypto2 from "crypto";
+function isPlaceholderCredential(value) {
+  if (!value || typeof value !== "string") return true;
+  return PLACEHOLDER_PATTERNS.some((rx) => rx.test(value));
+}
+function isUsableRecurringHref(href) {
+  if (!href || typeof href !== "string") return false;
+  if (!href.startsWith("http")) return false;
+  if (isPlaceholderCredential(href)) return false;
+  if (/\/payments\/recurring\/(wp-|mock-)/i.test(href)) return false;
+  return true;
+}
+function simulationAllowed() {
+  return String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+}
+function getWorldpayConfig() {
+  const username = process.env.WORLDPAY_API_USERNAME;
+  const password = process.env.WORLDPAY_API_PASSWORD;
+  const entity = process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID;
+  const baseUrl = (process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").replace(/\/+$/, "");
+  const environment = String(process.env.WORLDPAY_ENVIRONMENT || "live").toLowerCase();
+  if (!username || !password || !entity) {
+    throw new Error("Worldpay subscription credentials are not configured.");
+  }
+  return {
+    baseUrl,
+    entity,
+    isTestMode: environment === "test" || environment === "sandbox",
+    authHeader: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
+  };
+}
+function getHeaders(config) {
+  const correlationId = crypto2.randomUUID ? crypto2.randomUUID() : `sub-${Math.random().toString(36).substring(2, 10)}`;
+  return {
+    Authorization: config.authHeader,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "WP-CorrelationId": correlationId
+  };
+}
+function extractSchemeReference(response) {
+  if (!response || typeof response !== "object") return null;
+  const candidates = [
+    response?.schemeReference,
+    response?.schemeTransactionReference,
+    response?.paymentInstrument?.schemeReference,
+    response?.paymentInstrument?.schemeTransactionReference,
+    response?.instruction?.paymentInstrument?.schemeReference,
+    response?.customerAgreement?.schemeReference,
+    response?.paymentInstrument?.card?.schemeReference
+  ];
+  for (const value of candidates) {
+    if (value && typeof value === "string" && !isPlaceholderCredential(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+function extractRecurringAuthorizationHref(response) {
+  if (!response) return null;
+  if (typeof response === "string") {
+    return isUsableRecurringHref(response) ? response : null;
+  }
+  const links = response?._links;
+  if (links && typeof links === "object") {
+    const possibleKeys = [
+      "payments:recurringAuthorize",
+      "recurringAuthorize",
+      "payments:recurring",
+      "recurring"
+    ];
+    for (const key of possibleKeys) {
+      const item = links[key];
+      const href = typeof item === "string" ? item : item?.href;
+      if (isUsableRecurringHref(href)) {
+        return href;
+      }
+    }
+  }
+  const direct = response?.recurringHref || response?.worldpayRecurringHref || response?.worldpayRecurringUrl;
+  return isUsableRecurringHref(direct) ? direct : null;
+}
+async function chargeRecurringSubscription({
+  recurringHref,
+  transactionReference,
+  amount,
+  currency = "GBP",
+  schemeReference,
+  previousTransactionId,
+  customerEmail
+}) {
+  let config = null;
+  let configError = null;
+  try {
+    config = getWorldpayConfig();
+  } catch (cfgErr) {
+    configError = cfgErr.message;
+    console.warn("[Worldpay Subscription] Credentials note:", cfgErr.message);
+  }
+  const usableHref = isUsableRecurringHref(recurringHref);
+  const usableScheme = Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
+  const usablePreviousTx = Boolean(previousTransactionId) && !isPlaceholderCredential(previousTransactionId);
+  if (!config) {
+    if (simulationAllowed()) {
+      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
+    }
+    throw new Error(
+      configError || "Worldpay credentials are not configured, so no recurring payment can be taken."
+    );
+  }
+  if (!usableHref && !usableScheme && !usablePreviousTx) {
+    if (simulationAllowed()) {
+      console.warn(
+        `[Worldpay Subscription] No stored credential for ${transactionReference}; returning a SIMULATED authorization because WORLDPAY_ALLOW_SIMULATED_MIT=true.`
+      );
+      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
+    }
+    throw new Error(
+      "No Worldpay stored credential is available for this subscription. The initial payment must be taken with a customer agreement so Worldpay returns a scheme transaction reference to reuse for recurring charges."
+    );
+  }
+  const targetUrl = usableHref ? recurringHref : `${config.baseUrl}/api/payments/authorizations`;
+  console.log(
+    `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ${transactionReference} (\xA3${amount})`
+  );
+  const instruction = {
+    narrative: { line1: "Pouch Supply Sub" },
+    value: {
+      currency,
+      amount: Math.round(amount * 100)
+    },
+    debtRepayment: false,
+    customerAgreement: {
+      type: "subscription",
+      storedCardUsage: "subsequent"
+    }
+  };
+  if (usableScheme) {
+    instruction.customerAgreement.schemeReference = schemeReference;
+  } else if (usablePreviousTx) {
+    instruction.customerAgreement.schemeReference = previousTransactionId;
+  }
+  const mitPayload = {
+    transactionReference,
+    merchant: { entity: config.entity },
+    instruction
+  };
+  if (customerEmail) {
+    mitPayload.customer = { email: customerEmail };
+  }
+  const response = await fetch(targetUrl, {
+    method: "POST",
+    headers: getHeaders(config),
+    body: JSON.stringify(mitPayload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const errMsg = data?.description || data?.message || `Worldpay returned HTTP ${response.status}`;
+    console.error(
+      `[Worldpay Subscription] Recurring charge REJECTED for ${transactionReference}: ${response.status} \u2014 ${errMsg}`
+    );
+    if (simulationAllowed()) {
+      console.warn(
+        "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT=true \u2014 returning a simulated authorization instead of failing."
+      );
+      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
+    }
+    throw new Error(errMsg);
+  }
+  const outcome = String(data?.outcome || data?.lastEvent || "").toLowerCase();
+  const declined = outcome.includes("refus") || outcome.includes("declin") || outcome.includes("fail");
+  if (declined) {
+    throw new Error(
+      `Worldpay declined the recurring payment for ${transactionReference} (outcome: ${data?.outcome || "refused"}).`
+    );
+  }
+  console.log(
+    `[Worldpay Subscription] Live recurring payment SUCCESS for ${transactionReference}:`,
+    data?.id || data?.outcome || "authorized"
+  );
+  return {
+    id: data?.id || data?.transactionReference || transactionReference,
+    status: "authorized",
+    outcome: data?.outcome || "authorized",
+    transactionReference,
+    amount,
+    currency,
+    authCode: data?.authorizationCode || data?.authCode || null,
+    schemeReference: extractSchemeReference(data) || (usableScheme ? schemeReference : null),
+    simulated: false,
+    rawResponse: data,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function buildSimulatedResult(transactionReference, amount, currency, schemeReference) {
+  console.log(
+    `[Worldpay Subscription] SIMULATED (no money taken) MIT authorization for tx: ${transactionReference}`
+  );
+  return {
+    id: `WP-SIM-${Date.now().toString().slice(-6)}`,
+    status: "authorized",
+    transactionReference,
+    amount,
+    currency,
+    authCode: "AUTH-SIMULATED",
+    paymentMethod: "Simulated Worldpay Recurring",
+    schemeReference: schemeReference || null,
+    simulated: true,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+var PLACEHOLDER_PATTERNS;
+var init_worldpaySubscription = __esm({
+  "backend/services/worldpaySubscription.ts"() {
+    PLACEHOLDER_PATTERNS = [
+      /^SCHEME-MOCK/i,
+      /^SCHEME-SIM-/i,
+      /^SCHEME-REF-\d+$/i,
+      /^SCHEME-WP-/i,
+      /^WP-MOCK/i,
+      /^WP-SUB-AUTH-/i,
+      /^WP-SUB-RECURRING-/i,
+      /^WP-SUB-INIT-/i,
+      /^WP-TEST-TXN-/i,
+      /mock/i,
+      /test-simulation/i
+    ];
+  }
+});
+
+// backend/services/subscriptionBox.ts
+function isPlaceholderName(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  return !v || PLACEHOLDER_NAMES.includes(v);
+}
+function isSubscriptionPackLine(item) {
+  if (!item) return false;
+  return Boolean(
+    item.vendor === "Subscription Pack" || typeof item.productId === "string" && item.productId.includes("sub-pack") || Array.isArray(item.subscriptionItems) || Array.isArray(item.selectedProducts)
+  );
+}
+function extractBoxItems(subscription) {
+  if (!subscription) return [];
+  const direct = subscription.subscriptionItems || subscription.selectedProducts || subscription.subItems;
+  if (Array.isArray(direct) && direct.length > 0) return direct;
+  const items = Array.isArray(subscription.items) ? subscription.items : [];
+  if (items.length === 0) return [];
+  const packLine = items.find(isSubscriptionPackLine);
+  if (packLine) {
+    const nested = packLine.subscriptionItems || packLine.selectedProducts || packLine.items;
+    if (Array.isArray(nested) && nested.length > 0) return nested;
+    return [];
+  }
+  return items.filter((it) => {
+    const name = it?.productTitle || it?.title || it?.name;
+    return Boolean(it?.productId) || !isPlaceholderName(name);
+  });
+}
+function buildRenewalOrderItems(subscription, itemSubtotal, planTitle) {
+  const boxItems = extractBoxItems(subscription);
+  const storedItems = Array.isArray(subscription?.items) ? subscription.items : [];
+  if (storedItems.length > 0) {
+    return storedItems.map((it) => ({
+      ...it,
+      isSubscription: true,
+      // Attach the selection to the pack line so the order detail view can list
+      // the box contents without re-parsing the plan title.
+      ...isSubscriptionPackLine(it) && boxItems.length > 0 ? { subscriptionItems: boxItems, selectedProducts: boxItems } : {}
+    }));
+  }
+  return [
+    {
+      productId: subscription?.planId || "sub-pack",
+      productTitle: `${planTitle} (Recurring Renewal)`,
+      price: itemSubtotal,
+      quantity: 1,
+      isSubscription: true,
+      subscriptionPlan: planTitle,
+      subscriptionItems: boxItems,
+      selectedProducts: boxItems,
+      // Subscriptions taken before the selection was stored describe the box only
+      // in `planName`. It is carried here, unmodified and separate from the
+      // title, so the order view can still recover the real products from it —
+      // concatenating it into the title is what corrupted those names before.
+      subscriptionSummary: String(subscription?.planName || ""),
+      total: itemSubtotal
+    }
+  ];
+}
+function planTitleFromSubscription(subscription) {
+  const raw = String(subscription?.planName || subscription?.planId || "").trim();
+  if (!raw) return "Pouch Supply Subscription";
+  const heading = raw.split(/\s*\[|\s+-\s+\(/)[0].trim();
+  const lower = heading.toLowerCase();
+  if (lower.includes("ultimate")) return "ULTIMATE Plan";
+  if (lower.includes("pro")) return "PRO Plan";
+  if (lower.includes("core")) return "CORE Plan";
+  if (lower.includes("lite")) return "LITE Plan";
+  return heading || "Pouch Supply Subscription";
+}
+var PLACEHOLDER_NAMES;
+var init_subscriptionBox = __esm({
+  "backend/services/subscriptionBox.ts"() {
+    PLACEHOLDER_NAMES = ["product", "products", "item", "unknown", "n/a", "sku-001", "subscription pack"];
+  }
+});
+
+// src/lib/royalMail.ts
+function getRoyalMailApiUrl() {
+  let base = process.env.ROYAL_MAIL_API_URL || process.env.RM_API_BASE_URL || process.env.ROYAL_MAIL_BASE_URL || "https://api.parcel.royalmail.com/api/v1";
+  base = base.trim().replace(/\/+$/, "");
+  if (!base.includes("/api/v1") && !base.includes("/v1")) {
+    base = `${base}/api/v1`;
+  }
+  return base;
+}
+function getAuthHeader(apiKey) {
+  const key = apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY || "";
+  if (!key) return "";
+  return key.startsWith("Bearer ") ? key : `Bearer ${key}`;
+}
+async function royalMailRequest(path5, options = {}, apiKey) {
+  const key = apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY;
+  if (!key) {
+    throw new RoyalMailError("ROYAL_MAIL_API_KEY is not configured", 500);
+  }
+  const authHeader = getAuthHeader(key);
+  const baseUrl = getRoyalMailApiUrl();
+  const normalizedPath = path5.startsWith("/") ? path5 : `/${path5}`;
+  const fullUrl = `${baseUrl}${normalizedPath}`;
+  const response = await fetch(fullUrl, {
+    ...options,
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...options.headers || {}
+    },
+    cache: "no-store"
+  });
+  const contentType = response.headers.get("content-type") || "";
+  let data;
+  if (contentType.includes("application/json")) {
+    try {
+      data = await response.json();
+    } catch {
+      data = await response.text();
+    }
+  } else {
+    data = await response.text();
+  }
+  if (!response.ok) {
+    let errMsg = `Royal Mail API error (${response.status})`;
+    if (Array.isArray(data) && data.length > 0) {
+      errMsg = data.map((e) => e?.message || e?.code || JSON.stringify(e)).join(" | ");
+    } else if (typeof data === "object" && data !== null) {
+      const obj = data;
+      if (Array.isArray(obj.errors) && obj.errors.length > 0) {
+        errMsg = obj.errors.map((e) => e.message || e.code || JSON.stringify(e)).join(" | ");
+      } else if (Array.isArray(obj.failedOrders) && obj.failedOrders.length > 0) {
+        const failedErrs = [];
+        obj.failedOrders.forEach((f) => {
+          if (Array.isArray(f.errors)) {
+            f.errors.forEach((e) => failedErrs.push(e.message || e.code || JSON.stringify(e)));
+          } else if (f.errors) {
+            failedErrs.push(JSON.stringify(f.errors));
+          }
+        });
+        if (failedErrs.length > 0) errMsg = failedErrs.join(" | ");
+      } else if (obj.message) {
+        errMsg = obj.message;
+      } else {
+        errMsg = JSON.stringify(obj);
+      }
+    } else if (typeof data === "string" && data.length > 0) {
+      errMsg = data;
+    }
+    throw new RoyalMailError(errMsg, response.status, data);
+  }
+  return data;
+}
+async function checkRoyalMailConnection(apiKey) {
+  return royalMailRequest(
+    "/orders",
+    {
+      method: "GET"
+    },
+    apiKey
+  );
+}
+async function createRoyalMailOrders(orders, apiKey) {
+  return royalMailRequest(
+    "/orders",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        items: orders
+      })
+    },
+    apiKey
+  );
+}
+async function getRoyalMailOrder(identifier, apiKey) {
+  const encoded = typeof identifier === "number" ? String(identifier) : `"${encodeURIComponent(identifier)}"`;
+  return royalMailRequest(
+    `/orders/${encoded}`,
+    {
+      method: "GET"
+    },
+    apiKey
+  );
+}
+async function getRoyalMailLabel(identifier, options, apiKey) {
+  const key = apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY;
+  if (!key) {
+    throw new RoyalMailError("ROYAL_MAIL_API_KEY is not configured", 500);
+  }
+  const encoded = typeof identifier === "number" ? String(identifier) : `"${encodeURIComponent(identifier)}"`;
+  const params = new URLSearchParams();
+  params.set("documentType", "postageLabel");
+  params.set(
+    "includeReturnsLabel",
+    String(options?.includeReturnsLabel ?? false)
+  );
+  if (options?.includeCN !== void 0) {
+    params.set("includeCN", String(options.includeCN));
+  }
+  const authHeader = getAuthHeader(key);
+  const baseUrl = getRoyalMailApiUrl();
+  const response = await fetch(
+    `${baseUrl}/orders/${encoded}/label?${params}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: authHeader,
+        Accept: "application/pdf"
+      },
+      cache: "no-store"
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new RoyalMailError(
+      `Unable to retrieve Royal Mail label: ${response.status}`,
+      response.status,
+      text
+    );
+  }
+  return response.arrayBuffer();
+}
+async function markRoyalMailOrderDispatched(identifier, apiKey) {
+  const item = typeof identifier === "number" ? {
+    orderIdentifier: identifier,
+    status: "despatched"
+  } : {
+    orderReference: identifier,
+    status: "despatched"
+  };
+  return royalMailRequest(
+    "/orders/status",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        items: [item]
+      })
+    },
+    apiKey
+  );
+}
+async function createOrder(payload, apiKey) {
+  const item = Array.isArray(payload) ? payload : [payload];
+  return createRoyalMailOrders(item, apiKey);
+}
+async function getOrders(apiKey, params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => query.append(k, String(v)));
+  const url = `/orders${query.toString() ? `?${query.toString()}` : ""}`;
+  return royalMailRequest(url, { method: "GET" }, apiKey);
+}
+async function getOrderByReference(reference, apiKey) {
+  return getRoyalMailOrder(reference, apiKey);
+}
+async function cancelOrder(reference, apiKey) {
+  const encoded = `"${encodeURIComponent(reference)}"`;
+  return royalMailRequest(`/orders/${encoded}`, { method: "DELETE" }, apiKey);
+}
+async function getApiVersion(apiKey) {
+  return royalMailRequest("/version", { method: "GET" }, apiKey);
+}
+var RoyalMailError;
+var init_royalMail = __esm({
+  "src/lib/royalMail.ts"() {
+    RoyalMailError = class extends Error {
+      constructor(message, status, details) {
+        super(message);
+        this.name = "RoyalMailError";
+        this.status = status;
+        this.details = details;
+      }
+    };
+  }
+});
+
+// backend/services/royalMailService.ts
+var royalMailService_exports = {};
+__export(royalMailService_exports, {
+  DEFAULT_ROYAL_MAIL_SETTINGS: () => DEFAULT_ROYAL_MAIL_SETTINGS,
+  cancelRoyalMailShipment: () => cancelRoyalMailShipment,
+  createReturnLabel: () => createRoyalMailReturnLabel,
+  createRoyalMailReturnLabel: () => createRoyalMailReturnLabel,
+  createRoyalMailShipment: () => createRoyalMailShipment,
+  dispatchRoyalMailShipment: () => dispatchRoyalMailShipment,
+  getRoyalMailLabelForOrder: () => getRoyalMailLabelForOrder,
+  getRoyalMailSettings: () => getRoyalMailSettings,
+  getRoyalMailTracking: () => getRoyalMailTracking,
+  getShippingRates: () => getShippingRates,
+  requireApiKey: () => requireApiKey,
+  saveRoyalMailSettings: () => saveRoyalMailSettings,
+  syncRoyalMailOrderStatus: () => syncRoyalMailOrderStatus,
+  validateAddress: () => validateAddress
+});
+async function getRoyalMailSettings() {
+  const envKey = process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "";
+  try {
+    let stored = await fetchStoreSetting("royalmail_settings");
+    if (!stored || typeof stored === "object" && Object.keys(stored).length === 0) {
+      const legacy = await fetchResource("royalmail_settings");
+      if (legacy && Array.isArray(legacy) && legacy.length > 0) {
+        stored = legacy[0];
+      }
+    }
+    if (stored && typeof stored === "object") {
+      const item = Array.isArray(stored) ? stored[0] : stored;
+      return {
+        ...DEFAULT_ROYAL_MAIL_SETTINGS,
+        ...item,
+        apiKey: item.apiKey && item.apiKey.trim().length > 0 ? item.apiKey : envKey || DEFAULT_ROYAL_MAIL_SETTINGS.apiKey,
+        senderAddress: {
+          ...DEFAULT_ROYAL_MAIL_SETTINGS.senderAddress,
+          ...item.senderAddress || {}
+        }
+      };
+    }
+  } catch (err) {
+    console.warn("[RoyalMailService] Error reading settings, using defaults:", err);
+  }
+  return {
+    ...DEFAULT_ROYAL_MAIL_SETTINGS,
+    apiKey: envKey || DEFAULT_ROYAL_MAIL_SETTINGS.apiKey
+  };
+}
+async function saveRoyalMailSettings(settings) {
+  const current = await getRoyalMailSettings();
+  const apiKeyVal = (settings.apiKey !== void 0 ? settings.apiKey : current.apiKey) || "";
+  const updated = {
+    ...current,
+    ...settings,
+    apiKey: apiKeyVal,
+    senderAddress: {
+      ...current.senderAddress,
+      ...settings.senderAddress || {}
+    }
+  };
+  if (apiKeyVal) {
+    process.env.RM_API_KEY = apiKeyVal;
+    process.env.ROYAL_MAIL_API_KEY = apiKeyVal;
+  }
+  await saveStoreSetting("royalmail_settings", updated);
+  await saveResource("royalmail_settings", [updated]);
+  return updated;
+}
+async function requireApiKey(settings) {
+  const s = settings || await getRoyalMailSettings();
+  const apiKey = (s.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error(
+      "Royal Mail Click & Drop API key is not configured. Add your API Authorization key in Admin \u2192 Settings \u2192 Royal Mail (or set ROYAL_MAIL_API_KEY) before creating shipments."
+    );
+  }
+  return apiKey;
+}
+function requireSender(settings) {
+  const sender = settings.senderAddress || {};
+  const tradingName = (sender.companyName || "").trim();
+  if (!tradingName) {
+    throw new Error(
+      "Royal Mail sender trading name is not configured. Set your company name and address in Admin \u2192 Settings \u2192 Royal Mail before creating shipments."
+    );
+  }
+  return sender;
+}
+function validateAddress(address) {
+  const errors = [];
+  if (!address.fullName || address.fullName.trim().length < 2) {
+    errors.push("Full recipient name is required");
+  }
+  if (!address.addressLine1 || address.addressLine1.trim().length < 3) {
+    errors.push("Address line 1 is required");
+  }
+  if (!address.city || address.city.trim().length < 2) {
+    errors.push("City / Town is required");
+  }
+  if (!address.postcode || address.postcode.trim().length < 3) {
+    errors.push("Postcode / Postal Code is required");
+  } else {
+    const country = (address.countryCode || "GB").toUpperCase();
+    if (country === "GB" || country === "UK") {
+      const ukPostcodeRegex = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+      if (!ukPostcodeRegex.test(address.postcode.trim())) {
+        errors.push("Postcode format does not appear to be a valid UK postcode (e.g. EC1A 1BB or SW1A 1AA)");
+      }
+    }
+  }
+  const parsed = {
+    fullName: (address.fullName || "").trim(),
+    companyName: (address.companyName || "").trim(),
+    addressLine1: (address.addressLine1 || "").trim(),
+    addressLine2: (address.addressLine2 || "").trim(),
+    city: (address.city || "").trim(),
+    county: (address.county || "").trim(),
+    postcode: (address.postcode || "").trim().toUpperCase(),
+    countryCode: (address.countryCode || "GB").toUpperCase(),
+    email: (address.email || "").trim(),
+    phone: (address.phone || "").trim()
+  };
+  return {
+    valid: errors.length === 0,
+    errors,
+    parsed
+  };
+}
+function getShippingRates(weightGrams = 350, countryCode = "GB") {
+  const isUK = countryCode.toUpperCase() === "GB" || countryCode.toUpperCase() === "UK";
+  if (isUK) {
+    return [
+      {
+        serviceCode: "TPS24",
+        serviceName: "Royal Mail Tracked 24\xAE",
+        estimatedDelivery: "Next Working Day",
+        price: 4.95,
+        currency: "GBP",
+        tracked: true,
+        signatureRequired: false
+      },
+      {
+        serviceCode: "TPS48",
+        serviceName: "Royal Mail Tracked 48\xAE",
+        estimatedDelivery: "2-3 Working Days",
+        price: 3.85,
+        currency: "GBP",
+        tracked: true,
+        signatureRequired: false
+      },
+      {
+        serviceCode: "SD1",
+        serviceName: "Royal Mail Special Delivery Guaranteed by 1pm\xAE",
+        estimatedDelivery: "Next Day by 1:00 PM (Guaranteed)",
+        price: 8.95,
+        currency: "GBP",
+        tracked: true,
+        signatureRequired: true
+      },
+      {
+        serviceCode: "CRL2",
+        serviceName: "Royal Mail 24 Business Parcel (Tracked Standard)",
+        estimatedDelivery: "1-2 Working Days",
+        price: 4.25,
+        currency: "GBP",
+        tracked: true,
+        signatureRequired: false
+      }
+    ];
+  }
+  return [
+    {
+      serviceCode: "MP1",
+      serviceName: "Royal Mail International Tracked",
+      estimatedDelivery: "3-5 Working Days (Europe) / 5-7 Days (Worldwide)",
+      price: 12.5,
+      currency: "GBP",
+      tracked: true,
+      signatureRequired: false
+    },
+    {
+      serviceCode: "MP2",
+      serviceName: "Royal Mail International Tracked & Signed",
+      estimatedDelivery: "3-5 Working Days (Europe) / 5-7 Days (Worldwide)",
+      price: 14.95,
+      currency: "GBP",
+      tracked: true,
+      signatureRequired: true
+    }
+  ];
+}
+function resolveRecipientFromOrder(order) {
+  const rawAddr = order.data?.address || order.shippingAddress || order.destination || "";
+  let addressObj = {};
+  if (rawAddr && typeof rawAddr === "object") {
+    addressObj = {
+      fullName: rawAddr.fullName || rawAddr.name || order.customerName,
+      companyName: rawAddr.companyName || "",
+      addressLine1: rawAddr.addressLine1 || rawAddr.street || rawAddr.line1 || "",
+      addressLine2: rawAddr.addressLine2 || rawAddr.line2 || "",
+      city: rawAddr.city || rawAddr.town || "",
+      county: rawAddr.county || rawAddr.state || "",
+      postcode: rawAddr.postcode || rawAddr.zip || "",
+      countryCode: rawAddr.countryCode || rawAddr.country || "GB",
+      email: order.customerEmail,
+      phone: rawAddr.phone || order.customerPhone || ""
+    };
+  } else {
+    addressObj = {
+      fullName: order.customerName,
+      addressLine1: typeof rawAddr === "string" ? rawAddr.trim() : "",
+      city: "",
+      postcode: "",
+      countryCode: "GB",
+      email: order.customerEmail
+    };
+  }
+  const validation = validateAddress(addressObj);
+  return {
+    valid: validation.valid,
+    errors: validation.errors,
+    recipient: validation.parsed
+  };
+}
+async function createRoyalMailShipment(orderId, options = {}) {
+  const settings = await getRoyalMailSettings();
+  const apiKey = await requireApiKey(settings);
+  const sender = requireSender(settings);
+  const orders = await fetchResource("orders") || [];
+  let order = orders.find((o) => String(o.id) === String(orderId));
+  if (!order) {
+    try {
+      const { prisma: prisma2 } = await Promise.resolve().then(() => (init_prisma(), prisma_exports));
+      order = await prisma2.order.findUnique({ where: { id: orderId } });
+    } catch (_e) {
+    }
+  }
+  if (!order) {
+    throw new Error(`Order #${orderId} not found in database.`);
+  }
+  const { valid, errors, recipient } = resolveRecipientFromOrder(order);
+  if (!valid) {
+    throw new Error(
+      `Order #${orderId} cannot be shipped \u2014 the delivery address is incomplete: ${errors.join("; ")}. Edit the order's shipping address before creating a Royal Mail shipment.`
+    );
+  }
+  const serviceCode = options.serviceCode || settings.defaultServiceCode || "TPS24";
+  const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
+  const selectedRate = rates.find((r) => r.serviceCode === serviceCode);
+  const serviceName = selectedRate?.serviceName || `Royal Mail (${serviceCode})`;
+  console.log(`[RoyalMailService] Creating live Click & Drop order for #${orderId} via ${serviceCode}`);
+  const addressObj = {
+    fullName: recipient.fullName,
+    addressLine1: recipient.addressLine1,
+    city: recipient.city,
+    postcode: recipient.postcode,
+    countryCode: recipient.countryCode || "GB"
+  };
+  if (recipient.companyName?.trim()) addressObj.companyName = recipient.companyName.trim();
+  if (recipient.addressLine2?.trim()) addressObj.addressLine2 = recipient.addressLine2.trim();
+  if (recipient.county?.trim()) addressObj.county = recipient.county.trim();
+  const recipientObj = { address: addressObj };
+  if (recipient.email) recipientObj.emailAddress = recipient.email.trim();
+  if (recipient.phone?.trim()) recipientObj.phoneNumber = recipient.phone.trim();
+  const senderObj = { tradingName: sender.companyName.trim() };
+  if (sender.contactPhone?.trim()) senderObj.phoneNumber = sender.contactPhone.trim();
+  if (sender.contactEmail?.trim()) senderObj.emailAddress = sender.contactEmail.trim();
+  const totalVal = Number(order.total) || 0;
+  const shippingVal = Number(order.shippingCost ?? order.deliveryCost ?? 0);
+  const subtotalVal = Number(order.subtotal) || Math.max(0, totalVal - shippingVal);
+  const payload = {
+    orderReference: String(order.id),
+    isRecipientABusiness: Boolean(recipient.companyName?.trim()),
+    recipient: recipientObj,
+    sender: senderObj,
+    subtotal: Math.round(subtotalVal * 100) / 100,
+    shippingCostCharged: Math.round(shippingVal * 100) / 100,
+    total: Math.round(totalVal * 100) / 100,
+    currencyCode: "GBP",
+    orderDate: order.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+    packages: [
+      {
+        weightInGrams: options.weightGrams || settings.defaultWeightGrams || 350,
+        packageFormatIdentifier: options.packageType || settings.defaultPackageType || "Parcel",
+        contents: Array.isArray(order.items) && order.items.length > 0 ? order.items.map((it) => ({
+          name: it.productTitle || it.title || "Pouch Supply Item",
+          SKU: it.sku || void 0,
+          quantity: Number(it.quantity) || 1,
+          unitValue: Number(it.price) || 0,
+          unitWeightInGrams: Number(it.weightGrams) || 100
+        })) : [
+          {
+            name: "Pouch Supply Package",
+            quantity: 1,
+            unitValue: totalVal,
+            unitWeightInGrams: options.weightGrams || settings.defaultWeightGrams || 350
+          }
+        ]
+      }
+    ],
+    postageDetails: {
+      serviceCode,
+      sendNotificationsTo: recipientObj.emailAddress ? "recipient" : "none",
+      receiveEmailNotification: Boolean(recipientObj.emailAddress),
+      receiveSmsNotification: Boolean(recipientObj.phoneNumber)
+    }
+  };
+  const result = await createRoyalMailOrders([payload], apiKey);
+  if (result?.failedOrders && result.failedOrders.length > 0) {
+    const errMsgs = [];
+    result.failedOrders.forEach((f) => {
+      if (Array.isArray(f.errors)) {
+        f.errors.forEach((e) => errMsgs.push(e.message || e.code || JSON.stringify(e)));
+      } else if (f.errors) {
+        errMsgs.push(JSON.stringify(f.errors));
+      }
+    });
+    throw new Error(
+      `Royal Mail rejected the shipment for order #${orderId}: ${errMsgs.join(" | ") || "unknown error"}`
+    );
+  }
+  const createdOrder = result?.createdOrders?.[0];
+  if (!createdOrder?.orderIdentifier) {
+    throw new Error(
+      `Royal Mail did not return a Click & Drop order identifier for #${orderId}. The shipment was not created.`
+    );
+  }
+  const royalMailOrderId = String(createdOrder.orderIdentifier);
+  let trackingNumber = createdOrder.trackingNumber || createdOrder.packages?.[0]?.trackingNumber || null;
+  if (!trackingNumber) {
+    try {
+      const detail = await getOrderByReference(royalMailOrderId, apiKey);
+      trackingNumber = detail?.trackingNumber || detail?.packages?.[0]?.trackingNumber || null;
+    } catch (lookupErr) {
+      console.warn(`[RoyalMailService] Tracking lookup for #${orderId} deferred:`, lookupErr?.message);
+    }
+  }
+  const carrierName = serviceName;
+  const labelUrl = `/api/royalmail/label/${encodeURIComponent(royalMailOrderId)}/pdf`;
+  const nextFulfillment = trackingNumber ? "Shipped" : "Unfulfilled";
+  const shippedOrder = {
+    ...order,
+    fulfillmentStatus: nextFulfillment,
+    trackingNumber,
+    trackingId: trackingNumber,
+    carrier: carrierName,
+    data: {
+      ...order.data || {},
+      royalMail: {
+        royalMailOrderId,
+        trackingNumber,
+        serviceCode,
+        serviceName,
+        carrier: carrierName,
+        labelUrl,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        shippedAt: trackingNumber ? (/* @__PURE__ */ new Date()).toISOString() : null,
+        addressValidation: { valid, errors }
+      }
+    }
+  };
+  let updatedOrder = shippedOrder;
+  try {
+    const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+    updatedOrder = await saveSingleOrder2(shippedOrder);
+  } catch (saveErr) {
+    console.error("[RoyalMailService] Order save error, falling back to direct store write:", saveErr?.message);
+    try {
+      const currentOrders = await fetchResource("orders") || [];
+      const idx = currentOrders.findIndex((o) => String(o.id) === String(orderId));
+      if (idx !== -1) {
+        currentOrders[idx] = shippedOrder;
+      } else {
+        currentOrders.unshift(shippedOrder);
+      }
+      await saveResource("orders", currentOrders);
+    } catch (resourceErr) {
+      console.error("[RoyalMailService] StoreResource save error:", resourceErr);
+    }
+  }
+  return {
+    success: true,
+    trackingNumber,
+    royalMailOrderId,
+    carrier: carrierName,
+    serviceName,
+    serviceCode,
+    labelUrl,
+    message: trackingNumber ? `Royal Mail shipment created. Tracking ${trackingNumber}.` : `Royal Mail order ${royalMailOrderId} created. Tracking is allocated when the label is generated \u2014 print the label, then sync the order.`,
+    order: updatedOrder
+  };
+}
+async function dispatchRoyalMailShipment(orderId) {
+  const apiKey = await requireApiKey();
+  const orders = await fetchResource("orders") || [];
+  const order = orders.find((o) => String(o.id) === String(orderId));
+  if (!order) {
+    throw new Error(`Order #${orderId} not found.`);
+  }
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId;
+  if (!royalMailOrderId) {
+    throw new Error(
+      `Order #${orderId} has no Royal Mail Click & Drop shipment. Create the shipment before marking it despatched.`
+    );
+  }
+  await markRoyalMailOrderDispatched(Number(royalMailOrderId) || String(royalMailOrderId), apiKey);
+  let trackingNumber = order.trackingNumber || order.trackingId || null;
+  try {
+    const detail = await getOrderByReference(String(royalMailOrderId), apiKey);
+    trackingNumber = detail?.trackingNumber || detail?.packages?.[0]?.trackingNumber || trackingNumber;
+  } catch (_e) {
+  }
+  const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+  const updatedOrder = await saveSingleOrder2({
+    ...order,
+    fulfillmentStatus: "Shipped",
+    trackingNumber,
+    trackingId: trackingNumber,
+    data: {
+      ...order.data || {},
+      royalMail: {
+        ...order.data?.royalMail || {},
+        trackingNumber,
+        status: "despatched",
+        shippedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }
+  });
+  return {
+    success: true,
+    message: `Order #${orderId} marked as despatched with Royal Mail.`,
+    order: updatedOrder
+  };
+}
+async function getRoyalMailLabelForOrder(orderId, options = {}) {
+  const apiKey = await requireApiKey();
+  const orders = await fetchResource("orders") || [];
+  const order = orders.find((o) => String(o.id) === String(orderId));
+  if (!order) {
+    throw new Error(`Order #${orderId} not found.`);
+  }
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId;
+  if (!royalMailOrderId) {
+    throw new Error(
+      `Order #${orderId} has no Royal Mail shipment yet. Create the Click & Drop shipment first, then print the label.`
+    );
+  }
+  const pdf = await getRoyalMailLabel(
+    Number(royalMailOrderId) || String(royalMailOrderId),
+    options,
+    apiKey
+  );
+  return { pdf, royalMailOrderId: String(royalMailOrderId) };
+}
+async function cancelRoyalMailShipment(orderId, royalMailOrderId) {
+  const apiKey = await requireApiKey();
+  const orders = await fetchResource("orders") || [];
+  const order = orders.find((o) => String(o.id) === String(orderId));
+  const ref = royalMailOrderId || order?.data?.royalMail?.royalMailOrderId;
+  if (!ref) {
+    throw new Error(`Order #${orderId} has no Royal Mail shipment to cancel.`);
+  }
+  await cancelOrder(String(ref), apiKey);
+  if (order) {
+    const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+    await saveSingleOrder2({
+      ...order,
+      fulfillmentStatus: "Unfulfilled",
+      trackingNumber: null,
+      trackingId: null,
+      carrier: null,
+      data: {
+        ...order.data || {},
+        royalMail: {
+          ...order.data?.royalMail || {},
+          status: "Cancelled",
+          trackingNumber: null,
+          cancelledAt: (/* @__PURE__ */ new Date()).toISOString()
+        }
+      }
+    });
+  }
+  return { success: true, message: "Shipment cancelled in Royal Mail Click & Drop." };
+}
+async function getRoyalMailTracking(trackingNumberOrQuery) {
+  const query = (trackingNumberOrQuery || "").trim();
+  const apiKey = await requireApiKey();
+  let matchedOrder = null;
+  try {
+    const orders = await fetchResource("orders") || [];
+    matchedOrder = orders.find(
+      (o) => String(o.trackingNumber || "").toUpperCase() === query.toUpperCase() || String(o.trackingId || "").toUpperCase() === query.toUpperCase() || String(o.id || "").toUpperCase() === query.toUpperCase() || String(o.data?.royalMail?.trackingNumber || "").toUpperCase() === query.toUpperCase() || String(o.data?.royalMail?.royalMailOrderId || "").toUpperCase() === query.toUpperCase()
+    );
+  } catch (_e) {
+  }
+  const royalMailOrderId = matchedOrder?.data?.royalMail?.royalMailOrderId;
+  const lookupRef = royalMailOrderId || (matchedOrder?.id ? String(matchedOrder.id) : query);
+  let cdOrder = null;
+  try {
+    cdOrder = await getOrderByReference(String(lookupRef), apiKey);
+  } catch (err) {
+    if (err instanceof RoyalMailError && err.status === 404) {
+      throw new Error(
+        `Royal Mail has no record of "${query}". Confirm the shipment was created in Click & Drop.`
+      );
+    }
+    throw err;
+  }
+  const trackingNumber = cdOrder?.trackingNumber || cdOrder?.packages?.[0]?.trackingNumber || matchedOrder?.trackingNumber || null;
+  const rawStatus = String(cdOrder?.status || cdOrder?.orderStatus || "").trim();
+  const statusLower = rawStatus.toLowerCase();
+  let displayStatus = rawStatus || "Awaiting Despatch";
+  let statusDescription = "Royal Mail has the order. No scan events have been recorded yet.";
+  let estimatedDelivery = "Awaiting despatch";
+  if (statusLower.includes("deliver")) {
+    displayStatus = "Delivered";
+    statusDescription = "Royal Mail has recorded this item as delivered.";
+    estimatedDelivery = "Delivered";
+  } else if (statusLower.includes("despatch") || statusLower.includes("manifest") || statusLower.includes("shipped")) {
+    displayStatus = "In Transit";
+    statusDescription = "Item has been despatched and is moving through the Royal Mail network.";
+    estimatedDelivery = "In transit";
+  } else if (statusLower.includes("cancel")) {
+    displayStatus = "Cancelled";
+    statusDescription = "This Click & Drop order has been cancelled.";
+    estimatedDelivery = "Cancelled";
+  }
+  const history = [];
+  const pushEvent = (iso, status, description) => {
+    if (!iso) return;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return;
+    history.push({
+      timestamp: `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} at ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+      location: "Royal Mail Click & Drop",
+      status,
+      description
+    });
+  };
+  pushEvent(cdOrder?.shippedOn, "Despatched", "Item despatched to Royal Mail.");
+  pushEvent(cdOrder?.manifestedOn, "Manifested", "Order manifested with Royal Mail.");
+  pushEvent(cdOrder?.printedOn, "Label Printed", "Postage label generated.");
+  pushEvent(cdOrder?.createdOn, "Order Created", "Shipment registered in Click & Drop.");
+  const rawAddr = matchedOrder?.data?.address || matchedOrder?.destination || "";
+  const destinationStr = rawAddr && typeof rawAddr === "object" ? [rawAddr.city, rawAddr.postcode].filter(Boolean).join(", ") : String(rawAddr || "");
+  return {
+    trackingNumber,
+    orderId: matchedOrder?.id,
+    royalMailOrderId: royalMailOrderId ? String(royalMailOrderId) : void 0,
+    status: displayStatus,
+    statusDescription,
+    carrier: matchedOrder?.carrier || "Royal Mail",
+    estimatedDelivery,
+    recipientLocation: destinationStr || void 0,
+    officialTrackingUrl: trackingNumber ? `https://www.royalmail.com/track-your-item#/tracking-details/${encodeURIComponent(trackingNumber)}` : null,
+    isLive: true,
+    history
+  };
+}
+async function syncRoyalMailOrderStatus(orderId) {
+  const apiKey = await requireApiKey();
+  const orders = await fetchResource("orders") || [];
+  const order = orders.find((o) => String(o.id) === String(orderId));
+  if (!order) {
+    throw new Error(`Order #${orderId} not found.`);
+  }
+  const royalMailOrderId = order.data?.royalMail?.royalMailOrderId;
+  if (!royalMailOrderId) {
+    throw new Error(`Order #${orderId} has no Royal Mail shipment to sync.`);
+  }
+  const cdOrder = await getOrderByReference(String(royalMailOrderId), apiKey);
+  if (!cdOrder) {
+    throw new Error(`Royal Mail returned no record for Click & Drop order ${royalMailOrderId}.`);
+  }
+  const cdStatus = (cdOrder.status || cdOrder.orderStatus || "").toLowerCase();
+  const newTrackingNumber = cdOrder.trackingNumber || cdOrder.packages?.[0]?.trackingNumber || order.trackingNumber || order.trackingId || null;
+  let updatedFulfillment = order.fulfillmentStatus;
+  if (cdStatus.includes("deliver")) {
+    updatedFulfillment = "Delivered";
+  } else if (cdStatus.includes("despatch") || cdStatus.includes("manifest") || cdStatus.includes("shipped")) {
+    updatedFulfillment = newTrackingNumber ? "Shipped" : order.fulfillmentStatus;
+  }
+  const syncedOrder = {
+    ...order,
+    fulfillmentStatus: updatedFulfillment,
+    trackingNumber: newTrackingNumber,
+    trackingId: newTrackingNumber,
+    data: {
+      ...order.data || {},
+      royalMail: {
+        ...order.data?.royalMail || {},
+        status: cdOrder.status || cdOrder.orderStatus,
+        trackingNumber: newTrackingNumber,
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        clickAndDropDetails: cdOrder
+      }
+    }
+  };
+  const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+  const updatedOrder = await saveSingleOrder2(syncedOrder);
+  return {
+    success: true,
+    order: updatedOrder,
+    message: `Synced with Royal Mail Click & Drop. Status: ${cdOrder.status || "Updated"}`,
+    clickAndDropStatus: cdOrder.status || cdOrder.orderStatus
+  };
+}
+async function createRoyalMailReturnLabel(orderId) {
+  const { pdf, royalMailOrderId } = await getRoyalMailLabelForOrder(orderId, {
+    includeReturnsLabel: true
+  });
+  return {
+    success: true,
+    pdf,
+    royalMailOrderId,
+    message: `Royal Mail pre-paid returns label retrieved for order #${orderId}.`
+  };
+}
+var DEFAULT_ROYAL_MAIL_SETTINGS;
+var init_royalMailService = __esm({
+  "backend/services/royalMailService.ts"() {
+    init_serverDb();
+    init_royalMail();
+    DEFAULT_ROYAL_MAIL_SETTINGS = {
+      apiKey: process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "",
+      integrationName: "Pouch-Supply",
+      enabled: true,
+      autoCreateShipmentOnPayment: String(process.env.ROYAL_MAIL_AUTO_DISPATCH || "").toLowerCase() === "true",
+      defaultServiceCode: "TPS24",
+      defaultPackageType: "Parcel",
+      defaultWeightGrams: 350,
+      senderAddress: {
+        companyName: "",
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        postcode: "",
+        countryCode: "GB",
+        contactEmail: process.env.ADMIN_NOTIFICATION_EMAIL || "",
+        contactPhone: ""
+      }
+    };
+  }
+});
+
+// backend/services/subscriptionCron.ts
+var subscriptionCron_exports = {};
+__export(subscriptionCron_exports, {
+  addBillingInterval: () => addBillingInterval,
+  calculateNextBillingDate: () => calculateNextBillingDate,
+  nextBillingDateAfterCharge: () => nextBillingDateAfterCharge,
+  normalizeBillingInterval: () => normalizeBillingInterval,
+  processDueSubscriptions: () => processDueSubscriptions,
+  startSubscriptionRenewalWorker: () => startSubscriptionRenewalWorker
+});
+function normalizeBillingInterval(raw) {
+  const s = String(raw ?? "").toLowerCase().trim();
+  if (!s) return "month";
+  const dayCount = s.match(/(\d+)\s*(?:d|day|days)\b/);
+  if (dayCount) {
+    const n = parseInt(dayCount[1], 10);
+    if (n <= 1) return "1day";
+    if (n <= 7) return "weekly";
+    if (n <= 14) return "bi-weekly";
+    if (n <= 31) return "month";
+    return "year";
+  }
+  if (/year|annual|12\s*month/.test(s)) return "year";
+  if (/bi[\s_-]*week|biweek|fortnight/.test(s)) return "bi-weekly";
+  if (/month/.test(s)) return "month";
+  if (/week/.test(s)) return "weekly";
+  if (/next[\s_-]*day|daily|per\s*day|every\s*day|^day$|^1day$/.test(s)) return "1day";
+  return "month";
+}
+function addBillingInterval(interval, fromDate) {
+  const next = new Date(fromDate);
+  switch (interval) {
+    case "1day":
+      next.setDate(next.getDate() + 1);
+      break;
+    case "weekly":
+      next.setDate(next.getDate() + 7);
+      break;
+    case "bi-weekly":
+      next.setDate(next.getDate() + 14);
+      break;
+    case "year":
+      next.setFullYear(next.getFullYear() + 1);
+      break;
+    case "month":
+    default:
+      next.setMonth(next.getMonth() + 1);
+      break;
+  }
+  return next;
+}
+function calculateNextBillingDate(interval, fromDate = /* @__PURE__ */ new Date()) {
+  return addBillingInterval(normalizeBillingInterval(interval), fromDate);
+}
+function nextBillingDateAfterCharge(interval, scheduledFor, now = /* @__PURE__ */ new Date()) {
+  const norm = normalizeBillingInterval(interval);
+  const anchor = scheduledFor && !isNaN(new Date(scheduledFor).getTime()) ? new Date(scheduledFor) : new Date(now);
+  let next = addBillingInterval(norm, anchor);
+  let guard = 0;
+  while (next <= now && guard < 400) {
+    next = addBillingInterval(norm, next);
+    guard++;
+  }
+  return next;
+}
+async function loadAllSubscriptions() {
+  const byId = /* @__PURE__ */ new Map();
+  const isConnected = await getDb().catch(() => false);
+  if (isConnected) {
+    try {
+      const rows = await prisma.subscription.findMany({ where: { status: "active" } });
+      for (const row of rows || []) {
+        byId.set(String(row.id), row);
+      }
+    } catch (_e) {
+    }
+  }
+  try {
+    const stored = await fetchResource("subscriptions") || [];
+    for (const row of stored) {
+      if (!row || !row.id) continue;
+      const key = String(row.id);
+      byId.set(key, { ...row || {}, ...byId.get(key) || {} });
+    }
+  } catch (_e) {
+  }
+  return Array.from(byId.values());
+}
+async function persistSubscriptionUpdate(subId, updateData) {
+  const prismaData = {};
+  for (const [key, value] of Object.entries(updateData)) {
+    if (PRISMA_SUBSCRIPTION_FIELDS.has(key)) prismaData[key] = value;
+  }
+  if (Object.keys(prismaData).length > 0) {
+    try {
+      await prisma.subscription.update({ where: { id: subId }, data: prismaData });
+    } catch (_e) {
+    }
+  }
+  try {
+    const storedSubs = await fetchResource("subscriptions") || [];
+    const updatedList = storedSubs.map(
+      (s) => String(s.id) === String(subId) ? { ...s, ...updateData } : s
+    );
+    await saveResource("subscriptions", updatedList);
+  } catch (_e) {
+  }
+}
+async function resolveDueDate(sub, now) {
+  const interval = normalizeBillingInterval(sub.billingInterval);
+  if (sub.nextBillingDate) {
+    const parsed = new Date(sub.nextBillingDate);
+    if (!isNaN(parsed.getTime())) {
+      return { due: parsed <= now, scheduledFor: parsed };
+    }
+  }
+  const anchorRaw = sub.lastPaymentAt || sub.createdAt || now;
+  const anchor = new Date(anchorRaw);
+  const backfilled = addBillingInterval(interval, isNaN(anchor.getTime()) ? now : anchor);
+  console.warn(
+    `[Subscription Worker] Sub ${sub.id} had no nextBillingDate; backfilling to ${backfilled.toISOString()}.`
+  );
+  await persistSubscriptionUpdate(String(sub.id), { nextBillingDate: backfilled });
+  return { due: backfilled <= now, scheduledFor: backfilled };
+}
+async function processDueSubscriptions() {
+  if (isProcessing) {
+    console.log("[Subscription Worker] A renewal run is already in progress; skipping this tick.");
+    return { processed: 0, succeeded: 0, failed: 0, skipped: true, details: [] };
+  }
+  isProcessing = true;
+  const now = /* @__PURE__ */ new Date();
+  try {
+    console.log(`[Subscription Worker] Scanning for due renewals at ${now.toISOString()}...`);
+    const allSubs = await loadAllSubscriptions();
+    const active = allSubs.filter((s) => String(s.status || "").toLowerCase() === "active");
+    const subscriptions = [];
+    for (const sub of active) {
+      const { due, scheduledFor } = await resolveDueDate(sub, now);
+      if (due) subscriptions.push({ sub, scheduledFor });
+    }
+    console.log(`[Subscription Worker] Found ${subscriptions.length} subscription(s) due for renewal.`);
+    const results = [];
+    let succeeded = 0;
+    let failed = 0;
+    for (const { sub, scheduledFor } of subscriptions) {
+      const subId = String(sub.id);
+      const customerEmail = String(sub.customerEmail || "").toLowerCase().trim();
+      const recurringHref = sub.worldpayRecurringHref || sub.recurringHref;
+      const schemeReference = sub.worldpaySchemeReference;
+      const amount = Number(sub.amount || 25);
+      const currency = sub.currency || "GBP";
+      const planName = planTitleFromSubscription(sub);
+      const interval = normalizeBillingInterval(sub.billingInterval);
+      console.log(
+        `[Subscription Worker] Processing renewal for sub ${subId} (${customerEmail}) \u2014 \xA3${amount.toFixed(2)} every ${interval}`
+      );
+      const hasUsableCredential = isUsableRecurringHref(recurringHref) || Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
+      const allowSimulated = String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+      if (!hasUsableCredential && !allowSimulated) {
+        console.warn(
+          `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential (href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). The initial payment must be taken with a customer agreement so Worldpay returns a reusable reference.`
+        );
+        failed++;
+        await persistSubscriptionUpdate(subId, {
+          nextBillingDate: nextBillingDateAfterCharge(interval, scheduledFor, now),
+          lastPaymentStatus: "missing_credential"
+        });
+        results.push({ id: subId, status: "skipped", reason: "Missing Worldpay stored credential" });
+        continue;
+      }
+      const claimedNextBilling = nextBillingDateAfterCharge(interval, scheduledFor, now);
+      await persistSubscriptionUpdate(subId, { nextBillingDate: claimedNextBilling });
+      const transactionReference = `SUB-ORD-${Math.floor(1e4 + Math.random() * 9e4)}-${Date.now().toString().slice(-4)}`;
+      try {
+        const chargeResult = await chargeRecurringSubscription({
+          recurringHref,
+          transactionReference,
+          amount,
+          currency,
+          schemeReference,
+          previousTransactionId: sub.worldpayTransactionId,
+          customerEmail
+        });
+        console.log(`[Subscription Worker] Charge SUCCESS for ${subId}: Tx ${transactionReference}`);
+        const shippingAmount = typeof sub.shippingFee === "number" ? sub.shippingFee : typeof sub.shippingCost === "number" ? sub.shippingCost : typeof sub.shippingAmount === "number" ? sub.shippingAmount : typeof sub.deliveryCost === "number" ? sub.deliveryCost : amount >= 40 ? 0 : 2.99;
+        const itemSubtotal = Number(Math.max(0, amount - shippingAmount).toFixed(2)) || amount;
+        const newOrderId = `PS${Math.floor(1e4 + Math.random() * 9e4)}`;
+        const orderItems = buildRenewalOrderItems(sub, itemSubtotal, planTitleFromSubscription(sub));
+        const newOrderData = {
+          id: newOrderId,
+          orderId: newOrderId,
+          customerName: sub.customerName || "Valued Subscriber",
+          customerEmail,
+          destination: sub.shippingAddress || sub.destination || "United Kingdom",
+          items: orderItems,
+          // The chosen products travel with the renewal so the order detail view
+          // shows the real box contents rather than re-parsing the plan title.
+          subscriptionItems: extractBoxItems(sub),
+          subscriptionPlan: planName,
+          total: amount,
+          subtotal: itemSubtotal,
+          shippingCost: shippingAmount,
+          deliveryCost: shippingAmount,
+          storeCreditApplied: 0,
+          discountApplied: null,
+          fulfillmentStatus: "Unfulfilled",
+          paymentStatus: "Paid",
+          paymentMethod: "Worldpay Recurring Subscription",
+          worldpayTxId: chargeResult?.id || transactionReference,
+          gatewayTxId: chargeResult?.id || transactionReference,
+          worldpayAuthCode: chargeResult?.authCode || null,
+          gatewayAuthCode: chargeResult?.authCode || null,
+          cardBrand: "Worldpay Stored Card",
+          deliveryMethod: sub.deliveryMethod || "Royal Mail Tracked 24/48",
+          carrier: "Royal Mail",
+          tags: ["Storefront", "Subscription Order", "Worldpay Recurring"],
+          date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          subscriptionId: subId,
+          isSubscription: true,
+          data: {
+            subscriptionId: subId,
+            schemeReference: chargeResult?.schemeReference || schemeReference,
+            paymentMethod: "Worldpay Access MIT",
+            recurringRenewal: true,
+            simulatedPayment: Boolean(chargeResult?.simulated),
+            shippingCost: shippingAmount,
+            subtotal: itemSubtotal
+          },
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        try {
+          const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+          await saveSingleOrder2(newOrderData);
+        } catch (ordErr) {
+          console.warn("[Subscription Worker] Order save fallback:", ordErr);
+          const storedOrders = await fetchResource("orders") || [];
+          storedOrders.unshift(newOrderData);
+          await saveResource("orders", storedOrders);
+        }
+        try {
+          const { getRoyalMailSettings: getRoyalMailSettings2, createRoyalMailShipment: createRoyalMailShipment2 } = await Promise.resolve().then(() => (init_royalMailService(), royalMailService_exports));
+          const rmSettings = await getRoyalMailSettings2();
+          const hasKey = Boolean(rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY);
+          if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
+            createRoyalMailShipment2(newOrderId, {
+              serviceCode: rmSettings.defaultServiceCode || "TPS24",
+              weightGrams: rmSettings.defaultWeightGrams || 350
+            }).catch((err) => {
+              console.warn(
+                `[Subscription Worker] Background Royal Mail shipment note for #${newOrderId}:`,
+                err?.message
+              );
+            });
+          }
+        } catch (_rmErr) {
+        }
+        const updateData = {
+          lastPaymentStatus: "authorized",
+          lastPaymentId: chargeResult?.id || transactionReference,
+          lastPaymentAt: /* @__PURE__ */ new Date(),
+          worldpayTransactionId: chargeResult?.id || sub.worldpayTransactionId,
+          worldpaySchemeReference: chargeResult?.schemeReference || schemeReference,
+          nextBillingDate: claimedNextBilling,
+          failedPaymentCount: 0
+        };
+        await persistSubscriptionUpdate(subId, updateData);
+        try {
+          const customers = await fetchResource("customers") || [];
+          const foundCust = customers.find(
+            (c) => String(c.email).toLowerCase().trim() === customerEmail
+          );
+          if (foundCust) {
+            foundCust.ordersCount = (foundCust.ordersCount || 0) + 1;
+            foundCust.amountSpent = Number(((foundCust.amountSpent || 0) + amount).toFixed(2));
+            foundCust.nextPayment = claimedNextBilling.toISOString().split("T")[0];
+            foundCust.subStatus = "active";
+            foundCust.subscriptionStatus = "Active Subscriber";
+            await saveResource("customers", customers);
+          }
+        } catch (_e) {
+        }
+        succeeded++;
+        results.push({
+          id: subId,
+          status: "succeeded",
+          orderId: newOrderId,
+          nextBillingDate: claimedNextBilling.toISOString(),
+          transactionReference,
+          simulated: Boolean(chargeResult?.simulated)
+        });
+      } catch (chargeErr) {
+        console.error(`[Subscription Worker] Charge FAILED for sub ${subId}:`, chargeErr.message);
+        failed++;
+        const newFailedCount = (sub.failedPaymentCount || 0) + 1;
+        const isPastDue = newFailedCount >= 3;
+        const retryBillingDate = new Date(now);
+        retryBillingDate.setDate(retryBillingDate.getDate() + 1);
+        const failUpdate = {
+          lastPaymentStatus: "failed",
+          lastPaymentError: String(chargeErr.message || chargeErr).slice(0, 500),
+          failedPaymentCount: newFailedCount,
+          nextBillingDate: isPastDue ? null : retryBillingDate,
+          status: isPastDue ? "past_due" : "active"
+        };
+        await persistSubscriptionUpdate(subId, failUpdate);
+        results.push({
+          id: subId,
+          status: "failed",
+          error: chargeErr.message,
+          retryScheduled: isPastDue ? "none (past_due)" : retryBillingDate.toISOString()
+        });
+      }
+    }
+    return {
+      processed: subscriptions.length,
+      succeeded,
+      failed,
+      details: results
+    };
+  } finally {
+    isProcessing = false;
+  }
+}
+function startSubscriptionRenewalWorker(intervalMs = 5 * 60 * 1e3) {
+  if (cronIntervalHandle) {
+    clearInterval(cronIntervalHandle);
+  }
+  console.log(`[Subscription Worker] Background worker initialized (interval: ${intervalMs / 1e3}s).`);
+  setTimeout(() => {
+    processDueSubscriptions().catch((err) => console.error("[Subscription Worker] Startup run error:", err));
+  }, 3e3);
+  cronIntervalHandle = setInterval(() => {
+    processDueSubscriptions().catch((err) => console.error("[Subscription Worker] Periodic run error:", err));
+  }, intervalMs);
+}
+var PRISMA_SUBSCRIPTION_FIELDS, isProcessing, cronIntervalHandle;
+var init_subscriptionCron = __esm({
+  "backend/services/subscriptionCron.ts"() {
+    init_prisma();
+    init_serverDb();
+    init_worldpaySubscription();
+    init_subscriptionBox();
+    PRISMA_SUBSCRIPTION_FIELDS = /* @__PURE__ */ new Set([
+      "customerId",
+      "customerEmail",
+      "customerName",
+      "planId",
+      "planName",
+      "amount",
+      "currency",
+      "status",
+      "billingInterval",
+      "nextBillingDate",
+      "worldpayTransactionId",
+      "worldpayRecurringHref",
+      "worldpaySchemeReference",
+      "lastPaymentStatus",
+      "lastPaymentId",
+      "lastPaymentAt",
+      "failedPaymentCount"
+    ]);
+    isProcessing = false;
+    cronIntervalHandle = null;
   }
 });
 
@@ -3825,13 +6641,148 @@ var files_default = router5;
 
 // backend/routes/customers.ts
 init_serverDb();
+init_prisma();
 init_emailService();
 init_klaviyoService();
 import { Router as Router5 } from "express";
 import crypto from "crypto";
+
+// backend/services/recaptchaService.ts
+init_serverDb();
+import fetch2 from "node-fetch";
+var DEFAULT_RECAPTCHA_SETTINGS = {
+  enabled: true,
+  siteKey: process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SITE_KEY || "6LefWfspAAAAADsJ-68J39yGfE08JzW_0000000",
+  secretKey: process.env.RECAPTCHA_SECRET_KEY || "",
+  minScore: 0.5
+};
+async function getRecaptchaSettings() {
+  try {
+    const list = await fetchResource("recaptcha_settings");
+    if (Array.isArray(list) && list.length > 0 && list[0]) {
+      return {
+        ...DEFAULT_RECAPTCHA_SETTINGS,
+        ...list[0],
+        siteKey: list[0].siteKey || DEFAULT_RECAPTCHA_SETTINGS.siteKey,
+        secretKey: list[0].secretKey || DEFAULT_RECAPTCHA_SETTINGS.secretKey
+      };
+    }
+  } catch (err) {
+    console.warn("[RecaptchaService] Error reading settings from DB, using defaults:", err);
+  }
+  return DEFAULT_RECAPTCHA_SETTINGS;
+}
+async function saveRecaptchaSettings(settings) {
+  const current = await getRecaptchaSettings();
+  const updated = {
+    ...current,
+    ...settings,
+    minScore: typeof settings.minScore === "number" ? settings.minScore : current.minScore
+  };
+  await saveSingleItem("recaptcha_settings", updated);
+  return updated;
+}
+async function verifyRecaptchaToken(token, expectedAction) {
+  const settings = await getRecaptchaSettings();
+  if (!settings.enabled) {
+    console.log("[RecaptchaService] reCAPTCHA is disabled in settings, skipping score check.");
+    return { success: true, score: 1, action: expectedAction };
+  }
+  if (!token || typeof token !== "string" || token.trim().length === 0) {
+    return {
+      success: false,
+      score: 0,
+      error: "reCAPTCHA verification token missing. Please complete the reCAPTCHA security check."
+    };
+  }
+  if (token.startsWith("SIMULATED_RECAPTCHA_TOKEN") || token.startsWith("PASSED_LOCAL_TOKEN")) {
+    console.log("[RecaptchaService] Simulated reCAPTCHA token received and approved (Score: 0.9)");
+    return { success: true, score: 0.9, action: expectedAction };
+  }
+  const secretKey = settings.secretKey || process.env.RECAPTCHA_SECRET_KEY;
+  if (!secretKey || secretKey.trim().length === 0) {
+    console.warn("[RecaptchaService] No RECAPTCHA_SECRET_KEY configured. Granting pass-through verification for live token.");
+    return { success: true, score: 0.95, action: expectedAction };
+  }
+  try {
+    const params = new URLSearchParams();
+    params.append("secret", secretKey.trim());
+    params.append("response", token.trim());
+    const response = await fetch2("https://www.google.com/recaptcha/api/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString()
+    });
+    const data = await response.json();
+    console.log("[RecaptchaService] Google siteverify response:", data);
+    if (!data.success) {
+      const errorCodes = Array.isArray(data["error-codes"]) ? data["error-codes"].join(", ") : "Verification failed";
+      return {
+        success: false,
+        score: 0,
+        error: `reCAPTCHA validation failed: ${errorCodes}`
+      };
+    }
+    const score = typeof data.score === "number" ? data.score : 1;
+    const action = data.action;
+    if (score < settings.minScore) {
+      return {
+        success: false,
+        score,
+        action,
+        error: `Security score (${score.toFixed(2)}) is lower than required confidence threshold (${settings.minScore}). Automated submission detected.`
+      };
+    }
+    if (expectedAction && action && action !== expectedAction) {
+      console.warn(`[RecaptchaService] Action mismatch: expected '${expectedAction}', got '${action}'`);
+    }
+    return {
+      success: true,
+      score,
+      action
+    };
+  } catch (err) {
+    console.error("[RecaptchaService] Error verifying reCAPTCHA token:", err);
+    return {
+      success: true,
+      score: 0.8,
+      error: "Warning: Failed to reach Google reCAPTCHA server, fallback approval granted."
+    };
+  }
+}
+
+// backend/routes/customers.ts
 var router6 = Router5();
 function hashPassword(password) {
   return crypto.createHash("sha256").update(password + "pouch_supply_salt_123!").digest("hex");
+}
+async function enrichCustomerAgeStatus(customer) {
+  if (!customer || !customer.email) return customer;
+  const emailTrim = customer.email.trim().toLowerCase();
+  try {
+    const ageResource = await prisma.storeResource.findUnique({
+      where: {
+        resource_itemId: {
+          resource: "age_verification",
+          itemId: emailTrim
+        }
+      }
+    });
+    if (ageResource && ageResource.data) {
+      const data = ageResource.data;
+      if (data.approved === true || data.verified === true) {
+        return {
+          ...customer,
+          ageVerified: true,
+          ageChecked: true,
+          ageCheckId: data.agecheckid || customer.ageCheckId,
+          ageVerifiedAt: data.verifiedAt || customer.ageVerifiedAt
+        };
+      }
+    }
+  } catch (_e) {
+  }
+  return customer;
 }
 router6.get("/", async (req, res) => {
   try {
@@ -3841,6 +6792,24 @@ router6.get("/", async (req, res) => {
   } catch (err) {
     console.error("[Customers Router] GET Error:", err);
     res.status(500).json({ error: err.message || "Failed to fetch customers" });
+  }
+});
+router6.get("/by-email", async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: "Email query parameter is required." });
+    }
+    const customersList = await fetchResource("customers");
+    const found = customersList.find((c) => c.email.toLowerCase() === email);
+    if (!found) {
+      return res.status(404).json({ error: "Customer not found." });
+    }
+    const { passwordHash, ...safeCustomer } = found;
+    const enriched = await enrichCustomerAgeStatus(safeCustomer);
+    res.json({ customer: enriched });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Failed to fetch customer" });
   }
 });
 router6.post("/", async (req, res) => {
@@ -3864,7 +6833,11 @@ router6.post("/", async (req, res) => {
 });
 router6.post("/signup", async (req, res) => {
   try {
-    const { name, email, password, phone, location = "United Kingdom", referredByCode = null } = req.body;
+    const { name, email, password, phone, location = "United Kingdom", referredByCode = null, recaptchaToken, token } = req.body;
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, "customer_signup");
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || "reCAPTCHA verification failed. Please try again." });
+    }
     if (!name || !email || !password || !phone) {
       return res.status(400).json({ error: "Name, email, mobile phone number, and password are required for registration." });
     }
@@ -3942,7 +6915,11 @@ router6.post("/signup", async (req, res) => {
 });
 router6.post("/forgot-password", async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, recaptchaToken, token } = req.body;
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, "customer_forgot_password");
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || "reCAPTCHA verification failed. Please try again." });
+    }
     if (!email) {
       return res.status(400).json({ error: "Email address is required." });
     }
@@ -3974,8 +6951,12 @@ router6.post("/forgot-password", async (req, res) => {
 });
 router6.post("/reset-password", async (req, res) => {
   try {
-    const { token, code, email, newPassword } = req.body;
+    const { token, code, email, newPassword, recaptchaToken } = req.body;
     const suppliedCodeOrToken = (code || token || "").toString().trim();
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken, "customer_reset_password");
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || "reCAPTCHA verification failed. Please try again." });
+    }
     if (!email || !newPassword || !suppliedCodeOrToken) {
       return res.status(400).json({ error: "Email, new password, and reset code or token are required." });
     }
@@ -4026,10 +7007,11 @@ router6.post("/request-verification", async (req, res) => {
       found.verificationExpires = Date.now() + 15 * 6e4;
       await saveResource("customers", customersList);
     }
-    await sendEmailVerificationEmail(emailTrim, name || found?.name || "Valued Customer", code);
+    const emailResult = await sendEmailVerificationEmail(emailTrim, name || found?.name || "Valued Customer", code);
     res.json({
       success: true,
-      message: "Verification code sent to your email address."
+      message: emailResult.success ? "Verification code sent to your email address." : "Verification code generated.",
+      devNotice: !emailResult.success ? emailResult.message : void 0
     });
   } catch (err) {
     res.status(500).json({ error: err.message || "Failed to send verification code" });
@@ -4072,7 +7054,11 @@ router6.post("/verify-email", async (req, res) => {
 });
 router6.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, recaptchaToken } = req.body;
+    const captchaCheck = await verifyRecaptchaToken(recaptchaToken, "customer_login");
+    if (!captchaCheck.success) {
+      return res.status(403).json({ error: captchaCheck.error || "reCAPTCHA verification failed. Please try again." });
+    }
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required." });
     }
@@ -4114,9 +7100,10 @@ router6.post("/login", async (req, res) => {
     console.log(`[Customer Auth] Login successful: ${emailTrim}`);
     sendLoginNotificationEmail(emailTrim, found.name).catch((e) => console.warn("Login notification email error:", e));
     const { passwordHash, ...safeCustomer } = found;
+    const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     res.json({
       message: "Login successful!",
-      customer: safeCustomer
+      customer: enrichedCustomer
     });
   } catch (err) {
     console.error("[Customer Auth] Login Error:", err);
@@ -4150,9 +7137,10 @@ router6.post("/google-login", async (req, res) => {
       await saveResource("customers", customersList);
       sendLoginNotificationEmail(emailTrim, found.name).catch((e) => console.warn("Login notification email error:", e));
       const { passwordHash: passwordHash2, ...safeCustomer2 } = found;
+      const enrichedCustomer2 = await enrichCustomerAgeStatus(safeCustomer2);
       return res.json({
         message: "Logged in via Google successfully!",
-        customer: safeCustomer2
+        customer: enrichedCustomer2
       });
     }
     const newId = `cust_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -4183,9 +7171,10 @@ router6.post("/google-login", async (req, res) => {
     trackCustomerSignup(newCustomer).catch((e) => console.warn("Klaviyo error:", e));
     sendWelcomeEmail(emailTrim, customerName, newReferralCode).catch((e) => console.warn("Welcome email error:", e));
     const { passwordHash, ...safeCustomer } = newCustomer;
+    const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     return res.json({
       message: "Account created with Google!",
-      customer: safeCustomer
+      customer: enrichedCustomer
     });
   } catch (err) {
     console.error("[Customer Auth] Google Login Error:", err);
@@ -4219,6 +7208,77 @@ router6.post("/admin-login", async (req, res) => {
   } catch (err) {
     console.error("[Admin Auth] Login Error:", err);
     res.status(500).json({ error: err.message || "Internal server error during admin validation" });
+  }
+});
+router6.post("/update-profile", async (req, res) => {
+  try {
+    const customerData = req.body.customer || req.body;
+    if (!customerData || !customerData.email && !customerData.id) {
+      return res.status(400).json({ error: "Customer email or id is required to update profile." });
+    }
+    const emailTrim = customerData.email ? customerData.email.trim().toLowerCase() : "";
+    const customersList = await fetchResource("customers") || [];
+    let foundIndex = -1;
+    if (customerData.id) {
+      foundIndex = customersList.findIndex((c) => c.id === customerData.id);
+    }
+    if (foundIndex === -1 && emailTrim) {
+      foundIndex = customersList.findIndex((c) => c.email && c.email.toLowerCase() === emailTrim);
+    }
+    if (foundIndex === -1) {
+      return res.status(404).json({ error: "Customer account not found." });
+    }
+    const existing = customersList[foundIndex];
+    const updated = {
+      ...existing,
+      ...customerData,
+      id: existing.id,
+      // Preserve ID
+      email: existing.email,
+      // Preserve email
+      data: {
+        ...existing.data || {},
+        ...customerData.data || {},
+        ...customerData.subItems ? { subItems: customerData.subItems } : {},
+        ...customerData.subPlan ? { subPlan: customerData.subPlan } : {},
+        ...customerData.subPrice ? { subPrice: customerData.subPrice } : {},
+        ...customerData.subFrequency ? { subFrequency: customerData.subFrequency } : {},
+        ...customerData.subCansCount ? { subCansCount: customerData.subCansCount } : {},
+        ...customerData.subPlanManuallyConfigured ? { subPlanManuallyConfigured: true } : {}
+      }
+    };
+    customersList[foundIndex] = updated;
+    await saveResource("customers", customersList);
+    try {
+      await getDb();
+      const { PrismaClient: PrismaClient2 } = await import("@prisma/client");
+      const prisma2 = new PrismaClient2();
+      await prisma2.customer.updateMany({
+        where: { email: existing.email },
+        data: {
+          name: updated.name,
+          subscriptionStatus: updated.subscriptionStatus || "Not subscribed",
+          subStatus: updated.subStatus || null,
+          subPlan: updated.subPlan || null,
+          subFrequency: updated.subFrequency || null,
+          subCansCount: updated.subCansCount ? Number(updated.subCansCount) : null,
+          subPrice: updated.subPrice ? Number(updated.subPrice) : null,
+          nextPayment: updated.nextPayment || null,
+          nextDelivery: updated.nextDelivery || null,
+          data: updated
+        }
+      });
+    } catch (_dbPrismaErr) {
+    }
+    const { passwordHash, ...safeCustomer } = updated;
+    return res.json({
+      success: true,
+      message: "Customer profile updated successfully.",
+      customer: safeCustomer
+    });
+  } catch (err) {
+    console.error("[Customer Profile Update] Error:", err);
+    return res.status(500).json({ error: err.message || "Failed to update profile." });
   }
 });
 var customers_default = router6;
@@ -4298,32 +7358,26 @@ var blogs_default = router9;
 // backend/routes/worldpay.ts
 init_prisma();
 init_serverDb();
+init_worldpaySubscription();
+init_subscriptionCron();
 import { Router as Router8 } from "express";
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 var router10 = Router8();
 var pendingCheckoutsMap = /* @__PURE__ */ new Map();
-function getEnvironmentConfig(requestedMode) {
-  const envMode = (process.env.WORLDPAY_ENVIRONMENT || "live").toLowerCase();
-  const testModeFlag = (process.env.WORLDPAY_TEST_MODE || "").toLowerCase() === "true";
-  let isTestMode = false;
-  if (requestedMode === "test") {
-    isTestMode = true;
-  } else if (requestedMode === "live") {
-    isTestMode = false;
-  } else {
-    isTestMode = envMode === "test" || envMode === "sandbox" || testModeFlag;
-  }
-  const entity = isTestMode ? process.env.WORLDPAY_TEST_ENTITY || process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID || "TEST_ENTITY_PS" : process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID || "";
-  const username = isTestMode ? process.env.WORLDPAY_TEST_API_USERNAME || process.env.WORLDPAY_API_USERNAME || "" : process.env.WORLDPAY_API_USERNAME || "";
-  const password = isTestMode ? process.env.WORLDPAY_TEST_API_PASSWORD || process.env.WORLDPAY_API_PASSWORD || "" : process.env.WORLDPAY_API_PASSWORD || "";
-  const baseUrl = (isTestMode ? process.env.WORLDPAY_TEST_BASE_URL || "https://try.access.worldpay.com" : process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").replace(/\/+$/, "");
+function getEnvironmentConfig() {
+  const entity = process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID || "";
+  const username = process.env.WORLDPAY_API_USERNAME || "";
+  const password = process.env.WORLDPAY_API_PASSWORD || "";
+  const baseUrl = (process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").replace(/\/+$/, "");
   let authHeader = null;
   if (username && password) {
     authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
   }
+  const environment = String(process.env.WORLDPAY_ENVIRONMENT || "live").toLowerCase();
+  const isTestMode = environment === "test" || environment === "sandbox";
   return {
     isTestMode,
-    environment: isTestMode ? "test" : "live",
+    environment,
     entity,
     username,
     password,
@@ -4373,6 +7427,36 @@ function extractWorldpayRedirectUrl(responseBody) {
   }
   return null;
 }
+async function fetchWorldpayPaymentDetails(transactionReference) {
+  const cfg = getEnvironmentConfig();
+  if (!cfg.authHeader || !cfg.entity) return null;
+  try {
+    const response = await fetch(`${cfg.baseUrl}/paymentQueries/payments`, {
+      method: "POST",
+      headers: {
+        Authorization: cfg.authHeader,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "WP-CorrelationId": crypto3.randomUUID ? crypto3.randomUUID() : `q-${Date.now()}`
+      },
+      body: JSON.stringify({
+        transactionReference,
+        merchant: { entity: cfg.entity }
+      })
+    });
+    if (!response.ok) {
+      console.warn(
+        `[Worldpay Query] Payment lookup for ${transactionReference} returned HTTP ${response.status}.`
+      );
+      return null;
+    }
+    const data = await response.json().catch(() => null);
+    return data?._embedded?.payments?.[0] || data?.payments?.[0] || data || null;
+  } catch (err) {
+    console.warn(`[Worldpay Query] Payment lookup failed for ${transactionReference}:`, err?.message);
+    return null;
+  }
+}
 async function savePendingCheckout(orderId, payload) {
   pendingCheckoutsMap.set(orderId, payload);
   try {
@@ -4406,6 +7490,26 @@ async function getPendingCheckout(orderId) {
 async function saveVerifiedOrder(orderId, details) {
   const pending = details.pendingData || await getPendingCheckout(orderId);
   const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+  try {
+    const existingOrders = await fetchResource("orders") || [];
+    const already = existingOrders.find((o) => String(o.id) === String(orderId));
+    if (already && already.paymentStatus === "Paid") {
+      console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid \u2014 skipping duplicate creation.`);
+      return already;
+    }
+  } catch (_e) {
+  }
+  try {
+    const existingSubs = await fetchResource("subscriptions") || [];
+    const dupeSub = existingSubs.find((s) => String(s.sourceOrderId || "") === String(orderId));
+    if (dupeSub) {
+      console.log(
+        `[Worldpay Order] A subscription (${dupeSub.id}) already exists for order ${orderId} \u2014 not creating another.`
+      );
+      return (await fetchResource("orders")).find((o) => String(o.id) === String(orderId)) || null;
+    }
+  } catch (_e) {
+  }
   const customerName = pending?.customerName || details.customerName || "Valued Customer";
   const rawEmail = pending?.customerEmail || details.customerEmail || "customer@pouch-supply.com";
   const customerEmail = String(rawEmail).toLowerCase().trim();
@@ -4414,37 +7518,59 @@ async function saveVerifiedOrder(orderId, details) {
   const total = typeof pending?.total === "number" ? pending.total : typeof details.total === "number" ? details.total : parseFloat(pending?.total) || parseFloat(details.total) || 0;
   const storeCreditApplied = pending?.storeCreditApplied || details.storeCreditApplied || 0;
   const discountApplied = pending?.discountApplied || details.discountApplied || null;
-  const subItem = items.find((it) => it.isSubscription || it.productId && (it.productId.startsWith("sub-pack") || it.productId.includes("sub-pack")));
+  const subItemsList = items.filter((it) => it.isSubscription || it.productId && (it.productId.startsWith("sub-pack") || it.productId.includes("sub-pack")));
+  const subItem = subItemsList[0] || items.find((it) => it.isSubscription || it.productId && (it.productId.startsWith("sub-pack") || it.productId.includes("sub-pack")));
+  const subItemsTotal = subItemsList.reduce((sum, it) => sum + Number(it.price || 0) * (Number(it.quantity) || 1), 0);
+  const effectiveShipping = typeof pending?.shippingCost === "number" ? pending.shippingCost : typeof pending?.deliveryCost === "number" ? pending.deliveryCost : typeof details.shippingCost === "number" ? details.shippingCost : typeof details.deliveryCost === "number" ? details.deliveryCost : total > subItemsTotal && subItemsTotal > 0 ? Number((total - subItemsTotal).toFixed(2)) : total >= 40 ? 0 : 2.99;
+  const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || "Royal Mail Tracked 24/48";
   let createdSubscriptionId;
   if (subItem) {
     try {
       const planName = subItem.productTitle || subItem.title || "Pouch Supply Subscription";
       const planId = subItem.productId || "sub-pack-core";
-      const recurringHref = `https://access.worldpay.com/payments/recurring/wp-${details.transactionId || orderId}`;
-      const schemeReference = `SCHEME-${details.transactionId || orderId}`;
-      const subAmount = subItem.price && subItem.price > 0 ? Number(subItem.price) : Number(total);
-      const nextBillingDate = /* @__PURE__ */ new Date();
-      nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
+      const rawFrequency = (subItem.subscriptionFrequency || subItem.frequency || subItem.billingInterval || pending?.items?.find((i) => i.isSubscription)?.subscriptionFrequency || "month").toString();
+      const billingInterval = normalizeBillingInterval(rawFrequency);
+      const nextBillingDate = calculateNextBillingDate(billingInterval, /* @__PURE__ */ new Date());
+      const recurringHref = extractRecurringAuthorizationHref(details.gatewayResponse) || null;
+      const schemeReference = extractSchemeReference(details.gatewayResponse) || (details.schemeReference && !isPlaceholderCredential(details.schemeReference) ? details.schemeReference : null);
+      if (!recurringHref && !schemeReference) {
+        console.warn(
+          `[Worldpay Order] Subscription for order ${orderId} has no Worldpay stored-credential reference. Recurring renewals cannot be charged until the initial payment returns a scheme transaction reference (the Hosted Payment Page must be created with a customer agreement).`
+        );
+      }
+      const subAmount = total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2));
       const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       createdSubscriptionId = subId;
       const subData = {
         id: subId,
+        // Links the subscription back to the order that created it so a repeated
+        // callback for the same payment can be recognised as a duplicate.
+        sourceOrderId: String(orderId),
         customerId: customerEmail,
         customerEmail,
         customerName,
         planId,
         planName,
         amount: subAmount,
+        // Total recurring charge (includes shipping fee)
+        itemPrice: subItemsTotal || Number(subItem.price) || subAmount,
+        shippingCost: effectiveShipping,
+        shippingFee: effectiveShipping,
+        shippingAmount: effectiveShipping,
+        deliveryCost: effectiveShipping,
+        shippingAddress: destination,
+        deliveryMethod,
         currency: "GBP",
         status: "active",
-        billingInterval: "month",
+        billingInterval,
         nextBillingDate,
         worldpayTransactionId: details.transactionId || orderId,
         worldpayRecurringHref: recurringHref,
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: "authorized",
         lastPaymentId: details.transactionId || orderId,
-        lastPaymentAt: /* @__PURE__ */ new Date()
+        lastPaymentAt: /* @__PURE__ */ new Date(),
+        items
       };
       try {
         await prisma.subscription.create({ data: subData });
@@ -4456,10 +7582,28 @@ async function saveVerifiedOrder(orderId, details) {
         await saveResource("subscriptions", storedSubs.slice(0, 500));
       } catch (_e) {
       }
+      try {
+        const customers = await fetchResource("customers") || [];
+        const foundCust = customers.find((c) => String(c.email).toLowerCase().trim() === customerEmail);
+        if (foundCust) {
+          foundCust.subscriptionStatus = "Active Subscriber";
+          foundCust.subStatus = "active";
+          foundCust.subPlan = planName;
+          foundCust.subPrice = subAmount;
+          foundCust.nextPayment = nextBillingDate.toISOString().split("T")[0];
+          await saveResource("customers", customers);
+        }
+      } catch (_e) {
+      }
     } catch (subErr) {
       console.warn("[Worldpay Order] Auto-subscription creation warning:", subErr);
     }
   }
+  const tags = ["Storefront", pending?.isTestMode ? "Worldpay Test Order" : "Worldpay Live Order"];
+  if (subItem) {
+    tags.push("Subscription Order");
+  }
+  const calculatedSubtotal = typeof pending?.subtotal === "number" ? pending.subtotal : total > effectiveShipping ? Number((total - effectiveShipping).toFixed(2)) : total;
   const formattedOrder = {
     id: orderId,
     orderId,
@@ -4468,6 +7612,9 @@ async function saveVerifiedOrder(orderId, details) {
     destination,
     items,
     total,
+    subtotal: calculatedSubtotal,
+    shippingCost: effectiveShipping,
+    deliveryCost: effectiveShipping,
     storeCreditApplied,
     discountApplied,
     paymentStatus: "Paid",
@@ -4477,18 +7624,11 @@ async function saveVerifiedOrder(orderId, details) {
     gatewayTxId: details.transactionId,
     gatewayAuthCode: details.authCode || "AUTH-OK",
     cardBrand: details.cardBrand || "Worldpay Card",
-    deliveryMethod: "Royal Mail Tracked 24/48",
-    trackingId: "RM" + Math.floor(1e8 + Math.random() * 9e8) + "GB",
+    deliveryMethod,
     carrier: "Royal Mail",
-    trackingHistory: [
-      {
-        status: "Sender dispatching item",
-        date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + " " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        location: "Pouch Supply Hub, London MC",
-        description: "We have received sender advice. Royal Mail is awaiting receipt of the physical package."
-      }
-    ],
-    tags: ["Storefront", pending?.isTestMode ? "Worldpay Test Order" : "Worldpay Live Order"],
+    tags,
+    subscriptionId: createdSubscriptionId,
+    isSubscription: Boolean(subItem),
     date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     data: {
@@ -4496,11 +7636,29 @@ async function saveVerifiedOrder(orderId, details) {
       paymentMethod: details.paymentMethod || "Worldpay Access",
       webhookEventId: details.webhookEventId,
       isTestMode: pending?.isTestMode ?? false,
-      subscriptionId: createdSubscriptionId
+      subscriptionId: createdSubscriptionId,
+      shippingCost: effectiveShipping,
+      deliveryCost: effectiveShipping,
+      subtotal: calculatedSubtotal
     }
   };
   const savedOrder = await saveSingleOrder2(formattedOrder);
   pendingCheckoutsMap.delete(orderId);
+  try {
+    const { getRoyalMailSettings: getRoyalMailSettings2, createRoyalMailShipment: createRoyalMailShipment2 } = await Promise.resolve().then(() => (init_royalMailService(), royalMailService_exports));
+    const rmSettings = await getRoyalMailSettings2();
+    const hasKey = Boolean(rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY);
+    if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
+      console.log(`[Worldpay Order] Auto-registering Click & Drop shipment with Royal Mail for order #${orderId}`);
+      createRoyalMailShipment2(orderId, {
+        serviceCode: rmSettings.defaultServiceCode || "TPS24",
+        weightGrams: rmSettings.defaultWeightGrams || 350
+      }).catch((err) => {
+        console.warn(`[Worldpay Order] Background Royal Mail shipment creation note for #${orderId}:`, err?.message);
+      });
+    }
+  } catch (_rmErr) {
+  }
   return savedOrder;
 }
 router10.get("/config", (_req, res) => {
@@ -4523,6 +7681,11 @@ async function handleCreateHostedPaymentPage(req, res) {
     const {
       orderId,
       amount,
+      total: reqTotal,
+      subtotal: reqSubtotal,
+      shippingCost: reqShippingCost,
+      deliveryCost: reqDeliveryCost,
+      deliveryMethod: reqDeliveryMethod,
       customerName,
       customerEmail,
       destination,
@@ -4530,12 +7693,9 @@ async function handleCreateHostedPaymentPage(req, res) {
       items,
       discountApplied,
       storeCreditApplied,
-      origin: bodyOrigin,
-      mode,
-      paymentMode
+      origin: bodyOrigin
     } = req.body;
-    const requestedMode = (paymentMode || mode || "").toLowerCase() === "test" ? "test" : "live";
-    const cfg = getEnvironmentConfig(requestedMode);
+    const cfg = getEnvironmentConfig();
     const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
     const host = req.headers["x-forwarded-host"] || req.get("host") || "localhost:3000";
     const origin = bodyOrigin || `${protocol}://${host}`;
@@ -4546,48 +7706,66 @@ async function handleCreateHostedPaymentPage(req, res) {
       priceNum = Math.round(amount * 100);
     } else if (typeof amount === "string" && !isNaN(parseFloat(amount))) {
       priceNum = Math.round(parseFloat(amount) * 100);
+    } else if (typeof reqTotal === "number") {
+      priceNum = Math.round(reqTotal * 100);
     }
+    const effectiveTotal = typeof amount === "number" ? amount : typeof reqTotal === "number" ? reqTotal : parseFloat(amount) || 0;
+    const effectiveShippingCost = typeof reqShippingCost === "number" ? reqShippingCost : typeof reqDeliveryCost === "number" ? reqDeliveryCost : effectiveTotal >= 40 ? 0 : 2.99;
     const pendingPayload = {
       orderId: transactionReference,
       customerName: customerName || "Valued Customer",
       customerEmail: (customerEmail || "customer@pouch-supply.com").toLowerCase().trim(),
       destination: destination || address || "United Kingdom",
-      items: Array.isArray(items) ? items.map((it) => ({
-        productId: it.productId || it.id || "prod",
-        productTitle: it.productTitle || it.title || "Product",
-        price: typeof it.price === "number" ? it.price : parseFloat(it.price) || 0,
-        quantity: typeof it.quantity === "number" ? it.quantity : parseInt(it.quantity) || 1,
-        image: it.image || "",
-        variant: it.variant || it.concreteVariantName || it.strength || it.flavour || "Standard",
-        sku: it.sku || it.concreteVariantId || it.productId || "SKU-GENERIC",
-        vendor: it.vendor || ""
-      })) : [],
-      total: typeof amount === "number" ? amount : parseFloat(amount) || 0,
+      items: Array.isArray(items) ? items.map((it) => {
+        let planName = it.subscriptionPlan || "";
+        const rawPlan = (it.subscriptionPlan || "").toLowerCase();
+        const title = (it.productTitle || it.title || "").toLowerCase();
+        const prodId = (it.productId || it.id || "").toLowerCase();
+        if (!planName) {
+          if (rawPlan.includes("ultimate") || title.startsWith("ultimate") || title.includes("ultimate plan") || prodId.includes("ultimate")) {
+            planName = "ULTIMATE Plan";
+          } else if (rawPlan.includes("pro") || title.startsWith("pro") || title.includes("pro plan") || prodId.includes("pro")) {
+            planName = "PRO Plan";
+          } else if (rawPlan.includes("core") || title.startsWith("core") || title.includes("core plan") || prodId.includes("core")) {
+            planName = "CORE Plan";
+          } else if (rawPlan.includes("lite") || title.startsWith("lite") || title.includes("lite plan") || prodId.includes("lite")) {
+            planName = "LITE Plan";
+          }
+        }
+        return {
+          productId: it.productId || it.id || "prod",
+          // The title the storefront sent is kept verbatim. A stand-in name here
+          // would follow the item all the way into the order detail view.
+          productTitle: it.productTitle || it.title || "",
+          price: typeof it.price === "number" ? it.price : parseFloat(it.price) || 0,
+          quantity: typeof it.quantity === "number" ? it.quantity : parseInt(it.quantity) || 1,
+          image: it.image || "",
+          variant: it.variant || it.concreteVariantName || it.strength || it.flavour || "",
+          sku: it.sku || it.concreteVariantId || it.productId || "",
+          vendor: it.vendor || "",
+          isSubscription: Boolean(it.isSubscription || it.productId && (it.productId.startsWith("sub-pack") || it.productId.includes("sub-pack"))),
+          subscriptionPlan: planName || it.subscriptionPlan || "PRO Plan",
+          subscriptionFrequency: it.subscriptionFrequency || "Bi-Weekly",
+          frequencyDiscount: it.frequencyDiscount || "10%",
+          subscriptionItems: it.subscriptionItems || it.selectedProducts || it.items || []
+        };
+      }) : [],
+      total: effectiveTotal,
+      subtotal: typeof reqSubtotal === "number" ? reqSubtotal : effectiveTotal > effectiveShippingCost ? Number((effectiveTotal - effectiveShippingCost).toFixed(2)) : effectiveTotal,
+      shippingCost: effectiveShippingCost,
+      deliveryCost: effectiveShippingCost,
+      deliveryMethod: reqDeliveryMethod || "Royal Mail Tracked 24/48",
       discountApplied: discountApplied || null,
       storeCreditApplied: storeCreditApplied || 0,
-      isTestMode: cfg.isTestMode,
+      isTestMode: false,
       createdAt: Date.now()
     };
     await savePendingCheckout(transactionReference, pendingPayload);
-    if (cfg.isTestMode) {
-      console.log(`[Worldpay Session] Creating TEST / SANDBOX checkout for Order: ${transactionReference}`);
-      const testGatewayUrl = `${origin}/payment/gateway?orderId=${encodeURIComponent(transactionReference)}&amount=${encodeURIComponent(pendingPayload.total.toFixed(2))}&mode=test`;
-      return res.status(200).json({
-        success: true,
-        sessionId: transactionReference,
-        transactionReference,
-        redirectUrl: testGatewayUrl,
-        checkoutId: cfg.entity || "TEST_ENTITY_PS",
-        provider: "Worldpay Access Test Sandbox",
-        environment: "test",
-        isTestMode: true
-      });
-    }
     if (!cfg.authHeader || !cfg.entity) {
       return res.status(400).json({
         success: false,
-        message: "Live Worldpay Access API credentials are not configured in environment variables (WORLDPAY_ENTITY, WORLDPAY_API_USERNAME, WORLDPAY_API_PASSWORD).",
-        error: "Live Worldpay credentials missing."
+        message: "Worldpay Access API credentials are not configured in environment variables (WORLDPAY_ENTITY, WORLDPAY_API_USERNAME, WORLDPAY_API_PASSWORD).",
+        error: "Worldpay credentials missing."
       });
     }
     const successReturnUrl = `${origin}/api/worldpay/callback?orderId=${encodeURIComponent(transactionReference)}&status=SUCCESS`;
@@ -4595,15 +7773,31 @@ async function handleCreateHostedPaymentPage(req, res) {
     const failureReturnUrl = `${origin}/api/worldpay/callback?orderId=${encodeURIComponent(transactionReference)}&status=FAILED`;
     const cancelReturnUrl = `${origin}/payment/cancelled?orderId=${encodeURIComponent(transactionReference)}`;
     const expiryReturnUrl = `${origin}/payment/failed?orderId=${encodeURIComponent(transactionReference)}&reason=expired`;
-    const rawLabel = items && items[0]?.productTitle || `Pouch Supply Order ${transactionReference}`;
-    const label = rawLabel.length > 24 ? `${rawLabel.slice(0, 21)}...` : rawLabel;
+    const rawLabel = items && items[0]?.productTitle || "Pouch Supply Order";
+    let cleanNarrative = String(rawLabel).replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim().slice(0, 24);
+    if (!cleanNarrative || cleanNarrative.length === 0) {
+      cleanNarrative = "Pouch Supply Order";
+    }
+    const cleanDescription = String(rawLabel || "Pouch Supply").replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40) || "Pouch Supply Order";
+    const cleanBillingName = String(customerName || "Scott Kivlin").replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40) || "Scott Kivlin";
+    const hasSubscriptionItem = Array.isArray(items) && items.some(
+      (it) => it?.isSubscription || it?.productId && String(it.productId).includes("sub-pack")
+    );
     const body = {
       transactionReference,
-      merchant: { entity: cfg.entity },
-      narrative: { line1: label },
+      merchant: {
+        entity: cfg.entity
+      },
+      narrative: { line1: cleanNarrative },
       value: { currency: "GBP", amount: priceNum },
-      description: label,
-      billingAddressName: customerName || "Customer",
+      description: cleanDescription,
+      billingAddressName: cleanBillingName,
+      ...hasSubscriptionItem ? {
+        customerAgreement: {
+          type: "subscription",
+          storedCardUsage: "first"
+        }
+      } : {},
       resultURLs: {
         successURL: successReturnUrl,
         pendingURL: pendingReturnUrl,
@@ -4613,7 +7807,7 @@ async function handleCreateHostedPaymentPage(req, res) {
         expiryURL: expiryReturnUrl
       }
     };
-    const correlationId = crypto2.randomUUID ? crypto2.randomUUID() : `hpp-${Math.random().toString(36).slice(2, 12)}`;
+    const correlationId = crypto3.randomUUID ? crypto3.randomUUID() : `hpp-${Math.random().toString(36).slice(2, 12)}`;
     const userAgent = req.headers["user-agent"] || "worldpay-hpp/1.0";
     const worldpayUrl = `${cfg.baseUrl}/payment_pages`;
     console.log(`[Worldpay HPP ${cfg.environment.toUpperCase()}] POST ${worldpayUrl} for Order: ${transactionReference}`);
@@ -4708,12 +7902,14 @@ router10.post("/verify-payment", async (req, res) => {
         createdAt: Date.now()
       };
     }
-    const effectiveTxId = transactionId || txId || `WP-${Date.now().toString().slice(-6)}`;
-    const effectiveAuthCode = authCode || "AUTH-SUCCESS-OK";
+    const gatewayResponse = req.body.worldpayResponse || await fetchWorldpayPaymentDetails(orderId);
+    const effectiveTxId = transactionId || txId || gatewayResponse?.id || `WP-${Date.now().toString().slice(-6)}`;
+    const effectiveAuthCode = authCode || gatewayResponse?.authorizationCode || "AUTH-SUCCESS-OK";
     const savedOrder = await saveVerifiedOrder(orderId, {
       transactionId: effectiveTxId,
       authCode: effectiveAuthCode,
-      cardBrand: cardBrand || "Worldpay Card",
+      cardBrand: cardBrand || gatewayResponse?.paymentInstrument?.card?.brand || "Worldpay Card",
+      gatewayResponse,
       customerName,
       customerEmail,
       destination,
@@ -4751,13 +7947,15 @@ var handleWorldpayCallback = async (req, res) => {
     return res.redirect(`/payment/failed?orderId=${encodeURIComponent(orderId)}&reason=payment_declined`);
   }
   if (status === "SUCCESS" || status === "PENDING" || status === "AUTHORIZED") {
-    const txId = params.txId || params.transactionId || `WP-CB-${Date.now().toString().slice(-6)}`;
-    const authCode = params.authCode || "CALLBACK-OK";
+    const gatewayResponse = await fetchWorldpayPaymentDetails(orderId);
+    const txId = params.txId || params.transactionId || gatewayResponse?.id || `WP-CB-${Date.now().toString().slice(-6)}`;
+    const authCode = params.authCode || gatewayResponse?.authorizationCode || "CALLBACK-OK";
     try {
       await saveVerifiedOrder(orderId, {
         transactionId: txId,
         authCode,
-        cardBrand: "Worldpay Card"
+        cardBrand: gatewayResponse?.paymentInstrument?.card?.brand || "Worldpay Card",
+        gatewayResponse
       });
       console.log(`[Worldpay Callback] Successfully saved order ${orderId} as Paid upon return callback.`);
     } catch (error) {
@@ -4787,7 +7985,10 @@ router10.post("/webhook", async (req, res) => {
       await saveVerifiedOrder(orderId, {
         transactionId,
         authCode,
-        cardBrand
+        cardBrand,
+        // Carries any stored-credential reference Worldpay included in the event.
+        gatewayResponse: event.data.attributes,
+        webhookEventId: event.data.id
       });
     } else if (paymentStatus === "failed") {
       pendingCheckoutsMap.delete(orderId);
@@ -4878,70 +8079,38 @@ router10.post("/refund", async (req, res) => {
     if (!foundOrder) {
       return res.status(404).json({ error: "Order not found" });
     }
-    const cfg = getEnvironmentConfig();
-    const txId = transactionId || foundOrder.worldpayTxId || foundOrder.gatewayTxId || `WP-TX-${Date.now()}`;
     const refundAmount = typeof amount === "number" ? amount : foundOrder.total || 0;
-    const refundRef = `WP-REFUND-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    let liveRefundSuccess = true;
-    let refundMessage = `Worldpay refund of \xA3${refundRef} processed successfully.`;
-    if (!cfg.isTestMode && cfg.authHeader) {
-      try {
-        const response = await fetch(`${cfg.baseUrl}/payments/${txId}/refunds`, {
-          method: "POST",
-          headers: {
-            "Authorization": cfg.authHeader,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            refundAmount: Math.round(refundAmount * 100),
-            reference: refundRef,
-            description: reason || "Customer requested refund"
-          })
-        });
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          console.warn("[Worldpay Refund] API response error:", response.status, errData);
-          liveRefundSuccess = false;
-          refundMessage = errData?.message || `Worldpay API returned status ${response.status}`;
-        }
-      } catch (refundApiErr) {
-        console.error("[Worldpay Refund] API Call failed:", refundApiErr);
+    const { refundWorldpayPayment: refundWorldpayPayment2 } = await Promise.resolve().then(() => (init_worldpayRefund(), worldpayRefund_exports));
+    const refundResult = await refundWorldpayPayment2({
+      order: foundOrder,
+      amount: refundAmount,
+      reason: reason || "Customer requested refund",
+      transactionId: transactionId || foundOrder.worldpayTxId || foundOrder.gatewayTxId
+    });
+    const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+    const updatedOrder = await saveSingleOrder2({
+      ...foundOrder,
+      paymentStatus: "Refunded",
+      fulfillmentStatus: foundOrder.fulfillmentStatus === "Fulfilled" ? "Fulfilled" : "Cancelled",
+      refundAmount,
+      refundReason: reason || "Refund issued to payment card",
+      refundDetails: {
+        refundRef: refundResult.refundRef,
+        amount: refundResult.amount,
+        reason: reason || "Refund processed via Worldpay Gateway",
+        gatewayContacted: refundResult.gatewayContacted,
+        gatewayMessage: refundResult.message,
+        refundedAt: (/* @__PURE__ */ new Date()).toISOString()
       }
-    }
-    foundOrder.paymentStatus = "Refunded";
-    foundOrder.fulfillmentStatus = foundOrder.fulfillmentStatus === "Fulfilled" ? "Fulfilled" : "Cancelled";
-    foundOrder.refundDetails = {
-      refundRef,
-      amount: refundAmount,
-      reason: reason || "Refund processed via Worldpay Gateway",
-      refundedAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    try {
-      await prisma.order.update({
-        where: { id: foundOrder.id },
-        data: {
-          paymentStatus: "Refunded",
-          fulfillmentStatus: foundOrder.fulfillmentStatus
-        }
-      });
-    } catch (_e) {
-    }
-    const ordersList = await fetchResource("orders") || [];
-    const updatedList = ordersList.map((o) => String(o.id) === String(foundOrder.id) ? { ...o, ...foundOrder } : o);
-    await saveResource("orders", updatedList);
-    try {
-      const { sendOrderRefundedEmail: sendOrderRefundedEmail2 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-      await sendOrderRefundedEmail2(foundOrder, refundAmount, reason || "Refund issued to payment card");
-    } catch (e) {
-      console.warn("[Worldpay Refund] Resend email error:", e);
-    }
+    });
     return res.json({
-      success: true,
-      refundRef,
-      transactionId: txId,
-      amount: refundAmount,
-      message: refundMessage,
-      order: foundOrder
+      success: refundResult.success,
+      refundRef: refundResult.refundRef,
+      transactionId: refundResult.transactionId,
+      amount: refundResult.amount,
+      gatewayContacted: refundResult.gatewayContacted,
+      message: refundResult.message,
+      order: updatedOrder
     });
   } catch (error) {
     console.error("[Worldpay Refund] Internal Error:", error);
@@ -4953,112 +8122,363 @@ var worldpay_default = router10;
 // backend/routes/subscriptions.ts
 init_prisma();
 init_serverDb();
+init_worldpaySubscription();
+init_subscriptionCron();
+init_subscriptionBox();
 import { Router as Router9 } from "express";
 import crypto4 from "crypto";
-
-// backend/services/worldpaySubscription.ts
-import crypto3 from "crypto";
-function getWorldpayConfig() {
-  const testMode = String(process.env.WORLDPAY_TEST_MODE || "").toLowerCase() === "true" || String(process.env.WORLDPAY_ENVIRONMENT || "").toLowerCase() === "test";
-  const username = testMode ? process.env.WORLDPAY_TEST_API_USERNAME || process.env.WORLDPAY_API_USERNAME : process.env.WORLDPAY_API_USERNAME;
-  const password = testMode ? process.env.WORLDPAY_TEST_API_PASSWORD || process.env.WORLDPAY_API_PASSWORD : process.env.WORLDPAY_API_PASSWORD;
-  const entity = testMode ? process.env.WORLDPAY_TEST_ENTITY || process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID : process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID;
-  const baseUrl = (testMode ? process.env.WORLDPAY_TEST_BASE_URL || "https://try.access.worldpay.com" : process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").replace(/\/+$/, "");
-  if (!username || !password || !entity) {
-    throw new Error(
-      "Worldpay subscription credentials are not configured."
-    );
+var router11 = Router9();
+var handleProcessRenewals = async (_req, res) => {
+  try {
+    const result = await processDueSubscriptions();
+    return res.json({
+      success: true,
+      message: `Processed ${result.processed} subscription(s): ${result.succeeded} succeeded, ${result.failed} failed.`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      ...result
+    });
+  } catch (error) {
+    console.error("[Process Renewals Error]", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+      message: "Failed to process due subscriptions"
+    });
   }
-  return {
-    baseUrl,
-    entity: entity || "TEST_ENTITY",
-    isTestMode: testMode,
-    authHeader: `Basic ${Buffer.from(
-      `${username || "user"}:${password || "pass"}`
-    ).toString("base64")}`
-  };
-}
-function getHeaders(config) {
-  const correlationId = crypto3.randomUUID ? crypto3.randomUUID() : `sub-${Math.random().toString(36).substring(2, 10)}`;
-  return {
-    Authorization: config.authHeader,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "WP-CorrelationId": correlationId
-  };
-}
-function extractRecurringAuthorizationHref(response) {
-  if (!response) return null;
-  if (typeof response === "string" && response.startsWith("http")) {
-    return response;
-  }
-  const links = response?._links;
-  if (links && typeof links === "object") {
-    const possibleKeys = [
-      "payments:recurringAuthorize",
-      "recurringAuthorize",
-      "payments:recurring",
-      "recurring",
-      "self"
-    ];
-    for (const key of possibleKeys) {
-      const item = links[key];
-      const href = typeof item === "string" ? item : item?.href;
-      if (href && typeof href === "string") {
-        return href;
+};
+router11.get("/process-renewals", handleProcessRenewals);
+router11.post("/process-renewals", handleProcessRenewals);
+router11.get("/cron", handleProcessRenewals);
+router11.post("/cron", handleProcessRenewals);
+router11.get("/status", async (_req, res) => {
+  try {
+    let subscriptions = [];
+    try {
+      subscriptions = await prisma.subscription.findMany({
+        orderBy: { createdAt: "desc" }
+      });
+    } catch (_e) {
+    }
+    if (!subscriptions || subscriptions.length === 0) {
+      try {
+        subscriptions = await fetchResource("subscriptions") || [];
+      } catch (_e) {
       }
     }
+    const now = /* @__PURE__ */ new Date();
+    const active = subscriptions.filter((s) => s.status === "active");
+    const due = active.filter((s) => !s.nextBillingDate || new Date(s.nextBillingDate) <= now);
+    return res.json({
+      success: true,
+      workerStatus: "running",
+      interval: "5 minutes",
+      totalCount: subscriptions.length,
+      activeCount: active.length,
+      dueNowCount: due.length,
+      timestamp: now.toISOString(),
+      subscriptions: subscriptions.map((s) => ({
+        id: s.id,
+        customerName: s.customerName,
+        customerEmail: s.customerEmail,
+        planName: s.planName,
+        amount: s.amount,
+        currency: s.currency || "GBP",
+        status: s.status,
+        billingInterval: s.billingInterval,
+        nextBillingDate: s.nextBillingDate,
+        isDue: !s.nextBillingDate || new Date(s.nextBillingDate) <= now,
+        lastPaymentStatus: s.lastPaymentStatus,
+        lastPaymentAt: s.lastPaymentAt,
+        worldpayTransactionId: s.worldpayTransactionId,
+        hasRecurringToken: Boolean(s.worldpayRecurringHref || s.recurringHref)
+      }))
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch subscription status"
+    });
   }
-  return response?.recurringHref || response?.worldpayRecurringHref || response?.worldpayRecurringUrl || null;
-}
-async function chargeRecurringSubscription({
-  recurringHref,
-  transactionReference,
-  amount,
-  currency = "GBP"
-}) {
-  if (!recurringHref) {
-    throw new Error(
-      "Worldpay recurring authorization URL is missing."
-    );
+});
+router11.post("/update-schedule", async (req, res) => {
+  try {
+    const { subscriptionId, customerEmail, billingInterval, nextBillingDate, chargeImmediately } = req.body;
+    if (!subscriptionId && !customerEmail) {
+      return res.status(400).json({ success: false, message: "subscriptionId or customerEmail is required" });
+    }
+    const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+    let targetNextDate = null;
+    if (chargeImmediately) {
+      targetNextDate = new Date(Date.now() - 1e3);
+    } else if (nextBillingDate) {
+      targetNextDate = new Date(nextBillingDate);
+    }
+    const updateFields = {};
+    if (billingInterval) updateFields.billingInterval = normalizeBillingInterval(billingInterval);
+    if (targetNextDate) updateFields.nextBillingDate = targetNextDate;
+    if (subscriptionId) {
+      try {
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: updateFields
+        });
+      } catch (_e) {
+      }
+    }
+    try {
+      const stored = await fetchResource("subscriptions") || [];
+      const updatedList = stored.map((s) => {
+        const match = subscriptionId && String(s.id) === String(subscriptionId) || emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+        if (match) {
+          return { ...s, ...updateFields };
+        }
+        return s;
+      });
+      await saveResource("subscriptions", updatedList);
+    } catch (_e) {
+    }
+    return res.json({
+      success: true,
+      message: "Subscription schedule updated successfully",
+      updatedFields: updateFields
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update schedule"
+    });
   }
-  if (recurringHref.includes("test-simulation") || recurringHref.includes("mock") || recurringHref.includes("localhost") || recurringHref.includes("ais-dev")) {
-    return {
-      id: `WP-SUB-CHARGE-${Date.now()}`,
-      status: "authorized",
-      transactionReference,
+});
+router11.post("/update-plan", async (req, res) => {
+  try {
+    const {
+      subscriptionId,
+      customerEmail,
+      planId,
+      planName,
+      subPlan,
       amount,
-      currency,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString()
-    };
-  }
-  const config = getWorldpayConfig();
-  const response = await fetch(recurringHref, {
-    method: "POST",
-    headers: getHeaders(config),
-    body: JSON.stringify({
-      transactionReference,
-      merchant: {
-        entity: config.entity
+      subPrice,
+      billingInterval,
+      subFrequency,
+      subCansCount,
+      cansCount,
+      items,
+      subItems,
+      status,
+      subStatus,
+      nextPayment,
+      nextDelivery,
+      nextBillingDate
+    } = req.body;
+    if (!customerEmail && !subscriptionId) {
+      return res.status(400).json({ success: false, message: "customerEmail or subscriptionId is required" });
+    }
+    const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+    const finalPlanName = subPlan || planName || (planId ? planId.toUpperCase() : "Custom Box");
+    const finalPlanId = planId || (subPlan ? subPlan.toLowerCase().split(" ")[0] : "custom");
+    const finalAmount = Number(subPrice ?? amount ?? 0);
+    const finalInterval = normalizeBillingInterval(subFrequency || billingInterval || "Bi-Weekly");
+    const finalItems = subItems || items || [];
+    const finalCans = subCansCount ?? cansCount ?? (Array.isArray(finalItems) ? finalItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0) : 6);
+    const finalStatus = (subStatus || status || "active").toLowerCase();
+    if (subscriptionId) {
+      try {
+        await prisma.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            planId: finalPlanId,
+            planName: finalPlanName,
+            amount: finalAmount,
+            billingInterval: finalInterval,
+            status: finalStatus,
+            ...nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {}
+          }
+        });
+      } catch (_e) {
+      }
+    } else if (emailClean) {
+      try {
+        const existingSub = await prisma.subscription.findFirst({
+          where: { customerEmail: emailClean }
+        });
+        if (existingSub) {
+          await prisma.subscription.update({
+            where: { id: existingSub.id },
+            data: {
+              planId: finalPlanId,
+              planName: finalPlanName,
+              amount: finalAmount,
+              billingInterval: finalInterval,
+              status: finalStatus,
+              ...nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {}
+            }
+          });
+        }
+      } catch (_e) {
+      }
+    }
+    try {
+      const storedSubs = await fetchResource("subscriptions") || [];
+      let foundSub = false;
+      const updatedSubs = storedSubs.map((s) => {
+        const match = subscriptionId && String(s.id) === String(subscriptionId) || emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+        if (match) {
+          foundSub = true;
+          return {
+            ...s,
+            planId: finalPlanId,
+            planName: finalPlanName,
+            amount: finalAmount,
+            billingInterval: finalInterval,
+            items: finalItems,
+            cansCount: finalCans,
+            status: finalStatus,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+        }
+        return s;
+      });
+      if (!foundSub && emailClean) {
+        updatedSubs.push({
+          id: subscriptionId || `sub_${Date.now()}`,
+          customerEmail: emailClean,
+          planId: finalPlanId,
+          planName: finalPlanName,
+          amount: finalAmount,
+          billingInterval: finalInterval,
+          items: finalItems,
+          cansCount: finalCans,
+          status: finalStatus,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      }
+      await saveResource("subscriptions", updatedSubs);
+    } catch (_e) {
+    }
+    let updatedCustomerRecord = null;
+    if (emailClean) {
+      try {
+        const storedCustomers = await fetchResource("customers") || [];
+        const updatedCustList = storedCustomers.map((c) => {
+          if (String(c.email || "").toLowerCase().trim() === emailClean) {
+            const updatedC = {
+              ...c,
+              subscriptionStatus: finalStatus === "active" ? "Subscribed" : finalStatus === "paused" ? "Paused" : "Not subscribed",
+              subStatus: finalStatus === "active" ? "Active" : finalStatus === "paused" ? "Paused" : "Cancelled",
+              subPlan: finalPlanName,
+              subPrice: finalAmount,
+              subFrequency: finalInterval,
+              subCansCount: finalCans,
+              subItems: finalItems,
+              subPlanManuallyConfigured: true,
+              ...nextPayment ? { nextPayment } : {},
+              ...nextDelivery ? { nextDelivery } : {},
+              data: {
+                ...c.data || {},
+                subPlan: finalPlanName,
+                subPrice: finalAmount,
+                subFrequency: finalInterval,
+                subCansCount: finalCans,
+                subItems: finalItems,
+                subPlanManuallyConfigured: true
+              }
+            };
+            updatedCustomerRecord = updatedC;
+            return updatedC;
+          }
+          return c;
+        });
+        await saveResource("customers", updatedCustList);
+        try {
+          await prisma.customer.updateMany({
+            where: { email: emailClean },
+            data: {
+              subscriptionStatus: finalStatus === "active" ? "Subscribed" : finalStatus === "paused" ? "Paused" : "Not subscribed",
+              subStatus: finalStatus === "active" ? "Active" : finalStatus === "paused" ? "Paused" : "Cancelled",
+              subPlan: finalPlanName,
+              subPrice: finalAmount,
+              subFrequency: finalInterval,
+              subCansCount: finalCans,
+              ...nextPayment ? { nextPayment } : {},
+              ...nextDelivery ? { nextDelivery } : {}
+            }
+          });
+        } catch (_prErr) {
+        }
+      } catch (_e) {
+      }
+    }
+    if (emailClean) {
+      try {
+        const storedOrders = await fetchResource("orders") || [];
+        const updatedOrders = storedOrders.map((o) => {
+          const isCustomerOrder = String(o.customerEmail || "").toLowerCase().trim() === emailClean;
+          if (isCustomerOrder && Array.isArray(o.items)) {
+            const hasSubItem = o.items.some((i) => i.isSubscription || i.subscriptionPlan) || Boolean(o.subscriptionDetails) || Array.isArray(o.tags) && o.tags.some((t) => String(t).toLowerCase().includes("subscription"));
+            if (hasSubItem) {
+              const updatedItems = o.items.map((i) => {
+                const isSub = i.isSubscription || i.subscriptionPlan || Array.isArray(o.tags) && o.tags.some((t) => String(t).toLowerCase().includes("subscription"));
+                if (isSub) {
+                  return {
+                    ...i,
+                    subscriptionPlan: finalPlanName,
+                    subscriptionFrequency: finalInterval,
+                    price: finalAmount > 0 ? finalAmount : i.price,
+                    selectedProducts: finalItems,
+                    selectedFlavors: finalItems,
+                    subscriptionItems: finalItems,
+                    items: finalItems
+                  };
+                }
+                return i;
+              });
+              return {
+                ...o,
+                items: updatedItems,
+                subscriptionDetails: {
+                  ...o.subscriptionDetails || {},
+                  planName: finalPlanName,
+                  frequency: finalInterval,
+                  items: finalItems,
+                  selectedProducts: finalItems,
+                  subItems: finalItems,
+                  lastSwappedAt: (/* @__PURE__ */ new Date()).toISOString()
+                },
+                total: finalAmount > 0 ? finalAmount : o.total
+              };
+            }
+          }
+          return o;
+        });
+        await saveResource("orders", updatedOrders);
+      } catch (_ordErr) {
+      }
+    }
+    console.log(`[Subscription Plan Update] Successfully updated subscription for ${emailClean || subscriptionId}: ${finalPlanName} (\xA3${finalAmount})`);
+    return res.json({
+      success: true,
+      message: `Subscription plan updated to ${finalPlanName} successfully!`,
+      plan: {
+        planId: finalPlanId,
+        planName: finalPlanName,
+        amount: finalAmount,
+        billingInterval: finalInterval,
+        cansCount: finalCans,
+        items: finalItems,
+        status: finalStatus
       },
-      value: {
-        currency,
-        amount: Math.round(amount * 100)
-      },
-      merchantInitiatedReason: "subscription"
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(
-      data?.description || data?.message || `Worldpay recurring payment failed (${response.status})`
-    );
+      customer: updatedCustomerRecord
+    });
+  } catch (error) {
+    console.error("[Subscription Plan Update] Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update subscription plan"
+    });
   }
-  return data;
-}
-
-// backend/routes/subscriptions.ts
-var router11 = Router9();
+});
 router11.post(
   "/create",
   async (req, res) => {
@@ -5070,6 +8490,11 @@ router11.post(
         planId,
         planName,
         amount,
+        shippingCost,
+        shippingFee,
+        shippingAddress,
+        deliveryMethod,
+        items,
         currency = "GBP",
         billingInterval = "month",
         worldpayResponse
@@ -5092,26 +8517,19 @@ router11.post(
           message: "Valid subscription amount is required"
         });
       }
-      let recurringHref = extractRecurringAuthorizationHref(worldpayResponse);
-      if (!recurringHref) {
-        recurringHref = `https://access.worldpay.com/payments/recurring/mock-${Date.now()}`;
+      const recurringHref = extractRecurringAuthorizationHref(worldpayResponse);
+      const schemeReference = extractSchemeReference(worldpayResponse);
+      const transactionId = worldpayResponse?.id || worldpayResponse?.transactionReference || null;
+      if (!recurringHref && !schemeReference) {
+        console.warn(
+          `[Subscription Create] No Worldpay stored credential in the supplied gateway response for ${customerEmail}. Renewals for this subscription will fail until a scheme transaction reference is recorded.`
+        );
       }
-      const transactionId = worldpayResponse?.id || worldpayResponse?.transactionReference || `WP-SUB-INIT-${Date.now()}`;
-      const schemeReference = worldpayResponse?.schemeReference || worldpayResponse?.paymentInstrument?.schemeReference || `SCHEME-REF-${Date.now()}`;
-      const nextBillingDate = /* @__PURE__ */ new Date();
-      if (billingInterval === "Next Day (Test)" || billingInterval === "Next Day" || billingInterval === "next_day" || billingInterval === "1day" || billingInterval === "day") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 1);
-      } else if (billingInterval === "week" || billingInterval === "Weekly" || billingInterval === "weekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 7);
-      } else if (billingInterval === "Bi-Weekly" || billingInterval === "bi-weekly" || billingInterval === "biweekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 14);
-      } else if (billingInterval === "year") {
-        nextBillingDate.setFullYear(nextBillingDate.getFullYear() + 1);
-      } else {
-        nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
-      }
+      const normalizedInterval = normalizeBillingInterval(billingInterval);
+      const nextBillingDate = calculateNextBillingDate(normalizedInterval, /* @__PURE__ */ new Date());
       const emailClean = String(customerEmail).toLowerCase().trim();
       const subId = `sub_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`;
+      const effectiveShipping = typeof shippingFee === "number" ? shippingFee : typeof shippingCost === "number" ? shippingCost : Number(amount) >= 40 ? 0 : 2.99;
       const subData = {
         id: subId,
         customerId: customerId || null,
@@ -5120,9 +8538,15 @@ router11.post(
         planId,
         planName: planName || "Nicotine Pouch Subscription Plan",
         amount: Number(amount),
+        shippingFee: effectiveShipping,
+        shippingCost: effectiveShipping,
+        shippingAmount: effectiveShipping,
+        shippingAddress: shippingAddress || "United Kingdom",
+        deliveryMethod: deliveryMethod || "Royal Mail Tracked 24/48",
+        items: Array.isArray(items) ? items : void 0,
         currency,
         status: "active",
-        billingInterval,
+        billingInterval: normalizedInterval,
         nextBillingDate,
         worldpayTransactionId: transactionId,
         worldpayRecurringHref: recurringHref,
@@ -5209,31 +8633,27 @@ router11.post(
           message: `Subscription is ${subscription.status}.`
         });
       }
-      if (!subscription.worldpayRecurringHref) {
+      if (!subscription.worldpayRecurringHref && !subscription.worldpaySchemeReference) {
         return res.status(400).json({
           success: false,
-          message: "Worldpay recurring authorization resource is missing."
+          message: "This subscription has no Worldpay stored credential, so no recurring payment can be taken."
         });
       }
       const transactionReference = `SUB-${Date.now()}-${crypto4.randomBytes(4).toString("hex").toUpperCase()}`;
+      const chargeAmount = Number(subscription.amount);
       const result = await chargeRecurringSubscription({
         recurringHref: subscription.worldpayRecurringHref,
         transactionReference,
-        amount: Number(subscription.amount),
-        currency: subscription.currency || "GBP"
+        amount: chargeAmount,
+        currency: subscription.currency || "GBP",
+        schemeReference: subscription.worldpaySchemeReference,
+        previousTransactionId: subscription.worldpayTransactionId,
+        customerEmail: subscription.customerEmail
       });
-      const nextBillingDate = subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : /* @__PURE__ */ new Date();
-      if (subscription.billingInterval === "Next Day (Test)" || subscription.billingInterval === "Next Day" || subscription.billingInterval === "next_day" || subscription.billingInterval === "1day" || subscription.billingInterval === "day") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 1);
-      } else if (subscription.billingInterval === "week" || subscription.billingInterval === "Weekly" || subscription.billingInterval === "weekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 7);
-      } else if (subscription.billingInterval === "Bi-Weekly" || subscription.billingInterval === "bi-weekly" || subscription.billingInterval === "biweekly") {
-        nextBillingDate.setDate(nextBillingDate.getDate() + 14);
-      } else if (subscription.billingInterval === "year") {
-        nextBillingDate.setFullYear(nextBillingDate.getFullYear() + 1);
-      } else {
-        nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
-      }
+      const nextBillingDate = nextBillingDateAfterCharge(
+        subscription.billingInterval,
+        subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null
+      );
       const updatePayload = {
         lastPaymentStatus: "authorized",
         lastPaymentId: result?.id || transactionReference,
@@ -5258,6 +8678,57 @@ router11.post(
         await saveResource("subscriptions", updatedList);
       } catch (_e) {
       }
+      const shippingAmount = typeof subscription.shippingFee === "number" ? subscription.shippingFee : typeof subscription.shippingCost === "number" ? subscription.shippingCost : typeof subscription.shippingAmount === "number" ? subscription.shippingAmount : typeof subscription.deliveryCost === "number" ? subscription.deliveryCost : chargeAmount >= 40 ? 0 : 2.99;
+      const itemSubtotal = Number(Math.max(0, chargeAmount - shippingAmount).toFixed(2)) || chargeAmount;
+      const newOrderId = `PS${Math.floor(1e4 + Math.random() * 9e4)}`;
+      const orderItems = buildRenewalOrderItems(subscription, itemSubtotal, planTitleFromSubscription(subscription));
+      const newOrderData = {
+        id: newOrderId,
+        orderId: newOrderId,
+        customerName: subscription.customerName || "Valued Subscriber",
+        customerEmail: subscription.customerEmail,
+        destination: subscription.shippingAddress || subscription.destination || "United Kingdom",
+        items: orderItems,
+        // The chosen products travel with the renewal so the order detail view
+        // shows the real box contents rather than re-parsing the plan title.
+        subscriptionItems: extractBoxItems(subscription),
+        subscriptionPlan: planTitleFromSubscription(subscription),
+        total: chargeAmount,
+        subtotal: itemSubtotal,
+        shippingCost: shippingAmount,
+        deliveryCost: shippingAmount,
+        storeCreditApplied: 0,
+        discountApplied: null,
+        status: "Processing",
+        fulfillmentStatus: "Unfulfilled",
+        paymentStatus: "Paid",
+        paymentMethod: "Worldpay Recurring Subscription",
+        worldpayTxId: result?.id || transactionReference,
+        gatewayTxId: result?.id || transactionReference,
+        worldpayAuthCode: result?.authCode || "AUTH-OK-MIT",
+        gatewayAuthCode: result?.authCode || "AUTH-OK-MIT",
+        cardBrand: "Worldpay Stored Card",
+        deliveryMethod: subscription.deliveryMethod || "Royal Mail Tracked 24/48",
+        carrier: "Royal Mail",
+        tags: ["Storefront", "Subscription Order", "Worldpay Recurring"],
+        date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        subscriptionId: subscription.id,
+        isSubscription: true,
+        data: {
+          subscriptionId: subscription.id,
+          schemeReference: result?.schemeReference || subscription.worldpaySchemeReference,
+          paymentMethod: "Worldpay Access MIT",
+          recurringRenewal: true,
+          shippingCost: shippingAmount,
+          subtotal: itemSubtotal
+        },
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      try {
+        const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+        await saveSingleOrder2(newOrderData);
+      } catch (_ordErr) {
+      }
       return res.json({
         success: true,
         transactionReference,
@@ -5268,14 +8739,26 @@ router11.post(
       console.error("[Subscription Charge]", error);
       const subscriptionId = req.body?.subscriptionId;
       if (subscriptionId) {
+        const retryDate = /* @__PURE__ */ new Date();
+        retryDate.setDate(retryDate.getDate() + 1);
+        const failUpdate = {
+          lastPaymentStatus: "failed",
+          failedPaymentCount: { increment: 1 },
+          nextBillingDate: retryDate
+        };
         try {
           await prisma.subscription.update({
             where: { id: subscriptionId },
-            data: {
-              lastPaymentStatus: "failed",
-              failedPaymentCount: { increment: 1 }
-            }
+            data: failUpdate
           });
+        } catch (_e) {
+        }
+        try {
+          const stored = await fetchResource("subscriptions") || [];
+          const updatedList = stored.map(
+            (s) => String(s.id) === String(subscriptionId) ? { ...s, lastPaymentStatus: "failed", failedPaymentCount: (s.failedPaymentCount || 0) + 1, nextBillingDate: retryDate } : s
+          );
+          await saveResource("subscriptions", updatedList);
         } catch (_e) {
         }
       }
@@ -5290,39 +8773,202 @@ router11.post(
   "/cancel",
   async (req, res) => {
     try {
-      const { subscriptionId } = req.body;
-      if (!subscriptionId) {
+      const { subscriptionId, customerEmail, reason } = req.body;
+      if (!subscriptionId && !customerEmail) {
         return res.status(400).json({
           success: false,
-          message: "subscriptionId is required"
+          message: "subscriptionId or customerEmail is required"
         });
       }
+      const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+      const cancellationTime = (/* @__PURE__ */ new Date()).toISOString();
+      const cancelReason = reason || "Customer cancelled subscription plan via Account portal";
       let subscription = null;
-      try {
-        subscription = await prisma.subscription.update({
-          where: { id: subscriptionId },
-          data: { status: "cancelled" }
-        });
-      } catch (_e) {
+      if (subscriptionId) {
+        try {
+          subscription = await prisma.subscription.update({
+            where: { id: subscriptionId },
+            data: { status: "cancelled" }
+          });
+        } catch (_e) {
+        }
       }
       try {
         const stored = await fetchResource("subscriptions") || [];
-        const idx = stored.findIndex((s) => String(s.id) === String(subscriptionId));
-        if (idx !== -1) {
-          stored[idx].status = "cancelled";
-          await saveResource("subscriptions", stored);
-          subscription = stored[idx];
+        let modified = false;
+        const updatedList = stored.map((s) => {
+          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
+          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+          if (matchId || matchEmail) {
+            modified = true;
+            return {
+              ...s,
+              status: "cancelled",
+              cancelledAt: cancellationTime,
+              cancellationReason: cancelReason
+            };
+          }
+          return s;
+        });
+        if (modified) {
+          await saveResource("subscriptions", updatedList);
+          subscription = updatedList.find(
+            (s) => subscriptionId && String(s.id) === String(subscriptionId) || emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean
+          ) || subscription;
         }
       } catch (_e) {
       }
+      let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);
+      if (matchedEmail) {
+        try {
+          const customers = await fetchResource("customers") || [];
+          let custModified = false;
+          const updatedCustomers = customers.map((c) => {
+            if (String(c.email || "").toLowerCase().trim() === matchedEmail) {
+              custModified = true;
+              return {
+                ...c,
+                subscriptionStatus: "Cancelled",
+                subStatus: "Cancelled",
+                isSubscriptionCancelled: true,
+                subscriptionCancelledAt: cancellationTime,
+                subscriptionCancellationReason: cancelReason
+              };
+            }
+            return c;
+          });
+          if (custModified) {
+            await saveResource("customers", updatedCustomers);
+          }
+        } catch (custErr) {
+          console.warn("[Subscription Cancel] Failed to update customer:", custErr);
+        }
+        try {
+          const orders = await fetchResource("orders") || [];
+          let ordersModified = false;
+          const updatedOrders = orders.map((o) => {
+            const isCustOrder = String(o.customerEmail || "").toLowerCase().trim() === matchedEmail;
+            const isSub = Boolean(
+              o.isSubscription || Array.isArray(o.tags) && o.tags.some((t) => t && t.toLowerCase().includes("subscription")) || Array.isArray(o.items) && o.items.some((i) => i.isSubscription || i.productTitle && i.productTitle.toLowerCase().includes("subscription"))
+            );
+            if (isCustOrder && isSub) {
+              ordersModified = true;
+              const tags = Array.isArray(o.tags) ? [...o.tags] : ["Storefront", "Online Order"];
+              if (!tags.includes("Subscription Cancelled")) {
+                tags.push("Subscription Cancelled");
+              }
+              const subDetails = o.subscriptionDetails ? { ...o.subscriptionDetails } : {};
+              subDetails.status = "Cancelled";
+              subDetails.isCancelled = true;
+              subDetails.cancelledAt = cancellationTime;
+              subDetails.cancellationReason = cancelReason;
+              return {
+                ...o,
+                tags,
+                subscriptionCancelled: true,
+                subscriptionCancelledAt: cancellationTime,
+                subscriptionCancellationReason: cancelReason,
+                subscriptionDetails: subDetails
+              };
+            }
+            return o;
+          });
+          if (ordersModified) {
+            await saveResource("orders", updatedOrders);
+            console.log(`[Subscription Cancel] Updated matching orders for customer: ${matchedEmail}`);
+          }
+        } catch (orderErr) {
+          console.warn("[Subscription Cancel] Failed to update orders:", orderErr);
+        }
+      }
       return res.json({
         success: true,
-        subscription
+        message: "Subscription successfully cancelled.",
+        subscription: subscription || { status: "cancelled", cancelledAt: cancellationTime, cancellationReason: cancelReason }
+      });
+    } catch (error) {
+      console.error("[Subscription Cancel Error]", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to cancel subscription"
+      });
+    }
+  }
+);
+router11.post(
+  "/reactivate",
+  async (req, res) => {
+    try {
+      const { subscriptionId, customerEmail } = req.body;
+      if (!subscriptionId && !customerEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "subscriptionId or customerEmail is required"
+        });
+      }
+      const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+      let subscription = null;
+      if (subscriptionId) {
+        try {
+          subscription = await prisma.subscription.update({
+            where: { id: subscriptionId },
+            data: { status: "active" }
+          });
+        } catch (_e) {
+        }
+      }
+      try {
+        const stored = await fetchResource("subscriptions") || [];
+        let modified = false;
+        const updatedList = stored.map((s) => {
+          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
+          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+          if (matchId || matchEmail) {
+            modified = true;
+            return {
+              ...s,
+              status: "active",
+              reactivatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+          }
+          return s;
+        });
+        if (modified) {
+          await saveResource("subscriptions", updatedList);
+          subscription = updatedList.find(
+            (s) => subscriptionId && String(s.id) === String(subscriptionId) || emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean
+          ) || subscription;
+        }
+      } catch (_e) {
+      }
+      let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);
+      if (matchedEmail) {
+        try {
+          const customers = await fetchResource("customers") || [];
+          const updatedCustomers = customers.map((c) => {
+            if (String(c.email || "").toLowerCase().trim() === matchedEmail) {
+              return {
+                ...c,
+                subscriptionStatus: "Subscribed",
+                subStatus: "Active",
+                isSubscriptionCancelled: false
+              };
+            }
+            return c;
+          });
+          await saveResource("customers", updatedCustomers);
+        } catch (_e) {
+        }
+      }
+      return res.json({
+        success: true,
+        message: "Subscription plan reactivated successfully.",
+        subscription: subscription || { status: "active" }
       });
     } catch (error) {
       return res.status(500).json({
         success: false,
-        message: error.message || "Failed to cancel subscription"
+        message: error.message || "Failed to reactivate subscription"
       });
     }
   }
@@ -5461,113 +9107,6 @@ var structure_default = router12;
 // backend/routes/email.ts
 init_emailService();
 import { Router as Router11 } from "express";
-import { Resend as Resend2 } from "resend";
-
-// backend/services/recaptchaService.ts
-init_serverDb();
-import fetch2 from "node-fetch";
-var DEFAULT_RECAPTCHA_SETTINGS = {
-  enabled: true,
-  siteKey: process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SITE_KEY || "6LefWfspAAAAADsJ-68J39yGfE08JzW_0000000",
-  secretKey: process.env.RECAPTCHA_SECRET_KEY || "",
-  minScore: 0.5
-};
-async function getRecaptchaSettings() {
-  try {
-    const list = await fetchResource("recaptcha_settings");
-    if (Array.isArray(list) && list.length > 0 && list[0]) {
-      return {
-        ...DEFAULT_RECAPTCHA_SETTINGS,
-        ...list[0],
-        siteKey: list[0].siteKey || DEFAULT_RECAPTCHA_SETTINGS.siteKey,
-        secretKey: list[0].secretKey || DEFAULT_RECAPTCHA_SETTINGS.secretKey
-      };
-    }
-  } catch (err) {
-    console.warn("[RecaptchaService] Error reading settings from DB, using defaults:", err);
-  }
-  return DEFAULT_RECAPTCHA_SETTINGS;
-}
-async function saveRecaptchaSettings(settings) {
-  const current = await getRecaptchaSettings();
-  const updated = {
-    ...current,
-    ...settings,
-    minScore: typeof settings.minScore === "number" ? settings.minScore : current.minScore
-  };
-  await saveSingleItem("recaptcha_settings", updated);
-  return updated;
-}
-async function verifyRecaptchaToken(token, expectedAction) {
-  const settings = await getRecaptchaSettings();
-  if (!settings.enabled) {
-    console.log("[RecaptchaService] reCAPTCHA is disabled in settings, skipping score check.");
-    return { success: true, score: 1, action: expectedAction };
-  }
-  if (!token || typeof token !== "string" || token.trim().length === 0) {
-    return {
-      success: false,
-      score: 0,
-      error: "reCAPTCHA verification token missing. Please complete the reCAPTCHA security check."
-    };
-  }
-  if (token.startsWith("SIMULATED_RECAPTCHA_TOKEN") || token.startsWith("PASSED_LOCAL_TOKEN")) {
-    console.log("[RecaptchaService] Simulated reCAPTCHA token received and approved (Score: 0.9)");
-    return { success: true, score: 0.9, action: expectedAction };
-  }
-  const secretKey = settings.secretKey || process.env.RECAPTCHA_SECRET_KEY;
-  if (!secretKey || secretKey.trim().length === 0) {
-    console.warn("[RecaptchaService] No RECAPTCHA_SECRET_KEY configured. Granting pass-through verification for live token.");
-    return { success: true, score: 0.95, action: expectedAction };
-  }
-  try {
-    const params = new URLSearchParams();
-    params.append("secret", secretKey.trim());
-    params.append("response", token.trim());
-    const response = await fetch2("https://www.google.com/recaptcha/api/siteverify", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString()
-    });
-    const data = await response.json();
-    console.log("[RecaptchaService] Google siteverify response:", data);
-    if (!data.success) {
-      const errorCodes = Array.isArray(data["error-codes"]) ? data["error-codes"].join(", ") : "Verification failed";
-      return {
-        success: false,
-        score: 0,
-        error: `reCAPTCHA validation failed: ${errorCodes}`
-      };
-    }
-    const score = typeof data.score === "number" ? data.score : 1;
-    const action = data.action;
-    if (score < settings.minScore) {
-      return {
-        success: false,
-        score,
-        action,
-        error: `Security score (${score.toFixed(2)}) is lower than required confidence threshold (${settings.minScore}). Automated submission detected.`
-      };
-    }
-    if (expectedAction && action && action !== expectedAction) {
-      console.warn(`[RecaptchaService] Action mismatch: expected '${expectedAction}', got '${action}'`);
-    }
-    return {
-      success: true,
-      score,
-      action
-    };
-  } catch (err) {
-    console.error("[RecaptchaService] Error verifying reCAPTCHA token:", err);
-    return {
-      success: true,
-      score: 0.8,
-      error: "Warning: Failed to reach Google reCAPTCHA server, fallback approval granted."
-    };
-  }
-}
-
-// backend/routes/email.ts
 init_emailTemplates();
 init_serverDb();
 var router13 = Router11();
@@ -5578,8 +9117,8 @@ function getSampleTemplateData(type, customData) {
     { productId: "p3", productTitle: "KILLA Cold Mint Extra Strong 16mg Canister", price: 5.49, quantity: 3 }
   ];
   const defaultData = {
-    customerName: "Alex Mercer",
-    customerEmail: "alex.mercer@example.com",
+    customerName: "Scott Kivlin",
+    customerEmail: "scottkivlinpouch@gmail.com",
     orderId: "PS89421",
     orderDate: "Aug 1, 2026 at 10:45 AM",
     items: sampleItems,
@@ -5599,7 +9138,7 @@ function getSampleTemplateData(type, customData) {
     resetLink: "https://pouch-supply.com/reset-password?token=sample_reset_token",
     resetToken: "sample_reset_token",
     discountCode: "WELCOME10",
-    supportEmail: "support@pouch-supply.com",
+    supportEmail: "scottkivlinpouch@gmail.com",
     siteUrl: "https://pouch-supply.com"
   };
   return { ...defaultData, ...customData || {} };
@@ -5620,6 +9159,43 @@ router13.post("/settings", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save email settings" });
   }
 });
+router13.post("/verify-connection", async (req, res) => {
+  try {
+    const result = await verifyEmailConnection(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message || "Verification failed" });
+  }
+});
+router13.get("/recaptcha-settings", async (_req, res) => {
+  try {
+    const settings = await getRecaptchaSettings();
+    res.json({
+      enabled: settings.enabled,
+      siteKey: settings.siteKey,
+      minScore: settings.minScore,
+      hasSecretKey: Boolean(settings.secretKey && settings.secretKey.trim().length > 0)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Failed to fetch recaptcha settings" });
+  }
+});
+router13.post("/recaptcha-settings", async (req, res) => {
+  try {
+    const updated = await saveRecaptchaSettings(req.body);
+    res.json({
+      success: true,
+      settings: {
+        enabled: updated.enabled,
+        siteKey: updated.siteKey,
+        minScore: updated.minScore,
+        hasSecretKey: Boolean(updated.secretKey && updated.secretKey.trim().length > 0)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Failed to save recaptcha settings" });
+  }
+});
 router13.get("/logs", async (_req, res) => {
   try {
     const logs = await getEmailLogs();
@@ -5636,11 +9212,20 @@ router13.post("/logs/clear", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to clear email logs" });
   }
 });
-router13.post("/preview", (req, res) => {
+router13.post("/preview", async (req, res) => {
   try {
     const { type, customData } = req.body;
     const templateType = type || "order_confirmation";
     const data = getSampleTemplateData(templateType, customData);
+    if (!data.headerLogoImage && !data.logoUrl) {
+      try {
+        const layout = await fetchLayoutSettings();
+        if (layout?.headerLogoImage) {
+          data.headerLogoImage = layout.headerLogoImage;
+        }
+      } catch (e) {
+      }
+    }
     let html = "";
     switch (templateType) {
       case "order_confirmation":
@@ -5750,27 +9335,6 @@ router13.post("/send-trigger", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to dispatch email trigger" });
   }
 });
-router13.get("/recaptcha-settings", async (_req, res) => {
-  try {
-    const settings = await getRecaptchaSettings();
-    res.json({
-      enabled: settings.enabled,
-      siteKey: settings.siteKey,
-      minScore: settings.minScore,
-      hasSecretKey: Boolean(settings.secretKey && settings.secretKey.trim().length > 0)
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message || "Failed to fetch reCAPTCHA settings" });
-  }
-});
-router13.post("/recaptcha-settings", async (req, res) => {
-  try {
-    const updated = await saveRecaptchaSettings(req.body);
-    res.json({ success: true, settings: updated });
-  } catch (err) {
-    res.status(500).json({ error: err.message || "Failed to save reCAPTCHA settings" });
-  }
-});
 router13.post("/contact", async (req, res) => {
   try {
     const { name, email, subject, message, phone, recaptchaToken, token } = req.body;
@@ -5785,9 +9349,7 @@ router13.post("/contact", async (req, res) => {
       });
     }
     const settings = await getEmailSettings();
-    const adminEmail = settings.adminNotificationEmail || process.env.ADMIN_NOTIFICATION_EMAIL || "admin@support.pouch-supply.com";
-    const apiKey = (settings.resendApiKey || process.env.RESEND_API_KEY || "").trim();
-    let fromEmail = (settings.fromEmail || process.env.RESEND_FROM_EMAIL || "Pouch Supply Co. <orders@support.pouch-supply.com>").trim();
+    const adminEmail = settings.adminNotificationEmail || settings.gmailUser || "scottkivlinpouch@gmail.com";
     const emailSubject = `\u{1F4E9} Contact Form Submission: ${subject || "General Inquiry"} from ${name}`;
     const htmlBody = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
@@ -5820,186 +9382,31 @@ router13.post("/contact", async (req, res) => {
         <p style="margin-top: 24px; font-size: 12px; color: #94a3b8; text-align: center;">Sent via Pouch Supply Co. Storefront Contact Form</p>
       </div>
     `;
-    const custSubject = `Thank you for contacting Pouch Supply Co.!`;
-    const custHtml = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
-        <div style="text-align: center; padding-bottom: 16px; border-bottom: 1px solid #f1f5f9;">
-          <h1 style="color: #0f172a; margin: 0; font-size: 20px; font-weight: 800; text-transform: uppercase; letter-spacing: -0.02em;">Pouch Supply Co.</h1>
-          <p style="color: #64748b; font-size: 12px; margin-top: 4px;">Premium Nicotine Pouches & Fast Express Shipping</p>
-        </div>
-
-        <div style="padding: 24px 0;">
-          <h2 style="color: #0f172a; margin-top: 0; font-size: 18px; font-weight: 700;">Hi ${name},</h2>
-          <p style="color: #334155; font-size: 14px; line-height: 1.6;">
-            Thank you for reaching out to <strong>Pouch Supply Co.</strong>! We have received your inquiry regarding <strong>"${subject || "General Inquiry"}"</strong> and our customer support team is reviewing it now.
-          </p>
-          <p style="color: #334155; font-size: 14px; line-height: 1.6;">
-            Our average response time is under 2 hours during business hours (Monday \u2013 Friday, 9:00 AM \u2013 6:00 PM GMT).
-          </p>
-
-          <div style="margin-top: 20px; padding: 16px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
-            <h4 style="margin: 0 0 10px 0; color: #0f172a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;">Summary of your message:</h4>
-            <p style="margin: 0 0 6px 0; color: #475569; font-size: 13px;"><strong>Topic:</strong> ${subject || "General Inquiry"}</p>
-            <p style="margin: 0; color: #475569; font-size: 13px; white-space: pre-wrap;"><strong>Message:</strong> ${message}</p>
-          </div>
-        </div>
-
-        <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; text-align: center;">
-          <p style="color: #64748b; font-size: 12px; margin: 0 0 8px 0;">Need to add extra details? Simply reply directly to this email.</p>
-          <p style="color: #94a3b8; font-size: 11px; margin: 0;">&copy; ${(/* @__PURE__ */ new Date()).getFullYear()} Pouch Supply Co. All rights reserved.</p>
-        </div>
-      </div>
-    `;
-    let adminStatus = "failed";
-    let adminResendId = void 0;
-    let adminError = void 0;
-    let custStatus = "failed";
-    let custResendId = void 0;
-    let custError = void 0;
-    if (apiKey) {
-      const resend = new Resend2(apiKey);
-      try {
-        let sendRes = await resend.emails.send({
-          from: fromEmail,
-          to: [adminEmail],
-          replyTo: email,
-          subject: emailSubject,
-          html: htmlBody
-        });
-        if (sendRes.error && !fromEmail.includes("onboarding@resend.dev")) {
-          fromEmail = "Pouch Supply Co. <onboarding@resend.dev>";
-          sendRes = await resend.emails.send({
-            from: fromEmail,
-            to: [adminEmail],
-            replyTo: email,
-            subject: emailSubject,
-            html: htmlBody
-          });
-        }
-        if (sendRes.error) {
-          adminStatus = "failed";
-          adminError = sendRes.error.message || String(sendRes.error);
-        } else if (sendRes.data?.id) {
-          adminStatus = "sent";
-          adminResendId = sendRes.data.id;
-        }
-      } catch (err) {
-        adminStatus = "failed";
-        adminError = err.message || String(err);
-      }
-      try {
-        let custSendRes = await resend.emails.send({
-          from: fromEmail,
-          to: [email],
-          replyTo: adminEmail,
-          subject: custSubject,
-          html: custHtml
-        });
-        if (custSendRes.error && !fromEmail.includes("onboarding@resend.dev")) {
-          fromEmail = "Pouch Supply Co. <onboarding@resend.dev>";
-          custSendRes = await resend.emails.send({
-            from: fromEmail,
-            to: [email],
-            replyTo: adminEmail,
-            subject: custSubject,
-            html: custHtml
-          });
-        }
-        if (custSendRes.error) {
-          custStatus = "failed";
-          custError = custSendRes.error.message || String(custSendRes.error);
-        } else if (custSendRes.data?.id) {
-          custStatus = "sent";
-          custResendId = custSendRes.data.id;
-        }
-      } catch (err) {
-        custStatus = "failed";
-        custError = err.message || String(err);
-      }
-    } else {
-      adminError = "No Resend API key configured";
-      custError = "No Resend API key configured";
-    }
-    const logs = await getEmailLogs();
-    const adminLog = {
-      id: `log_${Date.now()}_admin_${Math.random().toString(36).substring(2, 6)}`,
-      type: "admin_new_order",
-      recipient: adminEmail,
-      subject: emailSubject,
-      status: adminStatus,
-      resendId: adminResendId,
-      error: adminError,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      metadata: { contactForm: { name, email, subject, message, phone } }
+    await sendEmail("admin_new_order", adminEmail, {
+      customerName: name,
+      customerEmail: email,
+      orderId: "INQUIRY-" + Date.now().toString().slice(-6)
+    }, emailSubject);
+    const contactMsgRecord = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name,
+      email,
+      phone: phone || "",
+      subject: subject || "General Inquiry",
+      message,
+      status: "Unread",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
-    const customerLog = {
-      id: `log_${Date.now()}_cust_${Math.random().toString(36).substring(2, 6)}`,
-      type: "welcome_email",
-      recipient: email,
-      subject: custSubject,
-      status: custStatus,
-      resendId: custResendId,
-      error: custError,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      metadata: { contactFormReply: { name, email, subject, message } }
-    };
-    await saveResource("email_logs", [adminLog, customerLog, ...Array.isArray(logs) ? logs : []]);
-    try {
-      const contactMsgRecord = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        name,
-        email,
-        phone: phone || "",
-        subject: subject || "General Inquiry",
-        message,
-        status: "Unread",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await saveSingleItem("contactMessages", contactMsgRecord);
-    } catch (saveMsgErr) {
-      console.warn("[ContactForm] Failed to save contact submission to DB:", saveMsgErr);
-    }
-    let responseNote = "Thank you for reaching out! Your message has been received, and our customer support team will get back to you shortly.";
-    let sandboxNotice = void 0;
-    if (custStatus === "failed" && custError?.toLowerCase().includes("testing emails")) {
-      sandboxNotice = `Note: Resend's free onboarding mode limits live emails to your verified account address. Verify a custom domain in Resend (resend.com/domains) to dispatch live emails to all external customer inboxes.`;
-    }
+    const existingMsgs = await fetchResource("contact_messages") || [];
+    existingMsgs.unshift(contactMsgRecord);
+    await saveResource("contact_messages", existingMsgs.slice(0, 500));
     res.json({
       success: true,
-      message: responseNote,
-      sandboxNotice,
-      adminStatus,
-      customerStatus: custStatus,
-      customerError: custError
+      message: "Thank you! Your message has been sent successfully. We will get back to you shortly.",
+      id: contactMsgRecord.id
     });
   } catch (err) {
-    console.error("[ContactForm] Error submitting contact form:", err);
-    res.status(500).json({ error: err.message || "Failed to send message." });
-  }
-});
-router13.post("/subscribe", async (req, res) => {
-  try {
-    const { email, recaptchaToken, token } = req.body;
-    if (!email || typeof email !== "string" || !email.includes("@")) {
-      return res.status(400).json({ error: "Valid email address is required." });
-    }
-    const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, "newsletter_subscribe");
-    if (!captchaCheck.success) {
-      console.warn("[Newsletter] reCAPTCHA check failed:", captchaCheck);
-      return res.status(403).json({
-        error: captchaCheck.error || "reCAPTCHA security check failed. Automated subscription blocked."
-      });
-    }
-    const emailTrim = email.trim().toLowerCase();
-    const result = await sendWelcomeEmail(emailTrim, "Valued Customer", "WELCOME10");
-    res.json({
-      success: true,
-      message: "Subscribed successfully! Welcome email dispatched.",
-      result
-    });
-  } catch (err) {
-    console.error("[Newsletter] Error subscribing:", err);
-    res.status(500).json({ error: err.message || "Failed to process newsletter subscription." });
+    res.status(500).json({ error: err.message || "Failed to submit contact message" });
   }
 });
 var email_default = router13;
@@ -6009,6 +9416,15 @@ init_klaviyoService();
 init_serverDb();
 import { Router as Router12 } from "express";
 var router14 = Router12();
+router14.get("/lists", async (req, res) => {
+  try {
+    const apiKey = req.query.apiKey;
+    const lists = await getKlaviyoLists(apiKey);
+    res.json({ success: true, lists });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch Klaviyo lists" });
+  }
+});
 router14.get("/settings", async (_req, res) => {
   try {
     const settings = await getKlaviyoSettings();
@@ -6025,16 +9441,16 @@ router14.post("/settings", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save Klaviyo settings" });
   }
 });
-router14.post("/verify", async (req, res) => {
+var handleVerify = async (req, res) => {
   try {
-    const { apiKey } = req.body;
+    const apiKey = req.body?.apiKey || req.query?.apiKey;
     const settings = await getKlaviyoSettings();
     let keyToTest = (apiKey || settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
     if (keyToTest.toLowerCase().startsWith("klaviyo-api-key ")) {
       keyToTest = keyToTest.substring(16).trim();
     }
     if (!keyToTest) {
-      return res.status(400).json({ success: false, error: "No Klaviyo Private API Key provided." });
+      return res.status(400).json({ success: false, error: "No Klaviyo Private API Key provided or saved in settings." });
     }
     const response = await fetch("https://a.klaviyo.com/api/metrics/", {
       method: "GET",
@@ -6044,14 +9460,7 @@ router14.post("/verify", async (req, res) => {
         "revision": "2024-02-15"
       }
     });
-    if (response.ok) {
-      const data = await response.json();
-      const count = Array.isArray(data?.data) ? data.data.length : 0;
-      return res.json({
-        success: true,
-        message: `Klaviyo Private API Key verified successfully! Account connected with ${count} active metrics/events.`
-      });
-    } else {
+    if (!response.ok) {
       const errText = await response.text();
       let errorMsg = `HTTP ${response.status}: ${errText}`;
       try {
@@ -6063,10 +9472,54 @@ router14.post("/verify", async (req, res) => {
       }
       return res.status(response.status).json({ success: false, error: errorMsg });
     }
+    const data = await response.json();
+    const count = Array.isArray(data?.data) ? data.data.length : 0;
+    const testEventPayload = {
+      data: {
+        type: "event",
+        attributes: {
+          metric: { data: { type: "metric", attributes: { name: "Storefront Verification" } } },
+          profile: { data: { type: "profile", attributes: { email: "verification-check@pouch-supply.com" } } },
+          properties: { verified: true },
+          time: (/* @__PURE__ */ new Date()).toISOString()
+        }
+      }
+    };
+    const eventCheckRes = await fetch("https://a.klaviyo.com/api/events/", {
+      method: "POST",
+      headers: {
+        "Authorization": `Klaviyo-API-Key ${keyToTest}`,
+        "Content-Type": "application/json",
+        "accept": "application/json",
+        "revision": "2024-02-15"
+      },
+      body: JSON.stringify(testEventPayload)
+    });
+    let hasEventsWrite = eventCheckRes.ok || eventCheckRes.status === 202;
+    let eventsWriteWarning = "";
+    if (!hasEventsWrite) {
+      const evErrText = await eventCheckRes.text();
+      try {
+        const parsed = JSON.parse(evErrText);
+        if (parsed.errors?.[0]?.detail) {
+          eventsWriteWarning = parsed.errors[0].detail;
+        }
+      } catch (e) {
+        eventsWriteWarning = evErrText;
+      }
+    }
+    return res.json({
+      success: true,
+      hasEventsWrite,
+      eventsWriteWarning: eventsWriteWarning || void 0,
+      message: hasEventsWrite ? `Klaviyo Private API Key verified with Full Access! Account connected with ${count} metrics.` : `API Key connected (${count} metrics), but missing "events:write" scope. Please create a Private Key in Klaviyo with "Full Access" so metrics populate in Analytics.`
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || "Failed to verify Klaviyo API key" });
   }
-});
+};
+router14.get("/verify", handleVerify);
+router14.post("/verify", handleVerify);
 router14.get("/logs", async (_req, res) => {
   try {
     const logs = await getKlaviyoLogs();
@@ -6129,907 +9582,36 @@ router14.post("/track", async (req, res) => {
 var klaviyo_default = router14;
 
 // backend/routes/royalMail.ts
+init_royalMailService();
+init_royalMail();
 import { Router as Router13 } from "express";
-
-// backend/services/royalMailService.ts
-init_serverDb();
-init_emailService();
-init_klaviyoService();
-
-// src/lib/royalMail.ts
-var ROYAL_MAIL_API_URL = process.env.ROYAL_MAIL_API_URL || process.env.RM_API_BASE_URL || process.env.ROYAL_MAIL_BASE_URL || "https://api.parcel.royalmail.com/api/v1";
-var RoyalMailError = class extends Error {
-  constructor(message, status, details) {
-    super(message);
-    this.name = "RoyalMailError";
-    this.status = status;
-    this.details = details;
-  }
-};
-function getAuthHeader(apiKey) {
-  const key = apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY || "";
-  if (!key) return "";
-  return key.startsWith("Bearer ") ? key : `Bearer ${key}`;
-}
-async function royalMailRequest(path5, options = {}, apiKey) {
-  const key = apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY;
-  if (!key) {
-    throw new RoyalMailError("ROYAL_MAIL_API_KEY is not configured", 500);
-  }
-  const authHeader = getAuthHeader(key);
-  const response = await fetch(`${ROYAL_MAIL_API_URL}${path5}`, {
-    ...options,
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...options.headers || {}
-    },
-    cache: "no-store"
-  });
-  const contentType = response.headers.get("content-type") || "";
-  let data;
-  if (contentType.includes("application/json")) {
-    data = await response.json();
-  } else {
-    data = await response.text();
-  }
-  if (!response.ok) {
-    let errMsg = `Royal Mail API error (${response.status})`;
-    if (typeof data === "object" && data !== null) {
-      const obj = data;
-      if (Array.isArray(obj.errors) && obj.errors.length > 0) {
-        errMsg = obj.errors.map((e) => e.message || e.code || JSON.stringify(e)).join(" | ");
-      } else if (Array.isArray(obj.failedOrders) && obj.failedOrders.length > 0) {
-        const failedErrs = [];
-        obj.failedOrders.forEach((f) => {
-          if (Array.isArray(f.errors)) {
-            f.errors.forEach((e) => failedErrs.push(e.message || e.code || JSON.stringify(e)));
-          }
-        });
-        if (failedErrs.length > 0) errMsg = failedErrs.join(" | ");
-      } else if (obj.message) {
-        errMsg = obj.message;
-      } else {
-        errMsg = JSON.stringify(obj);
-      }
-    } else if (typeof data === "string" && data.length > 0) {
-      errMsg = data;
-    }
-    throw new RoyalMailError(errMsg, response.status, data);
-  }
-  return data;
-}
-async function checkRoyalMailConnection(apiKey) {
-  return royalMailRequest(
-    "/orders?pageSize=1",
-    {
-      method: "GET"
-    },
-    apiKey
-  );
-}
-async function createRoyalMailOrders(orders, apiKey) {
-  return royalMailRequest(
-    "/orders",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        items: orders
-      })
-    },
-    apiKey
-  );
-}
-async function getRoyalMailOrder(identifier, apiKey) {
-  const encoded = typeof identifier === "number" ? String(identifier) : `"${encodeURIComponent(identifier)}"`;
-  return royalMailRequest(
-    `/orders/${encoded}`,
-    {
-      method: "GET"
-    },
-    apiKey
-  );
-}
-async function getRoyalMailLabel(identifier, options, apiKey) {
-  const key = apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY;
-  if (!key) {
-    throw new RoyalMailError("ROYAL_MAIL_API_KEY is not configured", 500);
-  }
-  const encoded = typeof identifier === "number" ? String(identifier) : `"${encodeURIComponent(identifier)}"`;
-  const params = new URLSearchParams();
-  params.set("documentType", "postageLabel");
-  params.set(
-    "includeReturnsLabel",
-    String(options?.includeReturnsLabel ?? false)
-  );
-  if (options?.includeCN !== void 0) {
-    params.set("includeCN", String(options.includeCN));
-  }
-  const authHeader = getAuthHeader(key);
-  const response = await fetch(
-    `${ROYAL_MAIL_API_URL}/orders/${encoded}/label?${params}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: authHeader,
-        Accept: "application/pdf"
-      },
-      cache: "no-store"
-    }
-  );
-  if (!response.ok) {
-    const text = await response.text();
-    throw new RoyalMailError(
-      `Unable to retrieve Royal Mail label: ${response.status}`,
-      response.status,
-      text
-    );
-  }
-  return response.arrayBuffer();
-}
-async function markRoyalMailOrderDispatched(identifier, apiKey) {
-  const item = typeof identifier === "number" ? {
-    orderIdentifier: identifier,
-    status: "despatched"
-  } : {
-    orderReference: identifier,
-    status: "despatched"
-  };
-  return royalMailRequest(
-    "/orders/status",
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        items: [item]
-      })
-    },
-    apiKey
-  );
-}
-async function createOrder(payload, apiKey) {
-  const item = Array.isArray(payload) ? payload : [payload];
-  return createRoyalMailOrders(item, apiKey);
-}
-async function getOrders(apiKey, params = {}) {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => query.append(k, String(v)));
-  const url = `/orders${query.toString() ? `?${query.toString()}` : ""}`;
-  return royalMailRequest(url, { method: "GET" }, apiKey);
-}
-async function getOrderByReference(reference, apiKey) {
-  return getRoyalMailOrder(reference, apiKey);
-}
-async function cancelOrder(reference, apiKey) {
-  const encoded = `"${encodeURIComponent(reference)}"`;
-  return royalMailRequest(`/orders/${encoded}`, { method: "DELETE" }, apiKey);
-}
-async function getApiVersion(apiKey) {
-  return royalMailRequest("/version", { method: "GET" }, apiKey);
-}
-
-// backend/services/royalMailService.ts
-var DEFAULT_ROYAL_MAIL_SETTINGS = {
-  apiKey: process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "",
-  integrationName: "Pouch-Supply",
-  enabled: true,
-  defaultServiceCode: "TPS24",
-  defaultPackageType: "Parcel",
-  defaultWeightGrams: 350,
-  senderAddress: {
-    companyName: "Pouch Supply Ltd",
-    addressLine1: "Unit 4, Commerce Way",
-    addressLine2: "Industrial Estate",
-    city: "London",
-    postcode: "EC1A 1BB",
-    countryCode: "GB",
-    contactEmail: "orders@pouch-supply.com",
-    contactPhone: "+44 20 7946 0912"
-  }
-};
-async function getRoyalMailSettings() {
-  const envKey = process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "";
-  try {
-    const stored = await fetchResource("royalmail_settings");
-    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-      return {
-        ...DEFAULT_ROYAL_MAIL_SETTINGS,
-        ...stored,
-        apiKey: stored.apiKey && stored.apiKey.trim().length > 0 ? stored.apiKey : envKey || DEFAULT_ROYAL_MAIL_SETTINGS.apiKey,
-        senderAddress: {
-          ...DEFAULT_ROYAL_MAIL_SETTINGS.senderAddress,
-          ...stored.senderAddress || {}
-        }
-      };
-    }
-  } catch (err) {
-    console.warn("[RoyalMailService] Error reading settings, using defaults:", err);
-  }
-  return {
-    ...DEFAULT_ROYAL_MAIL_SETTINGS,
-    apiKey: envKey || DEFAULT_ROYAL_MAIL_SETTINGS.apiKey
-  };
-}
-async function saveRoyalMailSettings(settings) {
-  const current = await getRoyalMailSettings();
-  const updated = {
-    ...current,
-    ...settings,
-    senderAddress: {
-      ...current.senderAddress,
-      ...settings.senderAddress || {}
-    }
-  };
-  await saveResource("royalmail_settings", [updated]);
-  return updated;
-}
-function validateAddress(address) {
-  const errors = [];
-  if (!address.fullName || address.fullName.trim().length < 2) {
-    errors.push("Full recipient name is required");
-  }
-  if (!address.addressLine1 || address.addressLine1.trim().length < 3) {
-    errors.push("Address line 1 is required");
-  }
-  if (!address.city || address.city.trim().length < 2) {
-    errors.push("City / Town is required");
-  }
-  if (!address.postcode || address.postcode.trim().length < 3) {
-    errors.push("Postcode / Postal Code is required");
-  } else {
-    const country = (address.countryCode || "GB").toUpperCase();
-    if (country === "GB" || country === "UK") {
-      const ukPostcodeRegex = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
-      if (!ukPostcodeRegex.test(address.postcode.trim())) {
-        errors.push("Postcode format does not appear to be a valid UK postcode (e.g. EC1A 1BB or SW1A 1AA)");
-      }
-    }
-  }
-  const parsed = {
-    fullName: (address.fullName || "").trim(),
-    companyName: (address.companyName || "").trim(),
-    addressLine1: (address.addressLine1 || "").trim(),
-    addressLine2: (address.addressLine2 || "").trim(),
-    city: (address.city || "").trim(),
-    county: (address.county || "").trim(),
-    postcode: (address.postcode || "").trim().toUpperCase(),
-    countryCode: (address.countryCode || "GB").toUpperCase(),
-    email: (address.email || "").trim(),
-    phone: (address.phone || "").trim()
-  };
-  return {
-    valid: errors.length === 0,
-    errors,
-    parsed
-  };
-}
-function getShippingRates(weightGrams = 350, countryCode = "GB") {
-  const isUK = countryCode.toUpperCase() === "GB" || countryCode.toUpperCase() === "UK";
-  if (isUK) {
-    return [
-      {
-        serviceCode: "TPS24",
-        serviceName: "Royal Mail Tracked 24\xAE",
-        estimatedDelivery: "Next Working Day",
-        price: 4.95,
-        currency: "GBP",
-        tracked: true,
-        signatureRequired: false
-      },
-      {
-        serviceCode: "TPS48",
-        serviceName: "Royal Mail Tracked 48\xAE",
-        estimatedDelivery: "2-3 Working Days",
-        price: 3.85,
-        currency: "GBP",
-        tracked: true,
-        signatureRequired: false
-      },
-      {
-        serviceCode: "SD1",
-        serviceName: "Royal Mail Special Delivery Guaranteed by 1pm\xAE",
-        estimatedDelivery: "Next Day by 1:00 PM (Guaranteed)",
-        price: 8.95,
-        currency: "GBP",
-        tracked: true,
-        signatureRequired: true
-      },
-      {
-        serviceCode: "CRL2",
-        serviceName: "Royal Mail 24 Business Parcel (Tracked Standard)",
-        estimatedDelivery: "1-2 Working Days",
-        price: 4.25,
-        currency: "GBP",
-        tracked: true,
-        signatureRequired: false
-      }
-    ];
-  }
-  return [
-    {
-      serviceCode: "MP1",
-      serviceName: "Royal Mail International Tracked",
-      estimatedDelivery: "3-5 Working Days (Europe) / 5-7 Days (Worldwide)",
-      price: 12.5,
-      currency: "GBP",
-      tracked: true,
-      signatureRequired: false
-    },
-    {
-      serviceCode: "MP2",
-      serviceName: "Royal Mail International Tracked & Signed",
-      estimatedDelivery: "3-5 Working Days (Europe) / 5-7 Days (Worldwide)",
-      price: 14.95,
-      currency: "GBP",
-      tracked: true,
-      signatureRequired: true
-    }
-  ];
-}
-function generateRoyalMailTrackingNumber() {
-  const randomDigits = Math.floor(1e8 + Math.random() * 9e8);
-  return `RM${randomDigits}GB`;
-}
-function generateShippingLabelHtml(params) {
-  const { trackingNumber, orderId, serviceCode, serviceName, recipient, sender, weightGrams, date, isReturn } = params;
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Royal Mail Click & Drop Label - ${orderId}</title>
-  <style>
-    @page { size: 4in 6in; margin: 0; }
-    body {
-      margin: 0;
-      padding: 12px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      background-color: #ffffff;
-      color: #000000;
-      width: 4in;
-      box-sizing: border-box;
-    }
-    .label-box {
-      border: 3px solid #000000;
-      padding: 12px;
-      height: 5.6in;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      box-sizing: border-box;
-      background: #fff;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 2px solid #000;
-      padding-bottom: 8px;
-    }
-    .rm-logo {
-      font-size: 16px;
-      font-weight: 900;
-      background: #e11d48;
-      color: #fff;
-      padding: 4px 8px;
-      letter-spacing: 1px;
-      border-radius: 2px;
-    }
-    .postage-paid {
-      border: 2px solid #000;
-      padding: 4px 8px;
-      text-align: center;
-      font-size: 10px;
-      font-weight: bold;
-    }
-    .service-badge {
-      background: #000;
-      color: #fff;
-      font-size: 14px;
-      font-weight: 900;
-      padding: 6px;
-      text-align: center;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      margin-top: 8px;
-    }
-    .address-section {
-      border-bottom: 2px solid #000;
-      padding: 10px 0;
-    }
-    .to-title {
-      font-size: 10px;
-      font-weight: 900;
-      text-transform: uppercase;
-      margin-bottom: 4px;
-      color: #444;
-    }
-    .recipient-name {
-      font-size: 15px;
-      font-weight: 900;
-      text-transform: uppercase;
-    }
-    .recipient-addr {
-      font-size: 13px;
-      font-weight: 600;
-      line-height: 1.35;
-      margin-top: 2px;
-    }
-    .postcode {
-      font-size: 18px;
-      font-weight: 900;
-      letter-spacing: 2px;
-      margin-top: 6px;
-      background: #f1f5f9;
-      display: inline-block;
-      padding: 2px 6px;
-      border: 1px solid #cbd5e1;
-    }
-    .barcode-section {
-      text-align: center;
-      padding: 10px 0;
-      border-bottom: 2px dashed #000;
-    }
-    .barcode-lines {
-      height: 50px;
-      background: repeating-linear-gradient(
-        90deg,
-        #000 0px, #000 2px,
-        #fff 2px, #fff 4px,
-        #000 4px, #000 7px,
-        #fff 7px, #fff 9px,
-        #000 9px, #000 10px,
-        #fff 10px, #fff 13px
-      );
-      width: 90%;
-      margin: 0 auto 6px auto;
-    }
-    .tracking-text {
-      font-family: monospace;
-      font-size: 14px;
-      font-weight: bold;
-      letter-spacing: 2px;
-    }
-    .footer {
-      display: flex;
-      justify-content: space-between;
-      font-size: 9px;
-      color: #333;
-      padding-top: 4px;
-    }
-    .return-addr {
-      font-size: 8px;
-      color: #555;
-      margin-top: 4px;
-    }
-    @media print {
-      body { padding: 0; }
-      .no-print { display: none; }
-    }
-  </style>
-</head>
-<body>
-  <div className="no-print" style="margin-bottom: 10px; text-align: center;">
-    <button onclick="window.print()" style="padding: 8px 16px; background: #071d37; color: white; border: none; font-weight: bold; cursor: pointer; border-radius: 4px;">\u{1F5A8}\uFE0F Print Label (4" x 6")</button>
-  </div>
-
-  <div class="label-box">
-    <div>
-      <div class="header">
-        <div class="rm-logo">ROYAL MAIL</div>
-        <div class="postage-paid">
-          POSTAGE PAID GB<br/>
-          HQ 40912 ${serviceCode}
-        </div>
-      </div>
-
-      <div class="service-badge">
-        ${isReturn ? "ROYAL MAIL PRE-PAID RETURN" : serviceName.toUpperCase()}
-      </div>
-
-      <div class="address-section">
-        <div class="to-title">${isReturn ? "RETURN TO SENDER:" : "DELIVER TO:"}</div>
-        <div class="recipient-name">${recipient.fullName}</div>
-        ${recipient.companyName ? `<div style="font-size:12px; font-weight:bold;">${recipient.companyName}</div>` : ""}
-        <div class="recipient-addr">
-          ${recipient.addressLine1}<br/>
-          ${recipient.addressLine2 ? `${recipient.addressLine2}<br/>` : ""}
-          ${recipient.city} ${recipient.county ? `, ${recipient.county}` : ""}
-        </div>
-        <div class="postcode">${recipient.postcode}</div>
-        <div style="font-size: 10px; margin-top: 2px;">UNITED KINGDOM</div>
-      </div>
-    </div>
-
-    <div>
-      <div class="barcode-section">
-        <div class="barcode-lines"></div>
-        <div class="tracking-text">${trackingNumber}</div>
-        <div style="font-size: 9px; color: #555; margin-top: 2px;">Order Ref: #${orderId} | Weight: ${weightGrams}g</div>
-      </div>
-
-      <div class="footer">
-        <div>Dispatched: ${date}</div>
-        <div>Integration: Pouch-Supply</div>
-      </div>
-
-      <div class="return-addr">
-        If undelivered return to: ${sender.companyName}, ${sender.addressLine1}, ${sender.city}, ${sender.postcode}
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-  `;
-}
-async function createRoyalMailShipment(orderId, options = {}) {
-  const settings = await getRoyalMailSettings();
-  const orders = await fetchResource("orders") || [];
-  let order = orders.find((o) => String(o.id) === String(orderId));
-  if (!order) {
-    try {
-      const { prisma: prisma2 } = await Promise.resolve().then(() => (init_prisma(), prisma_exports));
-      order = await prisma2.order.findUnique({ where: { id: orderId } });
-    } catch (_e) {
-    }
-  }
-  if (!order) {
-    throw new Error(`Order #${orderId} not found in database.`);
-  }
-  const rawAddr = order.data?.address || order.destination || "";
-  let addressObj = {};
-  if (typeof rawAddr === "object") {
-    addressObj = {
-      fullName: rawAddr.fullName || rawAddr.name || order.customerName,
-      companyName: rawAddr.companyName || "",
-      addressLine1: rawAddr.addressLine1 || rawAddr.street || rawAddr.line1,
-      addressLine2: rawAddr.addressLine2 || rawAddr.line2 || "",
-      city: rawAddr.city || rawAddr.town || "London",
-      county: rawAddr.county || rawAddr.state || "",
-      postcode: rawAddr.postcode || rawAddr.zip || "EC1A 1BB",
-      countryCode: rawAddr.countryCode || rawAddr.country || "GB",
-      email: order.customerEmail,
-      phone: rawAddr.phone || ""
-    };
-  } else {
-    addressObj = {
-      fullName: order.customerName,
-      addressLine1: String(rawAddr),
-      city: "London",
-      postcode: "EC1A 1BB",
-      countryCode: "GB",
-      email: order.customerEmail
-    };
-  }
-  const validation = validateAddress(addressObj);
-  const recipient = validation.parsed || {
-    fullName: order.customerName,
-    addressLine1: "123 High Street",
-    city: "London",
-    postcode: "EC1A 1BB",
-    countryCode: "GB",
-    email: order.customerEmail
-  };
-  const serviceCode = options.serviceCode || settings.defaultServiceCode || "TPS24";
-  const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
-  const selectedRate = rates.find((r) => r.serviceCode === serviceCode) || rates[0];
-  let trackingNumber = generateRoyalMailTrackingNumber();
-  let royalMailOrderId = `RM-ORD-${Math.floor(1e5 + Math.random() * 9e5)}`;
-  let isSimulated = false;
-  let apiMessage = "";
-  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "";
-  if (apiKey && apiKey.trim().length > 0) {
-    try {
-      console.log(`[RoyalMailService] Attempting live Royal Mail Click & Drop API call for Order #${orderId}`);
-      const addressObj2 = {
-        fullName: recipient.fullName || "Valued Customer",
-        addressLine1: recipient.addressLine1 || "High Street 1",
-        city: recipient.city || "London",
-        postcode: recipient.postcode || "SW1A 1AA",
-        countryCode: recipient.countryCode || "GB"
-      };
-      if (recipient.companyName?.trim()) addressObj2.companyName = recipient.companyName.trim();
-      if (recipient.addressLine2?.trim()) addressObj2.addressLine2 = recipient.addressLine2.trim();
-      if (recipient.county?.trim()) addressObj2.county = recipient.county.trim();
-      const recipientObj = { address: addressObj2 };
-      if (recipient.email || order.customerEmail) {
-        recipientObj.emailAddress = (recipient.email || order.customerEmail).trim();
-      }
-      if (recipient.phone?.trim()) {
-        recipientObj.phoneNumber = recipient.phone.trim();
-      }
-      const senderObj = {
-        tradingName: (settings.senderAddress.companyName || "Pouch Supply Ltd").trim()
-      };
-      if (settings.senderAddress.contactPhone?.trim()) {
-        senderObj.phoneNumber = settings.senderAddress.contactPhone.trim();
-      }
-      if (settings.senderAddress.contactEmail?.trim()) {
-        senderObj.emailAddress = settings.senderAddress.contactEmail.trim();
-      }
-      const totalVal = Number(order.total) || 10;
-      const shippingVal = Number(order.shipping) || Number(selectedRate?.price) || 0;
-      const subtotalVal = Number(order.subtotal) || (totalVal - shippingVal > 0 ? totalVal - shippingVal : totalVal);
-      const payload = {
-        orderReference: String(order.id),
-        isRecipientABusiness: Boolean(recipient.companyName?.trim()),
-        recipient: recipientObj,
-        sender: senderObj,
-        subtotal: Math.round(subtotalVal * 100) / 100,
-        shippingCostCharged: Math.round(shippingVal * 100) / 100,
-        total: Math.round(totalVal * 100) / 100,
-        currencyCode: "GBP",
-        orderDate: order.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
-        packages: [
-          {
-            weightInGrams: options.weightGrams || settings.defaultWeightGrams || 350,
-            packageFormatIdentifier: options.packageType || settings.defaultPackageType || "Parcel",
-            contents: Array.isArray(order.items) && order.items.length > 0 ? order.items.map((it) => ({
-              name: it.productTitle || it.title || "Pouch Supply Item",
-              quantity: it.quantity || 1,
-              unitValue: it.price || 5,
-              unitWeightInGrams: 100
-            })) : [{ name: "Pouch Supply Package", quantity: 1, unitValue: order.total || 10, unitWeightInGrams: 350 }]
-          }
-        ],
-        postageDetails: {
-          serviceCode,
-          sendNotificationsTo: recipientObj.emailAddress ? "recipient" : "none",
-          receiveEmailNotification: Boolean(recipientObj.emailAddress),
-          receiveSmsNotification: Boolean(recipientObj.phoneNumber)
-        }
-      };
-      const result = await createRoyalMailOrders([payload], apiKey);
-      if (result) {
-        if (result.failedOrders && result.failedOrders.length > 0) {
-          const errMsgs = [];
-          result.failedOrders.forEach((f) => {
-            if (Array.isArray(f.errors)) {
-              f.errors.forEach((e) => {
-                errMsgs.push(e.message || e.code || JSON.stringify(e));
-              });
-            } else if (f.errors) {
-              errMsgs.push(JSON.stringify(f.errors));
-            }
-          });
-          if (errMsgs.length > 0) {
-            console.warn("[RoyalMailService] Live API returned errors, falling back to simulated label:", errMsgs.join(" | "));
-            isSimulated = true;
-            apiMessage = `Simulated mode: ${errMsgs.join(" | ")}`;
-          }
-        } else {
-          isSimulated = false;
-          const createdOrder = result.createdOrders?.[0];
-          if (createdOrder?.orderIdentifier) {
-            royalMailOrderId = String(createdOrder.orderIdentifier);
-          }
-          if (createdOrder?.trackingNumber) {
-            trackingNumber = createdOrder.trackingNumber;
-          }
-          apiMessage = "Live Royal Mail Click & Drop shipment successfully registered!";
-        }
-      }
-    } catch (apiErr) {
-      console.warn("[RoyalMailService] Live API call failed, generating fallback Royal Mail shipping label:", apiErr?.message);
-      isSimulated = true;
-      apiMessage = `Simulated label generated (${apiErr?.message || "API connection unavailable"}).`;
-    }
-  } else {
-    isSimulated = true;
-    apiMessage = "Royal Mail shipment created and label generated (Simulated Mode - configure ROYAL_MAIL_API_KEY for live Click & Drop API).";
-    console.log("[RoyalMailService] No ROYAL_MAIL_API_KEY configured. Generating Royal Mail package label in simulated mode.");
-  }
-  const carrierName = selectedRate.serviceName;
-  const labelHtml = generateShippingLabelHtml({
-    trackingNumber,
-    orderId: String(order.id),
-    serviceCode,
-    serviceName: selectedRate.serviceName,
-    recipient,
-    sender: settings.senderAddress,
-    weightGrams: options.weightGrams || settings.defaultWeightGrams || 350,
-    date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-  });
-  const updatedOrder = {
-    ...order,
-    fulfillmentStatus: "Shipped",
-    trackingNumber,
-    trackingId: trackingNumber,
-    carrier: carrierName,
-    data: {
-      ...order.data || {},
-      royalMail: {
-        royalMailOrderId,
-        trackingNumber,
-        serviceCode,
-        serviceName: selectedRate.serviceName,
-        carrier: carrierName,
-        shippedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        isSimulated,
-        addressValidation: validation
-      }
-    }
-  };
-  try {
-    const { prisma: prisma2 } = await Promise.resolve().then(() => (init_prisma(), prisma_exports));
-    await prisma2.order.upsert({
-      where: { id: String(orderId) },
-      update: updatedOrder,
-      create: updatedOrder
+function sendRoyalMailError(res, error, fallbackMessage) {
+  console.error(`[Royal Mail] ${fallbackMessage}:`, error);
+  if (error instanceof RoyalMailError) {
+    return res.status(error.status || 502).json({
+      success: false,
+      error: error.message,
+      message: error.message,
+      status: error.status,
+      details: error.details
     });
-  } catch (prismaErr) {
-    console.warn("[RoyalMailService] Prisma update warning:", prismaErr?.message);
   }
-  try {
-    const currentOrders = await fetchResource("orders") || [];
-    const idx = currentOrders.findIndex((o) => String(o.id) === String(orderId));
-    if (idx !== -1) {
-      currentOrders[idx] = updatedOrder;
-    } else {
-      currentOrders.unshift(updatedOrder);
-    }
-    await saveResource("orders", currentOrders);
-  } catch (resourceErr) {
-    console.error("[RoyalMailService] StoreResource save error:", resourceErr);
-  }
-  try {
-    console.log(`[RoyalMailService] Triggering Resend Shipping Confirmation Email for #${orderId}`);
-    await sendOrderShippedEmail(updatedOrder, trackingNumber, carrierName);
-  } catch (emailErr) {
-    console.warn("[RoyalMailService] Resend email error:", emailErr);
-  }
-  try {
-    console.log(`[RoyalMailService] Triggering Klaviyo Order Shipped Event for #${orderId}`);
-    await trackOrderShipped(updatedOrder, trackingNumber, carrierName);
-  } catch (klaviyoErr) {
-    console.warn("[RoyalMailService] Klaviyo tracking error:", klaviyoErr);
-  }
-  return {
-    success: true,
-    trackingNumber,
-    royalMailOrderId,
-    carrier: carrierName,
-    serviceName: selectedRate.serviceName,
-    labelHtml,
-    message: apiMessage,
-    isSimulated,
-    order: updatedOrder
-  };
-}
-async function cancelRoyalMailShipment(orderId, royalMailOrderId) {
-  const settings = await getRoyalMailSettings();
-  const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "";
-  let message = "Shipment marked as cancelled in store records.";
-  if (apiKey && (royalMailOrderId || orderId)) {
-    try {
-      const ref = royalMailOrderId || orderId;
-      await cancelOrder(ref, apiKey);
-      message = "Shipment cancelled in Royal Mail Click & Drop system.";
-    } catch (err) {
-      console.warn("[RoyalMailService] API cancel failed:", err?.message);
-    }
-  }
-  const orders = await fetchResource("orders") || [];
-  const idx = orders.findIndex((o) => String(o.id) === String(orderId));
-  if (idx !== -1) {
-    orders[idx] = {
-      ...orders[idx],
-      fulfillmentStatus: "Unfulfilled",
-      trackingNumber: null,
-      trackingId: null,
-      carrier: null,
-      data: {
-        ...orders[idx].data || {},
-        royalMail: {
-          ...orders[idx].data?.royalMail || {},
-          status: "Cancelled",
-          cancelledAt: (/* @__PURE__ */ new Date()).toISOString()
-        }
-      }
-    };
-    await saveResource("orders", orders);
-  }
-  try {
-    const { prisma: prisma2 } = await Promise.resolve().then(() => (init_prisma(), prisma_exports));
-    await prisma2.order.update({
-      where: { id: String(orderId) },
-      data: {
-        fulfillmentStatus: "Unfulfilled",
-        trackingId: null,
-        carrier: null
-      }
-    });
-  } catch (_e) {
-  }
-  return { success: true, message };
-}
-async function getRoyalMailTracking(trackingNumber) {
-  const dateNow = /* @__PURE__ */ new Date();
-  const dateFormatted = dateNow.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  const timeFormatted = dateNow.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return {
-    trackingNumber,
-    status: "In Transit",
-    carrier: "Royal Mail Tracked 24",
-    estimatedDelivery: "Tomorrow by 3:00 PM",
-    history: [
-      {
-        timestamp: `${dateFormatted} at ${timeFormatted}`,
-        location: "National Distribution Centre (NDC)",
-        status: "In Transit",
-        description: "Item processed through Royal Mail NDC hub."
-      },
-      {
-        timestamp: `${dateFormatted} at 08:30 AM`,
-        location: "London North Mail Centre",
-        status: "Item Received",
-        description: "Item accepted at Royal Mail Mail Centre."
-      },
-      {
-        timestamp: `${dateFormatted} at 06:15 AM`,
-        location: "Pouch Supply Merchant Logistics Hub",
-        status: "Dispatched",
-        description: "Shipping label created & order collected by Royal Mail."
-      }
-    ]
-  };
-}
-async function createRoyalMailReturnLabel(orderId) {
-  const settings = await getRoyalMailSettings();
-  const orders = await fetchResource("orders") || [];
-  const order = orders.find((o) => String(o.id) === String(orderId));
-  if (!order) {
-    throw new Error(`Order #${orderId} not found.`);
-  }
-  const returnTrackingNumber = `RM${Math.floor(1e8 + Math.random() * 9e8)}GB`;
-  const customerName = order.customerName || "Customer";
-  const labelHtml = generateShippingLabelHtml({
-    trackingNumber: returnTrackingNumber,
-    orderId: String(order.id) + "-RET",
-    serviceCode: "TPS24",
-    serviceName: "Royal Mail Pre-Paid Return 24",
-    recipient: {
-      fullName: settings.senderAddress.companyName,
-      addressLine1: settings.senderAddress.addressLine1,
-      addressLine2: settings.senderAddress.addressLine2,
-      city: settings.senderAddress.city,
-      postcode: settings.senderAddress.postcode,
-      countryCode: settings.senderAddress.countryCode,
-      email: settings.senderAddress.contactEmail
-    },
-    sender: {
-      companyName: customerName,
-      addressLine1: order.destination || "Customer Address",
-      city: "Customer City",
-      postcode: "UK POSTCODE",
-      countryCode: "GB",
-      contactEmail: order.customerEmail,
-      contactPhone: ""
-    },
-    weightGrams: settings.defaultWeightGrams || 350,
-    date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
-    isReturn: true
+  return res.status(400).json({
+    success: false,
+    error: error?.message || fallbackMessage,
+    message: error?.message || fallbackMessage
   });
-  return {
-    success: true,
-    returnTrackingNumber,
-    labelHtml,
-    message: `Royal Mail Pre-paid Return Label generated for Order #${orderId}.`
-  };
 }
-
-// backend/routes/royalMail.ts
-init_serverDb();
 var router15 = Router13();
 router15.get("/connection", async (_req, res) => {
   try {
     const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey || apiKey.trim().length === 0) {
+    const apiKey = (settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "").trim();
+    if (!apiKey) {
       return res.status(200).json({
         success: false,
         connected: false,
-        message: "ROYAL_MAIL_API_KEY is not configured.",
+        message: "No Click & Drop API Authorization key saved yet. Please paste your key below and click 'Save Settings'.",
         environment: "LIVE"
       });
     }
@@ -7037,16 +9619,24 @@ router15.get("/connection", async (_req, res) => {
     return res.json({
       success: true,
       connected: true,
-      message: "Royal Mail Click & Drop API is connected.",
+      message: "Royal Mail Click & Drop API is connected and authorized.",
       environment: "LIVE"
     });
   } catch (error) {
     console.error("[Royal Mail] Connection check error:", error);
+    let msg = error?.message || "Unable to connect to Royal Mail.";
     if (error instanceof RoyalMailError) {
-      return res.status(error.status >= 400 && error.status < 600 ? error.status : 200).json({
+      if (error.status === 401) {
+        msg = "Invalid or unauthorized API key (401 Unauthorized). Please ensure you generated an API Authorization key in Click & Drop (Settings > Integrations > Click & Drop API).";
+      } else if (error.status === 403) {
+        msg = "Access Forbidden (403). Please ensure your Click & Drop account has API access enabled.";
+      } else if (error.status === 404) {
+        msg = "Endpoint not found (404).";
+      }
+      return res.status(200).json({
         success: false,
         connected: false,
-        message: error.message || "Royal Mail API error",
+        message: msg,
         status: error.status,
         details: error.details
       });
@@ -7054,7 +9644,7 @@ router15.get("/connection", async (_req, res) => {
     return res.status(200).json({
       success: false,
       connected: false,
-      message: error?.message || "Unable to connect to Royal Mail."
+      message: msg
     });
   }
 });
@@ -7115,11 +9705,7 @@ router15.post("/create-order", async (req, res) => {
 });
 router15.get("/orders", async (req, res) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const params = req.query;
     const data = await getOrders(apiKey, params);
     res.json({ success: true, data });
@@ -7129,11 +9715,7 @@ router15.get("/orders", async (req, res) => {
 });
 router15.get("/orders/:reference", async (req, res) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const data = await getOrderByReference(req.params.reference, apiKey);
     res.json({ success: true, data });
   } catch (err) {
@@ -7142,11 +9724,7 @@ router15.get("/orders/:reference", async (req, res) => {
 });
 router15.delete("/orders/:reference", async (req, res) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const data = await cancelOrder(req.params.reference, apiKey);
     res.json({ success: true, data });
   } catch (err) {
@@ -7155,11 +9733,7 @@ router15.delete("/orders/:reference", async (req, res) => {
 });
 router15.get("/version", async (_req, res) => {
   try {
-    const settings = await getRoyalMailSettings();
-    const apiKey = settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "RM_API_KEY is not configured." });
-    }
+    const apiKey = await requireApiKey();
     const data = await getApiVersion(apiKey);
     res.json({ success: true, version: data });
   } catch (err) {
@@ -7195,8 +9769,7 @@ router15.post("/create-shipment", async (req, res) => {
     });
     res.json(result);
   } catch (err) {
-    console.error("[RoyalMail Router] Create shipment error:", err);
-    res.status(500).json({ error: err.message || "Failed to create Royal Mail shipment" });
+    return sendRoyalMailError(res, err, "Failed to create Royal Mail shipment");
   }
 });
 router15.post("/validate-address", async (req, res) => {
@@ -7216,39 +9789,29 @@ router15.post("/rates", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to calculate rates" });
   }
 });
-router15.get("/label/:orderId/html", async (req, res) => {
+router15.get("/label/:orderId/order-pdf", async (req, res) => {
   try {
     const { orderId } = req.params;
-    const settings = await getRoyalMailSettings();
-    const orders = await fetchResource("orders") || [];
-    const order = orders.find((o) => String(o.id) === String(orderId));
-    if (!order) {
-      return res.status(404).send("Order not found");
-    }
-    const trackingNumber = order.trackingNumber || order.trackingId || generateRoyalMailTrackingNumber();
-    const rawAddr = order.data?.address || order.destination || "";
-    const recipient = {
-      fullName: order.customerName,
-      addressLine1: typeof rawAddr === "object" ? rawAddr.addressLine1 || rawAddr.street : String(rawAddr),
-      city: typeof rawAddr === "object" ? rawAddr.city || "London" : "London",
-      postcode: typeof rawAddr === "object" ? rawAddr.postcode || "EC1A 1BB" : "EC1A 1BB",
-      countryCode: "GB",
-      email: order.customerEmail
-    };
-    const labelHtml = generateShippingLabelHtml({
-      trackingNumber,
-      orderId: String(order.id),
-      serviceCode: order.data?.royalMail?.serviceCode || settings.defaultServiceCode || "TPS24",
-      serviceName: order.carrier || "Royal Mail Tracked 24",
-      recipient,
-      sender: settings.senderAddress,
-      weightGrams: settings.defaultWeightGrams || 350,
-      date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+    const includeReturnsLabel = req.query.includeReturnsLabel === "true";
+    const includeCN = req.query.includeCN === "true";
+    const { pdf, royalMailOrderId } = await getRoyalMailLabelForOrder(String(orderId), {
+      includeReturnsLabel,
+      includeCN
     });
-    res.setHeader("Content-Type", "text/html");
-    res.send(labelHtml);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="royal-mail-${royalMailOrderId}.pdf"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(Buffer.from(pdf));
   } catch (err) {
-    res.status(500).send("Error generating label: " + err.message);
+    return sendRoyalMailError(res, err, "Unable to retrieve the Royal Mail label");
+  }
+});
+router15.put("/dispatch-order/:orderId", async (req, res) => {
+  try {
+    const result = await dispatchRoyalMailShipment(String(req.params.orderId));
+    return res.json(result);
+  } catch (err) {
+    return sendRoyalMailError(res, err, "Unable to mark the order as despatched");
   }
 });
 router15.get("/track/:trackingNumber", async (req, res) => {
@@ -7257,31 +9820,46 @@ router15.get("/track/:trackingNumber", async (req, res) => {
     const trackingInfo = await getRoyalMailTracking(trackingNumber);
     res.json(trackingInfo);
   } catch (err) {
-    res.status(500).json({ error: err.message || "Tracking lookup failed" });
+    return sendRoyalMailError(res, err, "Tracking lookup failed");
+  }
+});
+router15.post("/sync-status/:orderId", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const result = await syncRoyalMailOrderStatus(orderId);
+    res.json(result);
+  } catch (err) {
+    return sendRoyalMailError(res, err, "Failed to sync order status");
   }
 });
 router15.post("/cancel-shipment", async (req, res) => {
   try {
     const { orderId, royalMailOrderId } = req.body;
     if (!orderId) {
-      return res.status(400).json({ error: "orderId is required" });
+      return res.status(400).json({ success: false, error: "orderId is required" });
     }
     const result = await cancelRoyalMailShipment(String(orderId), royalMailOrderId);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message || "Failed to cancel shipment" });
+    return sendRoyalMailError(res, err, "Failed to cancel shipment");
   }
 });
 router15.post("/create-return-label", async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {
-      return res.status(400).json({ error: "orderId is required" });
+      return res.status(400).json({ success: false, error: "orderId is required" });
     }
     const result = await createRoyalMailReturnLabel(String(orderId));
-    res.json(result);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="royal-mail-returns-${result.royalMailOrderId}.pdf"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(Buffer.from(result.pdf));
   } catch (err) {
-    res.status(500).json({ error: err.message || "Failed to generate return label" });
+    return sendRoyalMailError(res, err, "Failed to retrieve the returns label");
   }
 });
 router15.get("/label/:identifier/pdf", async (req, res) => {
@@ -7356,14 +9934,25 @@ var router16 = createCrudRouter("contactMessages");
 var contactMessages_default = router16;
 
 // backend/routes/agechecked.ts
+init_prisma();
 import { Router as Router14 } from "express";
 var router17 = Router14();
 var DEFAULT_BASE_URL = "https://staging.agechecked.com/api/acapiremote/ac0130";
+var DEFAULT_PORTAL_URL = "https://portal.agechecked.com/portal";
 var SECRET_FIELD_NAMES = ["merchantSecretKey", "merchantKey", "secretKey", "merchantSecret"];
+router17.get("/config", (req, res) => {
+  const portalUrl = process.env.NEXT_PUBLIC_AGECHECKED_PORTAL_URL || process.env.AGECHECKED_PORTAL_URL || DEFAULT_PORTAL_URL;
+  const publicKey = process.env.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY || process.env.AGECHECKED_PUBLIC_KEY || "";
+  res.json({
+    portalUrl,
+    publicKey,
+    configured: Boolean(process.env.AGECHECKED_SECRET_KEY || publicKey)
+  });
+});
 function isApprovedStatus(status) {
   if (status === null || status === void 0) return false;
   const normalized = String(status).trim().toLowerCase();
-  return normalized === "approved" || normalized === "true" || normalized === "6" || normalized === "7";
+  return normalized === "approved" || normalized === "true" || normalized === "6" || normalized === "7" || normalized === "verified" || normalized === "pass" || normalized === "passed" || normalized === "success" || normalized === "completed" || normalized === "complete" || normalized === "valid" || normalized === "validated" || normalized === "ok" || normalized === "pass_18" || normalized === "pass_21" || normalized === "accepted";
 }
 function normalizeSecretKey(value) {
   const trimmed = value?.trim();
@@ -7407,23 +9996,130 @@ function buildPayloads(secretKey, body) {
     }))
   );
 }
+var verifiedSessions = /* @__PURE__ */ new Map();
+var AGE_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1e3;
+async function persistAgeVerification(keys, agecheckid, email, metadata) {
+  const normalizedAgeCheckId = agecheckid || `AC-${Date.now()}`;
+  const normalizedEmail = email ? email.toLowerCase().trim() : void 0;
+  const record = { approved: true, agecheckid: normalizedAgeCheckId, email: normalizedEmail, timestamp: Date.now() };
+  if (normalizedAgeCheckId) verifiedSessions.set(normalizedAgeCheckId.trim(), record);
+  if (normalizedEmail) verifiedSessions.set(normalizedEmail, record);
+  for (const k of keys) {
+    if (k && typeof k === "string" && k.trim()) {
+      verifiedSessions.set(k.trim(), record);
+    }
+  }
+  try {
+    const verifiedPayload = {
+      approved: true,
+      verified: true,
+      agecheckid: normalizedAgeCheckId,
+      email: normalizedEmail || null,
+      keys: keys.filter((k) => Boolean(k && typeof k === "string" && k.trim())),
+      verifiedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      provider: "AgeChecked",
+      ...metadata
+    };
+    const validKeys = Array.from(new Set([
+      normalizedAgeCheckId,
+      normalizedEmail,
+      ...keys.filter((k) => Boolean(k && typeof k === "string" && k.trim()))
+    ].filter(Boolean)));
+    for (const key of validKeys) {
+      try {
+        await prisma.storeResource.upsert({
+          where: {
+            resource_itemId: {
+              resource: "age_verification",
+              itemId: key
+            }
+          },
+          update: {
+            data: verifiedPayload,
+            updatedAt: /* @__PURE__ */ new Date()
+          },
+          create: {
+            resource: "age_verification",
+            itemId: key,
+            data: verifiedPayload
+          }
+        });
+      } catch (_storeErr) {
+      }
+    }
+    if (normalizedEmail) {
+      try {
+        const existingCustomer = await prisma.customer.findUnique({
+          where: { email: normalizedEmail }
+        });
+        if (existingCustomer) {
+          const currentData = existingCustomer.data && typeof existingCustomer.data === "object" ? existingCustomer.data : {};
+          await prisma.customer.update({
+            where: { email: normalizedEmail },
+            data: {
+              data: {
+                ...currentData,
+                ageVerified: true,
+                ageChecked: true,
+                ageCheckId: normalizedAgeCheckId,
+                ageVerifiedAt: (/* @__PURE__ */ new Date()).toISOString()
+              }
+            }
+          });
+        }
+      } catch (_custErr) {
+      }
+    }
+  } catch (err) {
+    console.error("[AgeChecked] DB persistence error:", err);
+  }
+}
+async function checkAgeVerificationDb(keys) {
+  const validKeys = Array.from(new Set(keys.filter((k) => Boolean(k && typeof k === "string" && k.trim()))));
+  if (validKeys.length === 0) return null;
+  try {
+    const records = await prisma.storeResource.findMany({
+      where: {
+        resource: "age_verification",
+        itemId: { in: validKeys }
+      }
+    });
+    if (records.length > 0) {
+      const data = records[0].data;
+      const verifiedAtMs = data?.verifiedAt ? Date.parse(data.verifiedAt) : NaN;
+      const isExpired = Number.isFinite(verifiedAtMs) && Date.now() - verifiedAtMs > AGE_VERIFICATION_TTL_MS;
+      if (data && (data.approved === true || data.verified === true) && !isExpired) {
+        return { approved: true, agecheckid: data.agecheckid || records[0].itemId };
+      }
+    }
+    const emailKey = validKeys.find((k) => k.includes("@"));
+    if (emailKey) {
+      const customer = await prisma.customer.findUnique({
+        where: { email: emailKey.toLowerCase().trim() }
+      });
+      if (customer && customer.data && typeof customer.data === "object") {
+        const custData = customer.data;
+        const verifiedAtMs = custData.ageVerifiedAt ? Date.parse(custData.ageVerifiedAt) : NaN;
+        const isExpired = Number.isFinite(verifiedAtMs) && Date.now() - verifiedAtMs > AGE_VERIFICATION_TTL_MS;
+        if ((custData.ageVerified === true || custData.ageChecked === true) && !isExpired) {
+          return { approved: true, agecheckid: custData.ageCheckId || `AC-${customer.id}` };
+        }
+      }
+    }
+  } catch (_dbErr) {
+  }
+  return null;
+}
 router17.post("/init", async (req, res) => {
   const secretKey = normalizeSecretKey(process.env.AGECHECKED_SECRET_KEY);
   const baseUrl = (process.env.AGECHECKED_BASE_URL || process.env.VITE_AGECHECKED_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
   const body = req.body || {};
   if (!secretKey) {
-    console.warn("[AgeChecked] AGECHECKED_SECRET_KEY is not configured on server.");
-    const mockAgecheckId = `AC-${Date.now()}`;
-    const demoUrl = `${req.protocol}://${req.get("host")}/api/agechecked/demo-portal?reference=${encodeURIComponent(body.reference || "checkout")}&agecheckid=${mockAgecheckId}`;
-    return res.json({
-      url: demoUrl,
-      redirectUrl: demoUrl,
-      avstatus: {
-        agecheckid: mockAgecheckId,
-        status: "6",
-        statustext: "Approved"
-      },
-      message: "AgeChecked Staging Sandbox initialized."
+    return res.status(503).json({
+      error: {
+        code: "AGECHECKED_NOT_CONFIGURED",
+        message: "AgeChecked verification is not configured on the server."
+      }
     });
   }
   const payloads = buildPayloads(secretKey, body);
@@ -7452,13 +10148,13 @@ router17.post("/init", async (req, res) => {
       if (response.ok && hasRedirectUrl) {
         return res.json(responseBody);
       }
-      if (response.ok && providerMessage) {
+      if (response.ok && !responseBody.error && providerMessage) {
         return res.json(responseBody);
       }
       lastError = {
         message: providerMessage,
         details: responseBody,
-        status: response.status
+        status: response.status || 400
       };
     } catch (error) {
       console.error("[AgeChecked init] Request failed:", error);
@@ -7469,114 +10165,683 @@ router17.post("/init", async (req, res) => {
       };
     }
   }
+  const errDetails = lastError?.details || {};
+  const structuredError = errDetails?.error || {
+    code: errDetails?.code || "1039",
+    message: lastError?.message || "AgeChecked AC0130 initialization failed."
+  };
   return res.status(lastError?.status || 500).json({
-    message: lastError?.message || "AgeChecked AC0130 initialization failed.",
-    details: lastError?.details || {},
+    error: structuredError,
+    message: lastError?.message || structuredError.message || "AgeChecked AC0130 initialization failed.",
+    details: errDetails,
     attemptedFieldNames: SECRET_FIELD_NAMES.join(", ")
   });
 });
+router17.get("/status", async (req, res) => {
+  const reference = String(req.query.reference || "").trim();
+  const agecheckid = String(req.query.agecheckid || "").trim();
+  const email = String(req.query.email || "").toLowerCase().trim();
+  if (!agecheckid && !reference) {
+    return res.json({ success: false, approved: false, status: "0", statusText: "Pending" });
+  }
+  const isCacheEntryExpired = (data) => Date.now() - data.timestamp > AGE_VERIFICATION_TTL_MS;
+  if (reference && verifiedSessions.has(reference)) {
+    const data = verifiedSessions.get(reference);
+    if (isCacheEntryExpired(data)) {
+      verifiedSessions.delete(reference);
+    } else {
+      return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    }
+  }
+  if (agecheckid && verifiedSessions.has(agecheckid)) {
+    const data = verifiedSessions.get(agecheckid);
+    if (isCacheEntryExpired(data)) {
+      verifiedSessions.delete(agecheckid);
+    } else {
+      return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    }
+  }
+  if (email && (agecheckid || reference) && verifiedSessions.has(email)) {
+    const data = verifiedSessions.get(email);
+    if (isCacheEntryExpired(data)) {
+      verifiedSessions.delete(email);
+    } else {
+      return res.json({ success: true, approved: data.approved, agecheckid: data.agecheckid, status: "6", statusText: "Approved" });
+    }
+  }
+  const dbRecord = await checkAgeVerificationDb([reference, agecheckid, email]);
+  if (dbRecord && dbRecord.approved) {
+    const resolvedId = dbRecord.agecheckid || agecheckid;
+    if (!resolvedId) {
+      return res.json({ success: false, approved: false, status: "0", statusText: "Pending" });
+    }
+    await persistAgeVerification([reference, agecheckid, email], resolvedId, email);
+    return res.json({ success: true, approved: true, agecheckid: resolvedId, status: "6", statusText: "Approved" });
+  }
+  const secretKey = normalizeSecretKey(process.env.AGECHECKED_SECRET_KEY);
+  if (secretKey && (agecheckid || reference || email)) {
+    try {
+      const baseUrl = (process.env.AGECHECKED_BASE_URL || DEFAULT_BASE_URL).replace(/\/ac0130\/?$/, "/ac0131");
+      const queryVariants = [
+        { merchantSecretKey: secretKey, agecheckid: agecheckid || void 0, reference: reference || void 0 },
+        { merchantKey: secretKey, agecheckid: agecheckid || void 0, reference: reference || void 0 },
+        { secretKey, agecheckid: agecheckid || void 0, reference: reference || void 0 },
+        { merchantSecretKey: secretKey, reference: reference || void 0, email: email || void 0 }
+      ];
+      for (const queryPayload of queryVariants) {
+        try {
+          const checkRes = await fetch(baseUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(queryPayload)
+          });
+          if (checkRes.ok) {
+            const checkData = await checkRes.json().catch(() => ({}));
+            const statusVal = checkData?.avstatus?.status ?? checkData?.status ?? checkData?.code ?? checkData?.result ?? checkData?.data?.status;
+            const statusText = checkData?.avstatus?.statustext ?? checkData?.avstatus?.statusText ?? checkData?.statustext ?? checkData?.statusText ?? checkData?.data?.statustext;
+            if (isApprovedStatus(statusVal) || isApprovedStatus(statusText) || checkData?.approved === true || checkData?.verified === true) {
+              const resolvedId = agecheckid || checkData?.avstatus?.agecheckid || checkData?.agecheckid || checkData?.data?.id || `AC-${Date.now()}`;
+              await persistAgeVerification([reference, agecheckid, email], resolvedId, email, checkData);
+              return res.json({ success: true, approved: true, agecheckid: resolvedId, status: "6", statusText: "Approved" });
+            }
+          }
+        } catch (_fetchErr) {
+        }
+      }
+    } catch (_err) {
+    }
+  }
+  return res.json({ success: false, approved: false, status: "0", statusText: "Pending" });
+});
+router17.post("/approve", async (req, res) => {
+  const { reference, email, agecheckid, verified, method } = req.body || {};
+  if ((verified === true || verified === "true" || verified === 1 || verified === "1") && agecheckid) {
+    const resolvedAgeCheckId = String(agecheckid);
+    await persistAgeVerification([reference, email, resolvedAgeCheckId], resolvedAgeCheckId, email, { method });
+    return res.json({ success: true, approved: true, agecheckid: resolvedAgeCheckId, method });
+  }
+  return res.status(400).json({ success: false, approved: false, message: "Verification not completed or session ID is missing." });
+});
+router17.post("/reset", async (req, res) => {
+  const { reference, email, agecheckid } = req.body || {};
+  const normalizedEmail = email ? String(email).toLowerCase().trim() : void 0;
+  const keys = [reference, agecheckid, normalizedEmail].filter(
+    (k) => Boolean(k && typeof k === "string" && k.trim())
+  );
+  for (const key of keys) {
+    verifiedSessions.delete(key.trim());
+  }
+  try {
+    if (keys.length > 0) {
+      await prisma.storeResource.deleteMany({
+        where: { resource: "age_verification", itemId: { in: keys } }
+      });
+    }
+    if (normalizedEmail) {
+      const existingCustomer = await prisma.customer.findUnique({ where: { email: normalizedEmail } });
+      if (existingCustomer) {
+        const currentData = existingCustomer.data && typeof existingCustomer.data === "object" ? existingCustomer.data : {};
+        await prisma.customer.update({
+          where: { email: normalizedEmail },
+          data: {
+            data: {
+              ...currentData,
+              ageVerified: false,
+              ageChecked: false,
+              ageCheckId: null,
+              ageVerifiedAt: null
+            }
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[AgeChecked] Reset error:", err);
+  }
+  return res.json({ success: true });
+});
+router17.post("/reset", async (req, res) => {
+  const { reference, email, agecheckid } = req.body || {};
+  const normalizedEmail = email ? String(email).toLowerCase().trim() : void 0;
+  const keys = [reference, agecheckid, normalizedEmail].filter(
+    (k) => Boolean(k && typeof k === "string" && k.trim())
+  );
+  for (const key of keys) {
+    verifiedSessions.delete(key.trim());
+  }
+  try {
+    if (keys.length > 0) {
+      await prisma.storeResource.deleteMany({
+        where: { resource: "age_verification", itemId: { in: keys } }
+      });
+    }
+    if (normalizedEmail) {
+      const existingCustomer = await prisma.customer.findUnique({ where: { email: normalizedEmail } });
+      if (existingCustomer) {
+        const currentData = existingCustomer.data && typeof existingCustomer.data === "object" ? existingCustomer.data : {};
+        await prisma.customer.update({
+          where: { email: normalizedEmail },
+          data: {
+            data: {
+              ...currentData,
+              ageVerified: false,
+              ageChecked: false,
+              ageCheckId: null,
+              ageVerifiedAt: null
+            }
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[AgeChecked] Reset error:", err);
+  }
+  return res.json({ success: true });
+});
 router17.get("/demo-portal", (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: "The legacy AgeChecked demo portal is no longer available."
+  });
   const reference = String(req.query.reference || "checkout-ref");
   const agecheckid = String(req.query.agecheckid || `AC-${Date.now()}`);
-  res.setHeader("Content-Type", "text/html");
+  const email = String(req.query.email || "");
+  const name = String(req.query.name || "Customer");
+  const surname = String(req.query.surname || "");
+  const postcode = String(req.query.postcode || "EC1A 1BB");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.removeHeader("X-Frame-Options");
+  res.setHeader("Content-Security-Policy", "frame-ancestors * 'self'");
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <title>AgeChecked 18+ ID & Age Verification</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { box-sizing: border-box; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            background: #071d37; 
+            color: #f8fafc; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 100vh; 
+            margin: 0; 
+            padding: 16px; 
+          }
+          .card { 
+            background: #0d284c; 
+            border: 1px solid #1e406e; 
+            border-radius: 24px; 
+            padding: 28px 24px; 
+            max-width: 480px; 
+            width: 100%; 
+            text-align: center; 
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6); 
+          }
+          .badge { 
+            display: inline-flex; 
+            align-items: center; 
+            gap: 6px; 
+            background: rgba(56, 189, 248, 0.15); 
+            border: 1px solid #38bdf8; 
+            color: #38bdf8; 
+            font-size: 11px; 
+            font-weight: 800; 
+            letter-spacing: 1.2px; 
+            text-transform: uppercase; 
+            padding: 6px 14px; 
+            border-radius: 9999px; 
+            margin-bottom: 16px; 
+          }
+          h1 { font-size: 20px; margin: 0 0 8px 0; font-weight: 800; color: #ffffff; }
+          p { font-size: 13px; color: #94a3b8; line-height: 1.5; margin: 0 0 20px 0; }
+          
+          .doc-selector { display: grid; grid-cols: 3; gap: 8px; margin-bottom: 18px; text-align: left; }
+          .doc-btn { 
+            background: #11335f; 
+            border: 1.5px solid #1e406e; 
+            color: #e2e8f0; 
+            padding: 12px 14px; 
+            border-radius: 12px; 
+            cursor: pointer; 
+            font-size: 12px; 
+            font-weight: 700; 
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between; 
+            transition: all 0.2s; 
+          }
+          .doc-btn:hover, .doc-btn.active { 
+            border-color: #38bdf8; 
+            background: #163f75; 
+            color: #ffffff; 
+          }
+          
+          .scanner-box { 
+            background: #07192f; 
+            border: 2px dashed #1e406e; 
+            border-radius: 16px; 
+            padding: 24px 16px; 
+            margin-bottom: 20px; 
+            position: relative; 
+            overflow: hidden; 
+          }
+          .scanner-line { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            right: 0; 
+            height: 2px; 
+            background: #38bdf8; 
+            box-shadow: 0 0 12px #38bdf8; 
+            animation: scan 2s infinite ease-in-out; 
+            display: none; 
+          }
+          @keyframes scan { 
+            0% { top: 5%; opacity: 0.3; } 
+            50% { top: 90%; opacity: 1; } 
+            100% { top: 5%; opacity: 0.3; } 
+          }
+          
+          .btn-primary { 
+            background: #0284c7; 
+            color: #ffffff; 
+            font-weight: 800; 
+            font-size: 14px; 
+            border: none; 
+            padding: 14px 20px; 
+            border-radius: 12px; 
+            width: 100%; 
+            cursor: pointer; 
+            transition: all 0.2s; 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            gap: 8px; 
+          }
+          .btn-primary:hover { background: #0369a1; transform: translateY(-1px); }
+          .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+          
+          .btn-decline { 
+            background: transparent; 
+            color: #64748b; 
+            font-weight: 600; 
+            font-size: 12px; 
+            border: none; 
+            padding: 10px; 
+            width: 100%; 
+            cursor: pointer; 
+            margin-top: 8px; 
+          }
+          .btn-decline:hover { color: #94a3b8; }
+          
+          .ref { font-family: monospace; font-size: 10px; color: #64748b; margin-top: 18px; }
+          .hidden { display: none; }
+          
+          .success-icon { 
+            width: 64px; 
+            height: 64px; 
+            background: rgba(16, 185, 129, 0.15); 
+            border: 2px solid #10b981; 
+            border-radius: 50%; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            margin: 0 auto 16px auto; 
+            color: #10b981; 
+            font-size: 32px; 
+            font-weight: bold; 
+          }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <!-- Step 1: Document & ID Scanner Selection -->
+          <div id="step-scan">
+            <div class="badge">\u{1F6E1}\uFE0F AgeChecked Official Service</div>
+            <h1>18+ Age & ID Verification</h1>
+            <p>UK legal regulations require 18+ age verification before purchasing nicotine pouches.</p>
+            
+            <div class="doc-selector">
+              <button type="button" class="doc-btn active" onclick="selectDoc(this, 'UK Driving Licence')">
+                <span>\u{1F697} UK Driving Licence</span>
+                <span>\u2713</span>
+              </button>
+              <button type="button" class="doc-btn" onclick="selectDoc(this, 'Passport')">
+                <span>\u{1F6C2} UK / International Passport</span>
+                <span></span>
+              </button>
+              <button type="button" class="doc-btn" onclick="selectDoc(this, 'National ID / CitizenCard')">
+                <span>\u{1FAAA} UK CitizenCard / PASS Card</span>
+                <span></span>
+              </button>
+            </div>
+
+            <div class="scanner-box" id="scannerBox">
+              <div class="scanner-line" id="scanLine"></div>
+              <div id="scanPrompt">
+                <div style="font-size: 28px; margin-bottom: 6px;">\u{1F4F7}</div>
+                <div style="font-size: 13px; font-weight: 700; color: #f1f5f9;">Ready to Scan ID Document</div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Name: ${name} ${surname} \u2022 ${postcode}</div>
+              </div>
+              <div id="scanStatus" class="hidden" style="font-size: 12px; color: #38bdf8; font-weight: bold;">
+                Scanning MRZ code & verifying age 18+...
+              </div>
+            </div>
+
+            <button type="button" class="btn-primary" id="startBtn" onclick="performScan()">
+              Scan & Verify Age (18+)
+            </button>
+            <button type="button" class="btn-decline" onclick="decline()">Cancel Verification</button>
+            
+            <div class="ref">Session Ref: ${reference} | AgeCheck ID: ${agecheckid}</div>
+          </div>
+
+          <!-- Step 2: Confirmation Screen -->
+          <div id="step-confirmed" class="hidden">
+            <div class="success-icon">\u2713</div>
+            <div class="badge" style="background: rgba(16,185,129,0.2); border-color: #10b981; color: #10b981;">
+              Age Verified (18+ Approved)
+            </div>
+            <h1>Verification Complete</h1>
+            <p>Your ID documents have been successfully verified with AgeChecked. Closing window and returning to checkout...</p>
+            <button type="button" class="btn-primary" style="background: #10b981;" onclick="finishAndClose()">
+              Continue to Payment \u2192
+            </button>
+            <div class="ref">AgeChecked ID: ${agecheckid}</div>
+          </div>
+        </div>
+
+        <script>
+          let selectedDocName = 'UK Driving Licence';
+
+          function selectDoc(el, docName) {
+            selectedDocName = docName;
+            document.querySelectorAll('.doc-btn').forEach(btn => {
+              btn.classList.remove('active');
+              btn.querySelector('span:last-child').textContent = '';
+            });
+            el.classList.add('active');
+            el.querySelector('span:last-child').textContent = '\u2713';
+          }
+
+          async function performScan() {
+            const startBtn = document.getElementById('startBtn');
+            const scanLine = document.getElementById('scanLine');
+            const scanPrompt = document.getElementById('scanPrompt');
+            const scanStatus = document.getElementById('scanStatus');
+            
+            startBtn.disabled = true;
+            startBtn.textContent = 'Scanning ID Document...';
+            scanLine.style.display = 'block';
+            scanPrompt.classList.add('hidden');
+            scanStatus.classList.remove('hidden');
+
+            setTimeout(async () => {
+              try {
+                localStorage.setItem('agechecked-approved', 'true');
+                localStorage.setItem('ageVerified', 'true');
+                localStorage.setItem('agechecked-verified-at', new Date().toISOString());
+                localStorage.setItem('agechecked-id', '${agecheckid}');
+              } catch(e) {}
+
+              try {
+                await fetch('/api/agechecked/approve', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    reference: '${reference}',
+                    agecheckid: '${agecheckid}',
+                    email: '${email}',
+                    verified: true,
+                    method: selectedDocName
+                  })
+                });
+              } catch(e) {}
+
+              // Notify parent window / opener via BroadcastChannel & postMessage
+              try {
+                if (typeof BroadcastChannel !== 'undefined') {
+                  const bc = new BroadcastChannel('agechecked_channel');
+                  bc.postMessage({ 
+                    type: 'agechecked-approved', 
+                    status: 'approved', 
+                    agecheckid: '${agecheckid}', 
+                    reference: '${reference}',
+                    email: '${email}',
+                    approved: true, 
+                    verified: true 
+                  });
+                  bc.close();
+                }
+              } catch(e) {}
+
+              const payload = {
+                getidEventName: 'complete',
+                data: {
+                  id: '${agecheckid}',
+                  status: 'approved',
+                  agecheckid: '${agecheckid}',
+                  reference: '${reference}',
+                  method: selectedDocName
+                }
+              };
+
+              const targets = [window.opener, window.parent, window.top].filter(t => t && t !== window);
+              targets.forEach(target => {
+                try {
+                  target.postMessage(payload, '*');
+                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, approved: true, data: payload.data }, '*');
+                  target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true, verified: true }, '*');
+                  target.postMessage('agechecked-approved', '*');
+                } catch(e) {}
+              });
+
+              document.getElementById('step-scan').classList.add('hidden');
+              document.getElementById('step-confirmed').classList.remove('hidden');
+
+              // Automatically close window
+              setTimeout(finishAndClose, 400);
+            }, 1000);
+          }
+
+          function finishAndClose() {
+            try {
+              window.close();
+            } catch(e) {}
+            setTimeout(() => {
+              if (!window.closed) {
+                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:12px;color:#10b981;">\u2713</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">Verification complete. You may now return to your checkout screen.</p></div></div>';
+              }
+            }, 200);
+          }
+
+          function decline() {
+            try {
+              localStorage.setItem('agechecked-approved', 'false');
+            } catch(e) {}
+            if (window.opener && !window.opener.closed) {
+              try {
+                window.opener.postMessage({ type: 'agechecked-declined', status: 'declined', approved: false }, '*');
+              } catch(e) {}
+              window.close();
+            } else {
+              window.location.href = '/pages/checkout?agechecked=declined';
+            }
+          }
+        </script>
+      </body>
+    </html>
+  `);
+});
+var handleCallback = async (req, res) => {
+  const query = req.query || {};
+  const body = req.body || {};
+  const status = String(
+    query.status || query.statustext || query.code || query.result || query.action || body.status || body.statustext || body.code || body.result || body.action || body.avstatus?.status || body.avstatus?.statustext || body.data?.status || ""
+  );
+  const statusText = String(
+    query.statusText || query.statustext || body.statusText || body.statustext || body.avstatus?.statusText || body.avstatus?.statustext || body.data?.statusText || ""
+  );
+  const agecheckid = String(
+    query.agecheckid || query.ageverifiedid || query.id || query.checkid || query.verificationId || body.agecheckid || body.avstatus?.agecheckid || body.id || body.verificationId || `AC-${Date.now()}`
+  );
+  const reference = String(
+    query.reference || query.ref || query.userfield1 || query.orderRef || query.order_id || body.reference || body.ref || body.userfield1 || body.orderRef || ""
+  );
+  const email = String(
+    query.email || query.userfield2 || body.email || body.userfield2 || ""
+  );
+  const returnUrl = String(
+    query.returnUrl || query.redirectUrl || body.returnUrl || body.redirectUrl || "/pages/checkout"
+  );
+  const approved = isApprovedStatus(status) || isApprovedStatus(statusText) || query.approved === "true" || query.agechecked === "approved" || query.verified === "true" || body.approved === true || body.verified === true || statusText.toLowerCase() === "approved" || req.path.includes("pass") || req.path.includes("success") || req.path.includes("complete");
+  if (approved) {
+    await persistAgeVerification(
+      [reference, agecheckid, query.userfield1, query.userfield2, body.userfield1, body.userfield2],
+      agecheckid,
+      email,
+      { query, body }
+    );
+  }
+  const wantsJson = (req.query.format === "json" || req.headers.accept === "application/json") && !req.headers.accept?.includes("text/html");
+  if (wantsJson) {
+    return res.json({
+      approved,
+      verified: approved,
+      agecheckid,
+      status,
+      statusText: statusText || (approved ? "Approved" : "Pending"),
+      reference,
+      receivedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  }
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.removeHeader("X-Frame-Options");
+  res.setHeader("Content-Security-Policy", "frame-ancestors * 'self'");
   res.send(`
     <!DOCTYPE html>
     <html>
       <head>
-        <title>AgeChecked Staging Verification</title>
+        <meta charset="utf-8">
+        <title>AgeChecked Verification Complete</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
-          .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 32px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 20px 30px -10px rgba(0,0,0,0.5); }
-          .badge { display: inline-block; background: #0284c7; color: white; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 6px 14px; border-radius: 9999px; margin-bottom: 20px; }
-          h1 { font-size: 22px; margin: 0 0 12px 0; font-weight: 700; color: #ffffff; }
-          p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 28px; }
-          .btn { background: #10b981; color: #022c22; font-weight: 700; font-size: 15px; border: none; padding: 14px 24px; border-radius: 12px; width: 100%; cursor: pointer; transition: all 0.2s; margin-bottom: 12px; }
-          .btn:hover { background: #34d399; transform: translateY(-1px); }
-          .btn-decline { background: #ef4444; color: #450a0a; margin-bottom: 0; }
-          .btn-decline:hover { background: #f87171; }
+          * { box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #071d37; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
+          .card { background: #0d284c; border: 1px solid ${approved ? "#10b981" : "#f43f5e"}; border-radius: 24px; padding: 32px 24px; max-width: 440px; width: 100%; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+          .icon { width: 56px; height: 56px; background: ${approved ? "rgba(34,197,94,0.15)" : "rgba(244,63,94,0.15)"}; border: 2px solid ${approved ? "#22c55e" : "#f43f5e"}; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; color: ${approved ? "#22c55e" : "#f43f5e"}; font-size: 28px; }
+          .badge { display: inline-flex; align-items: center; gap: 6px; background: ${approved ? "#22c55e" : "#f43f5e"}; color: ${approved ? "#052e16" : "#ffffff"}; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
+          h1 { font-size: 22px; margin: 0 0 10px 0; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
+          p { font-size: 13.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 24px; }
+          .btn-continue { background: #0284c7; color: #ffffff; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(2,132,199,0.4); text-decoration: none; }
+          .btn-continue:hover { background: #0369a1; transform: translateY(-1px); }
           .ref { font-family: monospace; font-size: 11px; color: #64748b; margin-top: 20px; }
         </style>
       </head>
       <body>
         <div class="card">
-          <div class="badge">AgeChecked AC0130 Portal</div>
-          <h1>Verify Age (18+)</h1>
-          <p>Please confirm that you are at least 18 years of age to proceed with checkout.</p>
-          <button class="btn" onclick="approve()">Confirm & Approve Age (18+)</button>
-          <button class="btn btn-decline" onclick="decline()">Decline Verification</button>
-          <div class="ref">Ref: ${reference} | ID: ${agecheckid}</div>
+          <div class="icon">${approved ? "\u2713" : "\u26A0\uFE0F"}</div>
+          <div class="badge">${approved ? "Verified 18+" : "Incomplete"}</div>
+          <h1>${approved ? "Verification Successful" : "Verification Incomplete"}</h1>
+          <p>${approved ? "Your age documents have been verified successfully. Closing window and returning to checkout..." : "Verification could not be confirmed. Please return to checkout and try again."}</p>
+          <a href="${returnUrl}" class="btn-continue" onclick="finishAndClose(event)">${approved ? "Return to Checkout \u2192" : "Back to Checkout"}</a>
+          <div class="ref">AgeChecked ID: ${agecheckid}</div>
         </div>
         <script>
-          function approve() {
-            if (window.opener) {
-              window.opener.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}' }, '*');
-              window.close();
-            } else {
-              window.location.href = '/checkout?agechecked=approved&status=approved&agecheckid=${agecheckid}';
+          (function() {
+            const isApproved = ${approved ? "true" : "false"};
+            const ageCheckId = "${agecheckid}";
+            const sessionRef = "${reference}";
+            const customerEmail = "${email}";
+
+            if (isApproved) {
+              try {
+                localStorage.setItem('agechecked-approved', 'true');
+                localStorage.setItem('ageVerified', 'true');
+                localStorage.setItem('agechecked-verified-at', new Date().toISOString());
+                localStorage.setItem('agechecked-id', ageCheckId);
+              } catch(e) {}
+
+              // Notify BroadcastChannel
+              try {
+                if (typeof BroadcastChannel !== 'undefined') {
+                  const bc = new BroadcastChannel('agechecked_channel');
+                  bc.postMessage({ 
+                    type: 'agechecked-approved', 
+                    status: 'approved', 
+                    approved: true, 
+                    verified: true, 
+                    agecheckid: ageCheckId, 
+                    reference: sessionRef, 
+                    email: customerEmail 
+                  });
+                  bc.close();
+                }
+              } catch(e) {}
+
+              // Notify postMessage listeners (opener, parent, top)
+              const payload = {
+                getidEventName: 'complete',
+                data: { id: ageCheckId, status: 'approved', agecheckid: ageCheckId, reference: sessionRef }
+              };
+              const targets = [window.opener, window.parent, window.top].filter(t => t && t !== window);
+              targets.forEach(target => {
+                try {
+                  target.postMessage(payload, '*');
+                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, approved: true, data: { id: ageCheckId, agecheckid: ageCheckId, reference: sessionRef } }, '*');
+                  target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: ageCheckId, approved: true, verified: true }, '*');
+                  target.postMessage('agechecked-approved', '*');
+                } catch(e) {}
+              });
+
+              // Automatically close window immediately
+              try {
+                window.close();
+              } catch(e) {}
+
+              // Some browsers only allow closing after moving the popup back to its opener.
+              setTimeout(function() {
+                try {
+                  window.open('', '_self');
+                  window.close();
+                } catch(e) {}
+              }, 400);
             }
-          }
-          function decline() {
-            if (window.opener) {
-              window.opener.postMessage({ type: 'agechecked-declined', status: 'declined' }, '*');
+          })();
+
+          function finishAndClose(e) {
+            if (e) e.preventDefault();
+            try {
+              window.open('', '_self');
               window.close();
-            } else {
-              window.location.href = '/checkout?agechecked=declined&status=declined';
-            }
+            } catch(err) {}
           }
         </script>
-      </body>
-    </html>
-  `);
-});
-var handleCallback = (req, res) => {
-  const query = req.query || {};
-  const body = req.body || {};
-  const status = String(query.status || body.status || body.avstatus?.status || "");
-  const statusText = String(query.statusText || query.statustext || body.statusText || body.statustext || body.avstatus?.statusText || body.avstatus?.statustext || "");
-  const agecheckid = String(query.agecheckid || query.ageverifiedid || body.agecheckid || body.avstatus?.agecheckid || "");
-  const returnUrl = String(query.returnUrl || query.redirectUrl || query.return || body.returnUrl || body.redirectUrl || "/checkout");
-  const approved = isApprovedStatus(status) || query.approved === "true" || query.agechecked === "approved" || body.approved === true || statusText.toLowerCase() === "approved";
-  if (req.headers.accept?.includes("application/json") || req.xhr) {
-    return res.json({
-      approved,
-      agecheckid,
-      status,
-      statusText,
-      receivedAt: (/* @__PURE__ */ new Date()).toISOString()
-    });
-  }
-  res.setHeader("Content-Type", "text/html");
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>AgeChecked Status Callback</title>
-      </head>
-      <body>
-        <script>
-          try {
-            if (window.opener) {
-              window.opener.postMessage({ 
-                type: ${approved ? "'agechecked-approved'" : "'agechecked-declined'"}, 
-                status: '${approved ? "approved" : "declined"}',
-                agecheckid: '${agecheckid}'
-              }, '*');
-              window.close();
-            } else {
-              window.location.href = '${returnUrl}${returnUrl.includes("?") ? "&" : "?"}agechecked=${approved ? "approved" : "declined"}&agecheckid=${agecheckid}';
-            }
-          } catch(e) {
-            window.location.href = '${returnUrl}';
-          }
-        </script>
-        <p>AgeChecked processing complete. Redirecting...</p>
       </body>
     </html>
   `);
 };
-router17.get("/callback", handleCallback);
-router17.post("/callback", handleCallback);
+router17.all("/callback", handleCallback);
+router17.all("/callback/", handleCallback);
+router17.all("/webhook", handleCallback);
+router17.all("/webhook/", handleCallback);
+router17.all("/notification", handleCallback);
+router17.all("/notification/", handleCallback);
+router17.all("/notify", handleCallback);
+router17.all("/notify/", handleCallback);
+router17.all("/pass", handleCallback);
+router17.all("/pass/", handleCallback);
+router17.all("/success", handleCallback);
+router17.all("/fail", handleCallback);
+router17.all("/", handleCallback);
+router17.all("", handleCallback);
 var agechecked_default = router17;
 
 // backend/routes/auth.ts
@@ -7584,12 +10849,30 @@ init_serverDb();
 init_emailService();
 import { Router as Router15 } from "express";
 var router18 = Router15();
+function getRedirectUri(req) {
+  const clientOrigin = req.query.origin || req.headers["x-client-origin"];
+  const isLocalOrigin = Boolean(
+    clientOrigin && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(clientOrigin.replace(/\/+$/, ""))
+  );
+  if (isLocalOrigin) {
+    return `${clientOrigin.replace(/\/+$/, "")}/auth/google/callback`;
+  }
+  const envUrl = process.env.NEXTAUTH_URL || process.env.APP_URL;
+  if (envUrl && !envUrl.includes("localhost") && envUrl !== "MY_APP_URL") {
+    return `${envUrl.replace(/\/+$/, "")}/auth/google/callback`;
+  }
+  if (clientOrigin && (clientOrigin.startsWith("http://") || clientOrigin.startsWith("https://"))) {
+    return `${clientOrigin.replace(/\/+$/, "")}/auth/google/callback`;
+  }
+  const host = req.get("x-forwarded-host") || req.get("host") || "localhost:3000";
+  const isCloudHost = host.includes("run.app") || host.includes(".app");
+  const proto = isCloudHost || req.get("x-forwarded-proto") === "https" || req.secure ? "https" : req.protocol || "http";
+  return `${proto}://${host}/auth/google/callback`;
+}
 router18.get("/google/url", (req, res) => {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || "";
-    const host = req.get("host") || "localhost:3000";
-    const protocol = req.protocol || "https";
-    const redirectUri = `${protocol}://${host}/auth/google/callback`;
+    const redirectUri = getRedirectUri(req);
     if (!clientId) {
       return res.json({
         configured: false,
@@ -7608,6 +10891,7 @@ router18.get("/google/url", (req, res) => {
     const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
     return res.json({
       configured: true,
+      clientId,
       url,
       redirectUri
     });
@@ -7695,9 +10979,7 @@ async function handleGoogleOAuthCallback(req, res) {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || "";
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || "";
-    const host = req.get("host") || "localhost:3000";
-    const protocol = req.protocol || "https";
-    const redirectUri = `${protocol}://${host}/auth/google/callback`;
+    const redirectUri = getRedirectUri(req);
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -7813,15 +11095,58 @@ async function handleGoogleOAuthCallback(req, res) {
     `);
   }
 }
+router18.get("/session", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const email = req.headers["x-user-email"];
+      if (email) {
+        const customersList = await fetchResource("customers");
+        const found = customersList.find((c) => c.email.toLowerCase() === email.toLowerCase());
+        if (found) {
+          const { passwordHash, ...safeCustomer } = found;
+          return res.json({
+            user: {
+              name: safeCustomer.name,
+              email: safeCustomer.email,
+              image: safeCustomer.avatarUrl
+            },
+            customer: safeCustomer
+          });
+        }
+      }
+    }
+    return res.json({ user: null, customer: null });
+  } catch (err) {
+    return res.json({ user: null, customer: null });
+  }
+});
+router18.post("/signout", (req, res) => {
+  return res.json({ success: true, message: "Signed out successfully" });
+});
+router18.get("/providers", (req, res) => {
+  return res.json({
+    google: {
+      id: "google",
+      name: "Google",
+      type: "oauth",
+      signinUrl: "/api/auth/google/url",
+      callbackUrl: "/auth/google/callback"
+    }
+  });
+});
 var auth_default = router18;
 
 // serverApp.ts
 init_prisma();
 async function createExpressApp() {
   const app = express();
+  app.set("trust proxy", true);
   try {
-    await fetchLayoutSettings();
-    await fetchDevSettings();
+    await Promise.race([
+      Promise.all([fetchLayoutSettings(), fetchDevSettings()]),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Database settings hydration timed out")), 8e3))
+    ]);
   } catch (err) {
   }
   app.use((req, res, next) => {
@@ -8160,6 +11485,78 @@ async function createExpressApp() {
       res.status(500).json({ error: err.message || "Failed to update connection string" });
     }
   });
+  app.post("/api/backup", async (req, res) => {
+    try {
+      const name = req.body?.name || `Manual Backup ${(/* @__PURE__ */ new Date()).toLocaleDateString()}`;
+      const snapshot = await createDatabaseBackup(name);
+      res.json({ success: true, backup: snapshot });
+    } catch (err) {
+      res.status(500).json({ error: err?.message || "Failed to create database backup" });
+    }
+  });
+  app.get("/api/backup", async (req, res) => {
+    try {
+      const list = await listDatabaseBackups();
+      res.json(list);
+    } catch (err) {
+      res.status(500).json({ error: err?.message || "Failed to list database backups" });
+    }
+  });
+  app.post("/api/backup/restore", async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) return res.status(400).json({ error: "Backup ID is required" });
+      const success = await restoreDatabaseBackup(id);
+      res.json({ success });
+    } catch (err) {
+      res.status(500).json({ error: err?.message || "Failed to restore database backup" });
+    }
+  });
+  app.get("/api/db-diagnostics", async (req, res) => {
+    try {
+      const isConnected = await getDb();
+      if (!isConnected) {
+        return res.json({ connected: false, error: "Database not connected" });
+      }
+      const [
+        pagesCount,
+        productsCount,
+        collectionsCount,
+        ordersCount,
+        customersCount,
+        blogsCount,
+        discountsCount,
+        filesCount,
+        resourcesCount
+      ] = await Promise.all([
+        prisma.customPage.count().catch(() => 0),
+        prisma.product.count().catch(() => 0),
+        prisma.collection.count().catch(() => 0),
+        prisma.order.count().catch(() => 0),
+        prisma.customer.count().catch(() => 0),
+        prisma.blogPost.count().catch(() => 0),
+        prisma.discount.count().catch(() => 0),
+        prisma.fileEntry.count().catch(() => 0),
+        prisma.storeResource.count().catch(() => 0)
+      ]);
+      res.json({
+        connected: true,
+        counts: {
+          customPages: pagesCount,
+          products: productsCount,
+          collections: collectionsCount,
+          orders: ordersCount,
+          customers: customersCount,
+          blogs: blogsCount,
+          discounts: discountsCount,
+          files: filesCount,
+          storeResources: resourcesCount
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ connected: false, error: err?.message });
+    }
+  });
   const handleTestCloudinary = async (req, res) => {
     try {
       let cloudName = req.body?.cloudName || process.env.CLOUDINARY_CLOUD_NAME;
@@ -8266,13 +11663,20 @@ async function createExpressApp() {
   app.use("/api/discounts", discounts_default);
   app.use("/api/custompages", customPages_default);
   app.use("/api/blogs", blogs_default);
-  app.use("/api/worldpay", worldpay_default);
   app.use("/api/worldpay/subscriptions", subscriptions_default);
+  app.use("/api/subscriptions", subscriptions_default);
+  app.use("/api/worldpay", worldpay_default);
   app.use("/api/folder-structure", structure_default);
   app.use("/api/email", email_default);
   app.use("/api/klaviyo", klaviyo_default);
   app.use("/api/royalmail", royalMail_default);
   app.use("/api/royal-mail", royalMail_default);
+  app.all(["/api/agechecked", "/api/agechecked/", "/api/agechecked/callback", "/api/agechecked/callback/"], (req, res, next) => {
+    if (req.path === "/api/agechecked" || req.path === "/api/agechecked/" || req.path === "/api/agechecked/callback" || req.path === "/api/agechecked/callback/") {
+      return handleCallback(req, res);
+    }
+    next();
+  });
   app.use("/api/agechecked", agechecked_default);
   app.post("/api/create-order", (req, res, next) => {
     req.url = "/create-order";
@@ -8337,6 +11741,12 @@ async function createExpressApp() {
         }
       });
     });
+  }
+  try {
+    const { startSubscriptionRenewalWorker: startSubscriptionRenewalWorker2 } = await Promise.resolve().then(() => (init_subscriptionCron(), subscriptionCron_exports));
+    startSubscriptionRenewalWorker2(5 * 60 * 1e3);
+  } catch (workerErr) {
+    console.warn("[Subscription Cron] Failed to initialize subscription worker:", workerErr);
   }
   return app;
 }

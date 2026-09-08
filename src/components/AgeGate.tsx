@@ -1,6 +1,6 @@
 // src/components/AgeGate.tsx
 import React, { useEffect, useState, useImperativeHandle, forwardRef, useRef, useCallback } from "react";
-import { ShieldCheck, CheckCircle2, Lock, AlertCircle, RefreshCw, X, ExternalLink } from "lucide-react";
+import { ShieldCheck, CheckCircle2, Lock, AlertCircle, RefreshCw, X } from "lucide-react";
 import { trackAgeVerified } from "../utils/klaviyo";
 
 const AGE_APPROVED_STORAGE_KEY = "agechecked-approved";
@@ -106,6 +106,23 @@ function isApprovedStatus(value?: string | number | null) {
   );
 }
 
+function getAgeCheckedMessageOrigins(portalUrl?: string, activeUrl?: string) {
+  const origins = new Set([
+    "https://agechecked.getid.ee",
+    "https://agechecked.sb.getid.dev",
+    "https://portal.agechecked.com"
+  ]);
+
+  for (const candidate of [portalUrl, activeUrl]) {
+    if (!candidate) continue;
+    try {
+      origins.add(new URL(candidate).origin);
+    } catch (_e) {}
+  }
+
+  return origins;
+}
+
 export interface AgeGateProps {
   compact?: boolean;
   onApprovedChange?: (approved: boolean) => void;
@@ -140,9 +157,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   });
   const [isVerifying, setIsVerifying] = useState(false);
   const [activePortalUrl, setActivePortalUrl] = useState<string>("");
-  // True only when the browser refused to open the verification popup. The
-  // in-page iframe modal is the fallback for that case.
-  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
+  const [showVerificationFrame, setShowVerificationFrame] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState(
     approved
       ? "Your age (18+) has been verified successfully."
@@ -169,6 +184,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
   const activeResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const pollingTimerRef = useRef<number | null>(null);
   const windowRef = useRef<Window | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const verificationActiveRef = useRef(false);
 
   const publicKey = 
@@ -422,6 +438,10 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     if (typeof window === "undefined") return;
 
     const handleMessage = (event: MessageEvent) => {
+      const allowedOrigins = getAgeCheckedMessageOrigins(serverConfig?.portalUrl, activePortalUrl);
+      if (!allowedOrigins.has(event.origin)) return;
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) return;
+
       let payload = event.data;
       if (typeof payload === "string") {
         try {
@@ -546,7 +566,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         bc.close();
       }
     };
-  }, [markApproved, agecheckId, isVerifying]);
+  }, [activePortalUrl, agecheckId, isVerifying, markApproved, serverConfig?.portalUrl]);
 
   const resetApproval = () => {
     if (typeof window === "undefined") return;
@@ -586,6 +606,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
     setApproved(false);
     setIsVerifying(false);
     setActivePortalUrl("");
+    setShowVerificationFrame(false);
     setAgecheckId(null);
     setCheckStatusNotice(null);
     setStatusMessage("Under UK law, 18+ age verification is required before checkout.");
@@ -684,7 +705,12 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         }
 
         if (!rawRedirectUrl) {
-          rawRedirectUrl = `/api/agechecked/demo-portal?reference=${encodeURIComponent(sessionRef)}&email=${encodeURIComponent(customerData?.email || '')}&name=${encodeURIComponent(firstName)}&surname=${encodeURIComponent(lastName)}&postcode=${encodeURIComponent(customerData?.postcode || 'EC1A 1BB')}`;
+          const configurationError = "AgeChecked verification is not configured. Please contact support.";
+          setCheckStatusNotice(configurationError);
+          setStatusMessage(configurationError);
+          setIsVerifying(false);
+          resolve(false);
+          return;
         }
 
         try {
@@ -698,31 +724,8 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
         setActivePortalUrl(rawRedirectUrl);
 
         windowRef.current = null;
-
-        // Centre the popup on the shopper's screen.
-        const width = 840;
-        const height = 760;
-        const left = Math.max(0, Math.round((window.screen.width - width) / 2));
-        const top = Math.max(0, Math.round((window.screen.height - height) / 2));
-        const windowFeatures = `width=${width},height=${height},top=${top},left=${left},status=yes,scrollbars=yes,resizable=yes`;
-
-        // A dedicated popup is the primary surface: AgeChecked needs camera
-        // access and a top-level origin, which an iframe cannot reliably give
-        // it. The in-page modal below is only used when the popup is blocked,
-        // so the shopper never sees the portal in two places at once.
-        const newWin =
-          window.open(rawRedirectUrl, "AgeCheckedPortal", windowFeatures) ||
-          window.open(rawRedirectUrl, "_blank");
-
-        if (newWin) {
-          windowRef.current = newWin;
-          newWin.focus();
-          setPopupBlocked(false);
-          setStatusMessage("AgeChecked 18+ verification in progress. Please complete verification in the opened window or on your phone.");
-        } else {
-          setPopupBlocked(true);
-          setStatusMessage("AgeChecked 18+ verification in progress. Complete the secure check below.");
-        }
+        setShowVerificationFrame(true);
+        setStatusMessage("AgeChecked 18+ verification in progress. Complete the secure check below.");
 
         // Start active background polling (every 700ms)
         if (pollingTimerRef.current) {
@@ -789,7 +792,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
 
   return (
     <>
-      {isVerifying && activePortalUrl && popupBlocked && (
+      {isVerifying && activePortalUrl && showVerificationFrame && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-3 sm:p-6">
           <div className="flex h-[min(760px,calc(100vh-1.5rem))] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
@@ -797,6 +800,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
               <button type="button" onClick={resetApproval} className="text-xs font-bold text-slate-500 hover:text-slate-900">Cancel</button>
             </div>
             <iframe
+              ref={iframeRef}
               src={activePortalUrl}
               title="AgeChecked 18+ verification"
               className="min-h-0 flex-1 border-0"
@@ -876,7 +880,7 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-medium text-amber-900/80">
               {isVerifying
-                ? "Complete verification in the AgeChecked window or on your phone. This page updates automatically."
+                ? "Complete verification in the secure AgeChecked panel. This page updates automatically."
                 : "Click 'Verify with AgeChecked' or 'Pay with Worldpay' to complete the 18+ check."}
             </span>
           </div>
@@ -908,24 +912,6 @@ export const AgeGate = forwardRef<AgeGateHandle, AgeGateProps>(({ compact = fals
                 )}
               </button>
               
-              {/* Lets the shopper get the portal back if they closed it, or
-                  open it properly once they have allowed popups. */}
-              {isVerifying && activePortalUrl && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const newWin = window.open(activePortalUrl, "AgeCheckedPortal", "width=840,height=760,resizable=yes,scrollbars=yes");
-                    if (newWin) {
-                      windowRef.current = newWin;
-                      newWin.focus();
-                      setPopupBlocked(false);
-                    }
-                  }}
-                  className="text-[11px] font-bold text-sky-700 hover:text-sky-900 underline flex items-center gap-1 cursor-pointer"
-                >
-                  <ExternalLink className="h-3 w-3" /> Reopen Window
-                </button>
-              )}
             </div>
           ) : (
             <button

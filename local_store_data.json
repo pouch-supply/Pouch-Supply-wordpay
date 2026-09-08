@@ -21048,5 +21048,6 @@
       "discountApplied": null,
       "storeCreditApplied": 0
     }
-  ]
+  ],
+  "recaptcha_settings": []
 }

@@ -238,20 +238,11 @@ router.post("/init", async (req: Request, res: Response) => {
   const body = req.body || {};
 
   if (!secretKey) {
-    console.warn("[AgeChecked] AGECHECKED_SECRET_KEY is not configured on server. Initializing interactive ID scanner portal.");
-
-    const mockAgecheckId = `AC-${Date.now()}`;
-    const demoUrl = `/api/agechecked/demo-portal?reference=${encodeURIComponent(body.reference || 'checkout')}&agecheckid=${mockAgecheckId}&email=${encodeURIComponent(body.email || '')}&name=${encodeURIComponent(body.name || '')}&surname=${encodeURIComponent(body.surname || '')}&postcode=${encodeURIComponent(body.postcode || '')}`;
-
-    return res.json({
-      url: demoUrl,
-      redirectUrl: demoUrl,
-      avstatus: {
-        agecheckid: mockAgecheckId,
-        status: "0",
-        statustext: "Pending"
-      },
-      message: "AgeChecked verification session initialized."
+    return res.status(503).json({
+      error: {
+        code: "AGECHECKED_NOT_CONFIGURED",
+        message: "AgeChecked verification is not configured on the server."
+      }
     });
   }
 
@@ -524,6 +515,11 @@ router.post("/reset", async (req: Request, res: Response) => {
 
 // GET /api/agechecked/demo-portal - Interactive AgeChecked ID Scanner & Verification Portal
 router.get("/demo-portal", (req: Request, res: Response) => {
+  return res.status(410).json({
+    success: false,
+    message: "The legacy AgeChecked demo portal is no longer available."
+  });
+
   const reference = String(req.query.reference || "checkout-ref");
   const agecheckid = String(req.query.agecheckid || `AC-${Date.now()}`);
   const email = String(req.query.email || "");
