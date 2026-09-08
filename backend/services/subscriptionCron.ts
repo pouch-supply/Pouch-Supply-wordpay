@@ -3,7 +3,8 @@ import { fetchResource, saveResource, getDb } from '../../serverDb';
 import {
   chargeRecurringSubscription,
   isUsableRecurringHref,
-  isPlaceholderCredential
+  isPlaceholderCredential,
+  simulationAllowed
 } from './worldpaySubscription';
 import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from './subscriptionBox';
 
@@ -148,15 +149,21 @@ async function loadAllSubscriptions(): Promise<any[]> {
   return Array.from(byId.values());
 }
 
-// Columns that actually exist on the Prisma Subscription model. Passing an
-// unknown key makes Prisma reject the whole update, which would silently drop
-// the fields that DO exist (notably nextBillingDate) — so the Prisma write is
-// filtered while the JSON store keeps the full record.
+// Columns that exist on the Prisma Subscription model. Passing an unknown key
+// makes Prisma reject the whole update, which would silently drop the fields
+// that DO exist (notably nextBillingDate) — so the Prisma write is filtered
+// while the JSON store keeps the full record.
+//
+// The second group was declared on the model but missing from the table until
+// the 20260908_subscription_missing_columns migration, so those writes were
+// being discarded by Postgres. They are persisted now.
 const PRISMA_SUBSCRIPTION_FIELDS = new Set([
   'customerId', 'customerEmail', 'customerName', 'planId', 'planName', 'amount', 'currency',
   'status', 'billingInterval', 'nextBillingDate', 'worldpayTransactionId',
   'worldpayRecurringHref', 'worldpaySchemeReference', 'lastPaymentStatus', 'lastPaymentId',
-  'lastPaymentAt', 'failedPaymentCount'
+  'lastPaymentAt', 'failedPaymentCount',
+  'lastPaymentError', 'items', 'cansCount', 'itemPrice', 'shippingCost', 'shippingAddress',
+  'deliveryMethod', 'sourceOrderId', 'cancelledAt', 'cancellationReason'
 ]);
 
 /**
@@ -272,8 +279,11 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       // In simulation mode the charge is deliberately faked, so a missing
       // credential must not block the run — this is how the 1-day test schedule
       // can be exercised end to end without live Worldpay stored credentials.
-      const allowSimulated =
-        String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || '').toLowerCase() === 'true';
+      //
+      // This asks the charger rather than reading the flag directly, so a live
+      // account is treated as unsimulatable in both places. Reading the env var
+      // here would let the worker proceed into a charge the charger refuses.
+      const allowSimulated = simulationAllowed();
 
       if (!hasUsableCredential && !allowSimulated) {
         console.warn(
@@ -396,7 +406,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           const hasKey = Boolean(rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY);
           if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
             createRoyalMailShipment(newOrderId, {
-              serviceCode: rmSettings.defaultServiceCode || 'TPS24',
+              serviceCode: rmSettings.defaultServiceCode || 'TPN',
               weightGrams: rmSettings.defaultWeightGrams || 350
             }).catch(err => {
               console.warn(

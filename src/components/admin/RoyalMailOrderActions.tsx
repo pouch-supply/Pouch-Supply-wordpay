@@ -16,7 +16,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   onUpdateOrder,
   onAddTimelineComment
 }) => {
-  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'TPS24');
+  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'TPN');
   const [weightGrams, setWeightGrams] = useState<number>(350);
   const [creating, setCreating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -328,11 +328,11 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                 onChange={(e) => setServiceCode(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 shadow-2xs"
               >
-                <option value="TPS24">Royal Mail Tracked 24® (£4.95)</option>
-                <option value="TPS48">Royal Mail Tracked 48® (£3.85)</option>
-                <option value="SD1">Special Delivery Guaranteed 1pm® (£8.95)</option>
-                <option value="CRL2">Royal Mail 24 Business Parcel (£4.25)</option>
-                <option value="MP1">Royal Mail International Tracked (£12.50)</option>
+                <option value="TPN">Royal Mail Tracked 24® (TPN)</option>
+                <option value="TPS">Royal Mail Tracked 48® (TPS)</option>
+                <option value="TRN">Royal Mail Tracked 24® Letterboxable (TRN)</option>
+                <option value="TRS">Royal Mail Tracked 48® Letterboxable (TRS)</option>
+                <option value="SD1">Special Delivery Guaranteed by 1pm® (SD1)</option>
               </select>
             </div>
 

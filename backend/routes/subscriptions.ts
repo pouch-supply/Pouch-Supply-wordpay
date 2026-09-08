@@ -7,6 +7,8 @@ import {
   chargeRecurringSubscription,
   extractRecurringAuthorizationHref,
   extractSchemeReference,
+  isPlaceholderCredential,
+  isUsableRecurringHref,
 } from "../services/worldpaySubscription";
 import {
   processDueSubscriptions,
@@ -49,6 +51,22 @@ router.post("/cron", handleProcessRenewals);
 /**
  * Diagnostic endpoint: Returns all subscriptions, due renewals count, and worker status.
  */
+/**
+ * Whether Worldpay could actually be asked to charge this subscription again.
+ *
+ * Presence of a reference is not enough: subscriptions created before the
+ * checkout requested a customer agreement carry manufactured values such as
+ * "SCHEME-WP-CB-213847" and a /payments/recurring/wp-<id> URL that resolves to
+ * nothing. Those are reported as unchargeable so they are not mistaken for live
+ * recurring plans.
+ */
+function canChargeRecurring(sub: any): boolean {
+  if (!sub) return false;
+  const href = sub.worldpayRecurringHref || sub.recurringHref;
+  const scheme = sub.worldpaySchemeReference;
+  return isUsableRecurringHref(href) || (Boolean(scheme) && !isPlaceholderCredential(scheme));
+}
+
 router.get("/status", async (_req: Request, res: Response) => {
   try {
     let subscriptions: any[] = [];
@@ -90,7 +108,14 @@ router.get("/status", async (_req: Request, res: Response) => {
         lastPaymentStatus: s.lastPaymentStatus,
         lastPaymentAt: s.lastPaymentAt,
         worldpayTransactionId: s.worldpayTransactionId,
-        hasRecurringToken: Boolean(s.worldpayRecurringHref || s.recurringHref)
+        // A stored value is not the same as a usable mandate. Earlier builds wrote
+        // locally manufactured references that look present but authorise nothing,
+        // so reporting mere presence here showed dead subscriptions as healthy.
+        hasRecurringToken: canChargeRecurring(s),
+        canChargeRecurring: canChargeRecurring(s),
+        credentialIssue: canChargeRecurring(s)
+          ? null
+          : "No Worldpay stored-card mandate. This subscription cannot take a recurring payment; the customer must subscribe again so Worldpay issues one."
       }))
     });
   } catch (error: any) {

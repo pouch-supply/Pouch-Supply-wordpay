@@ -6083,7 +6083,428 @@
       "seoDescription": "Browse the entire world-class compounding catalog of certified pouches."
     }
   ],
-  "orders": [],
+  "orders": [
+    {
+      "id": "PS22743",
+      "data": {
+        "subtotal": 32.39,
+        "deliveryCost": 0,
+        "shippingCost": 0,
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1786955415163_8pehk7",
+        "schemeReference": "SCHEME-WP-CB-415160",
+        "recurringRenewal": true,
+        "simulatedPayment": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-08T12:00:04.134Z"
+        }
+      },
+      "date": "Sep 8, 2026 at 05:30 pm",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "price": 32.39,
+          "total": 32.39,
+          "quantity": 1,
+          "productId": "sub-pack-1786955324998",
+          "productTitle": "CORE Plan (Recurring Renewal)",
+          "isSubscription": true,
+          "selectedProducts": [],
+          "subscriptionPlan": "CORE Plan",
+          "subscriptionItems": [],
+          "subscriptionSummary": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4))"
+        }
+      ],
+      "total": 32.39,
+      "carrier": "Royal Mail",
+      "cardBrand": "Worldpay Stored Card",
+      "destination": "United Kingdom",
+      "gatewayTxId": "WP-SIM-803289",
+      "customerName": "Ritesh Dhiman",
+      "worldpayTxId": "WP-SIM-803289",
+      "customerEmail": "info@gtlofficial.com",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": "AUTH-SIMULATED",
+      "worldpayAuthCode": "AUTH-SIMULATED",
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0
+    },
+    {
+      "id": "PS75082",
+      "data": {
+        "subtotal": 27.99,
+        "deliveryCost": 0,
+        "shippingCost": 0,
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1786951064554_rbsj9e",
+        "schemeReference": "SCHEME-WP-TEST-TXN-381705",
+        "recurringRenewal": true,
+        "simulatedPayment": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-08T12:00:28.463Z"
+        }
+      },
+      "date": "Sep 8, 2026 at 05:30 pm",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "price": 27.99,
+          "total": 27.99,
+          "quantity": 1,
+          "productId": "lite",
+          "productTitle": "LITE Plan (Recurring Renewal)",
+          "isSubscription": true,
+          "selectedProducts": [],
+          "subscriptionPlan": "LITE Plan",
+          "subscriptionItems": [],
+          "subscriptionSummary": "lite"
+        }
+      ],
+      "total": 27.99,
+      "carrier": "Royal Mail",
+      "cardBrand": "Worldpay Stored Card",
+      "destination": "United Kingdom",
+      "gatewayTxId": "WP-SIM-825230",
+      "customerName": "neha",
+      "worldpayTxId": "WP-SIM-825230",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": "AUTH-SIMULATED",
+      "worldpayAuthCode": "AUTH-SIMULATED",
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0
+    },
+    {
+      "id": "PS46141",
+      "data": {
+        "subtotal": 27.99,
+        "deliveryCost": 0,
+        "shippingCost": 0,
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1786955226574_6zsr07",
+        "schemeReference": "SCHEME-WP-CB-226573",
+        "recurringRenewal": true,
+        "simulatedPayment": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-08T12:01:17.756Z"
+        }
+      },
+      "date": "Sep 8, 2026 at 05:31 pm",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "price": 27.99,
+          "total": 27.99,
+          "quantity": 1,
+          "productId": "lite",
+          "productTitle": "LITE Plan (Recurring Renewal)",
+          "isSubscription": true,
+          "selectedProducts": [],
+          "subscriptionPlan": "LITE Plan",
+          "subscriptionItems": [],
+          "subscriptionSummary": "lite"
+        }
+      ],
+      "total": 27.99,
+      "carrier": "Royal Mail",
+      "cardBrand": "Worldpay Stored Card",
+      "destination": "United Kingdom",
+      "gatewayTxId": "WP-SIM-874247",
+      "customerName": "neha",
+      "worldpayTxId": "WP-SIM-874247",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": "AUTH-SIMULATED",
+      "worldpayAuthCode": "AUTH-SIMULATED",
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0
+    },
+    {
+      "id": "PS58451",
+      "data": {
+        "subtotal": 25.19,
+        "deliveryCost": 0,
+        "shippingCost": 0,
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1787134213848_7vtxnf",
+        "schemeReference": "SCHEME-WP-CB-213847",
+        "recurringRenewal": true,
+        "simulatedPayment": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-08T12:03:04.096Z"
+        }
+      },
+      "date": "Sep 8, 2026 at 05:33 pm",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "price": 25.19,
+          "total": 25.19,
+          "quantity": 1,
+          "productId": "sub-pack-1787133835286",
+          "productTitle": "LITE Plan (Recurring Renewal)",
+          "isSubscription": true,
+          "selectedProducts": [],
+          "subscriptionPlan": "LITE Plan",
+          "subscriptionItems": [],
+          "subscriptionSummary": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3))"
+        }
+      ],
+      "total": 25.19,
+      "carrier": "Royal Mail",
+      "subtotal": 25.19,
+      "cardBrand": "Worldpay Stored Card",
+      "destination": "United Kingdom",
+      "gatewayTxId": "WP-SIM-983194",
+      "customerName": "Scott Kivlin",
+      "deliveryCost": 0,
+      "shippingCost": 0,
+      "worldpayTxId": "WP-SIM-983194",
+      "customerEmail": "scott@pouch-supply.com",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "isSubscription": true,
+      "subscriptionId": "sub_1787134213848_7vtxnf",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": "AUTH-SIMULATED",
+      "worldpayAuthCode": "AUTH-SIMULATED",
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [
+          {
+            "name": "5.2 mg Watermelon ice",
+            "variant": "",
+            "quantity": 3,
+            "variantName": "",
+            "productTitle": "5.2 mg Watermelon ice",
+            "formattedLabel": "5.2 mg Watermelon ice (Qty:3)",
+            "isReconstructed": true
+          },
+          {
+            "name": "20 mg Ghost Cola Ice",
+            "variant": "",
+            "quantity": 3,
+            "variantName": "",
+            "productTitle": "20 mg Ghost Cola Ice",
+            "formattedLabel": "20 mg Ghost Cola Ice (Qty:3)",
+            "isReconstructed": true
+          }
+        ],
+        "planName": "LITE Plan",
+        "frequency": "Bi-Weekly",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "8 Sept 2026",
+        "nextPaymentDate": "22 Sept 2026",
+        "selectedProducts": [
+          {
+            "name": "5.2 mg Watermelon ice",
+            "variant": "",
+            "quantity": 3,
+            "variantName": "",
+            "productTitle": "5.2 mg Watermelon ice",
+            "formattedLabel": "5.2 mg Watermelon ice (Qty:3)",
+            "isReconstructed": true
+          },
+          {
+            "name": "20 mg Ghost Cola Ice",
+            "variant": "",
+            "quantity": 3,
+            "variantName": "",
+            "productTitle": "20 mg Ghost Cola Ice",
+            "formattedLabel": "20 mg Ghost Cola Ice (Qty:3)",
+            "isReconstructed": true
+          }
+        ],
+        "frequencyDiscount": "10%"
+      }
+    },
+    {
+      "id": "PS16610",
+      "data": {
+        "subtotal": 45.71,
+        "deliveryCost": 0,
+        "shippingCost": 0,
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1786955794956_cl9l2f",
+        "schemeReference": "SCHEME-WP-CB-794956",
+        "recurringRenewal": true,
+        "simulatedPayment": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-08T12:03:44.710Z"
+        }
+      },
+      "date": "Sep 8, 2026 at 05:33 pm",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "price": 45.71,
+          "total": 45.71,
+          "quantity": 1,
+          "productId": "sub-pack-1786955725878",
+          "productTitle": "ULTIMATE Plan (Recurring Renewal)",
+          "isSubscription": true,
+          "selectedProducts": [],
+          "subscriptionPlan": "ULTIMATE Plan",
+          "subscriptionItems": [],
+          "subscriptionSummary": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2))"
+        }
+      ],
+      "total": 45.71,
+      "carrier": "Royal Mail",
+      "subtotal": 45.71,
+      "cardBrand": "Worldpay Stored Card",
+      "destination": "United Kingdom",
+      "gatewayTxId": "WP-SIM-023832",
+      "customerName": "Ritesh Dhiman",
+      "deliveryCost": 0,
+      "shippingCost": 0,
+      "worldpayTxId": "WP-SIM-023832",
+      "customerEmail": "info@gtlofficial.com",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "isSubscription": true,
+      "subscriptionId": "sub_1786955794956_cl9l2f",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": "AUTH-SIMULATED",
+      "worldpayAuthCode": "AUTH-SIMULATED",
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [
+          {
+            "name": "5.2 mg Watermelon ice",
+            "variant": "",
+            "quantity": 1,
+            "variantName": "",
+            "productTitle": "5.2 mg Watermelon ice",
+            "formattedLabel": "5.2 mg Watermelon ice (Qty:1)",
+            "isReconstructed": true
+          },
+          {
+            "name": "20 mg Ghost Cola Ice",
+            "variant": "",
+            "quantity": 4,
+            "variantName": "",
+            "productTitle": "20 mg Ghost Cola Ice",
+            "formattedLabel": "20 mg Ghost Cola Ice (Qty:4)",
+            "isReconstructed": true
+          },
+          {
+            "name": "10.4 mg Watermelon Ice",
+            "variant": "",
+            "quantity": 5,
+            "variantName": "",
+            "productTitle": "10.4 mg Watermelon Ice",
+            "formattedLabel": "10.4 mg Watermelon Ice (Qty:5)",
+            "isReconstructed": true
+          },
+          {
+            "name": "5.6 mg Zesty Pear Regular",
+            "variant": "",
+            "quantity": 1,
+            "variantName": "",
+            "productTitle": "5.6 mg Zesty Pear Regular",
+            "formattedLabel": "5.6 mg Zesty Pear Regular (Qty:1)",
+            "isReconstructed": true
+          },
+          {
+            "name": "5.5 mg Watermelon Dry Regular",
+            "variant": "",
+            "quantity": 2,
+            "variantName": "",
+            "productTitle": "5.5 mg Watermelon Dry Regular",
+            "formattedLabel": "5.5 mg Watermelon Dry Regular (Qty:2)",
+            "isReconstructed": true
+          }
+        ],
+        "planName": "ULTIMATE Plan",
+        "frequency": "Bi-Weekly",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "8 Sept 2026",
+        "nextPaymentDate": "22 Sept 2026",
+        "selectedProducts": [
+          {
+            "name": "5.2 mg Watermelon ice",
+            "variant": "",
+            "quantity": 1,
+            "variantName": "",
+            "productTitle": "5.2 mg Watermelon ice",
+            "formattedLabel": "5.2 mg Watermelon ice (Qty:1)",
+            "isReconstructed": true
+          },
+          {
+            "name": "20 mg Ghost Cola Ice",
+            "variant": "",
+            "quantity": 4,
+            "variantName": "",
+            "productTitle": "20 mg Ghost Cola Ice",
+            "formattedLabel": "20 mg Ghost Cola Ice (Qty:4)",
+            "isReconstructed": true
+          },
+          {
+            "name": "10.4 mg Watermelon Ice",
+            "variant": "",
+            "quantity": 5,
+            "variantName": "",
+            "productTitle": "10.4 mg Watermelon Ice",
+            "formattedLabel": "10.4 mg Watermelon Ice (Qty:5)",
+            "isReconstructed": true
+          },
+          {
+            "name": "5.6 mg Zesty Pear Regular",
+            "variant": "",
+            "quantity": 1,
+            "variantName": "",
+            "productTitle": "5.6 mg Zesty Pear Regular",
+            "formattedLabel": "5.6 mg Zesty Pear Regular (Qty:1)",
+            "isReconstructed": true
+          },
+          {
+            "name": "5.5 mg Watermelon Dry Regular",
+            "variant": "",
+            "quantity": 2,
+            "variantName": "",
+            "productTitle": "5.5 mg Watermelon Dry Regular",
+            "formattedLabel": "5.5 mg Watermelon Dry Regular (Qty:2)",
+            "isReconstructed": true
+          }
+        ],
+        "frequencyDiscount": "10%"
+      }
+    }
+  ],
   "files": [
     {
       "id": "file_1785238998219_14114",
@@ -6313,9 +6734,9 @@
         }
       ],
       "ageVerified": false,
-      "amountSpent": 0,
+      "amountSpent": 78.1,
       "nextPayment": "2026-09-09",
-      "ordersCount": 0,
+      "ordersCount": 2,
       "storeCredit": 0,
       "nextDelivery": "24 June 2026",
       "referralCode": "REF-PS-RITESH-CBZK",
@@ -6415,9 +6836,9 @@
       "subStatus": "active",
       "resetToken": "74594e4858863c74359916a86bdc3878c84fec80dc8495bd",
       "savedCards": [],
-      "amountSpent": 0,
+      "amountSpent": 55.98,
       "nextPayment": "2026-09-09",
-      "ordersCount": 0,
+      "ordersCount": 2,
       "storeCredit": 0,
       "nextDelivery": "9 Sept 2026",
       "referralCode": "REF-PS-NEHA-OZCP",
@@ -6624,9 +7045,9 @@
           "default": true
         }
       ],
-      "amountSpent": 0,
-      "nextPayment": "2026-09-08",
-      "ordersCount": 0,
+      "amountSpent": 25.19,
+      "nextPayment": "2026-09-09",
+      "ordersCount": 1,
       "storeCredit": 0,
       "nextDelivery": "24 June 2026",
       "referralCode": "REF-PS-SCOTT-6YXM",
@@ -6762,6 +7183,97 @@
     }
   ],
   "customPages": [
+    {
+      "id": "brands",
+      "slug": "brands",
+      "title": "Brands Directory",
+      "sections": [
+        {
+          "id": "s3",
+          "type": "Brand list",
+          "settings": {
+            "title": "Official Brands Directory",
+            "fullWidth": false,
+            "textColor": "#ffffff",
+            "brandItems": [
+              {
+                "title": "77",
+                "linkUrl": "/collections/77",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340624/storefront_media/file_dpm502.jpg"
+              },
+              {
+                "title": "Clew",
+                "linkUrl": "/collections/clew",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340652/storefront_media/file_spibxy.jpg"
+              },
+              {
+                "title": "Cuba",
+                "linkUrl": "/collections/cuba",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340685/storefront_media/file_iwvyic.jpg"
+              },
+              {
+                "title": "Maggie",
+                "linkUrl": "front/collections/maggie",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340678/storefront_media/file_w59uhn.jpg"
+              },
+              {
+                "title": "Nordic Spirit",
+                "linkUrl": "/collections/nordic-spirit",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340672/storefront_media/file_svvqvu.jpg"
+              },
+              {
+                "title": "XQS",
+                "linkUrl": "/collections/xqs",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340747/storefront_media/file_jnemfb.jpg"
+              },
+              {
+                "title": "Zyn",
+                "linkUrl": "/collections/zyn",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340742/storefront_media/file_ejx2jl.jpg"
+              },
+              {
+                "title": "Pablo",
+                "linkUrl": "/collections/pablo",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340738/storefront_media/file_tpulby.png"
+              },
+              {
+                "title": "Killa",
+                "linkUrl": "/collections/killa",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340731/storefront_media/file_syckye.png"
+              },
+              {
+                "title": "Fumi",
+                "linkUrl": "/collections/fumi",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340726/storefront_media/file_e22oq0.png"
+              },
+              {
+                "title": "Velo",
+                "linkUrl": "/collections/velo",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340720/storefront_media/file_xbjkv3.png"
+              },
+              {
+                "title": "White Fox",
+                "linkUrl": "/collections/white-fox",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340772/storefront_media/file_kp7jnq.png"
+              },
+              {
+                "title": "Snu",
+                "linkUrl": "/collections/snu",
+                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340767/storefront_media/file_ve1qm2.png"
+              }
+            ],
+            "description": "Explore our catalog of certified compounding premium brands.",
+            "headingColor": "#0C1017",
+            "buttonBgColor": "#bcbcbd",
+            "cardTextColor": "#ffffff",
+            "backgroundColor": "#FFFFFF"
+          }
+        }
+      ],
+      "updatedAt": "Jun 23, 2026",
+      "isHomepage": false,
+      "visibility": "Visible"
+    },
     {
       "id": "homepage",
       "slug": "homepage",
@@ -7073,93 +7585,65 @@
       "visibility": "Visible"
     },
     {
-      "id": "brands",
-      "slug": "brands",
-      "title": "Brands Directory",
+      "id": "about",
+      "slug": "about",
+      "title": "About Us",
       "sections": [
         {
-          "id": "s3",
-          "type": "Brand list",
+          "id": "sec-1786341240876-xx4we",
+          "type": "Image banner",
           "settings": {
-            "title": "Official Brands Directory",
-            "fullWidth": false,
-            "textColor": "#ffffff",
-            "brandItems": [
-              {
-                "title": "77",
-                "linkUrl": "/collections/77",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340624/storefront_media/file_dpm502.jpg"
-              },
-              {
-                "title": "Clew",
-                "linkUrl": "/collections/clew",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340652/storefront_media/file_spibxy.jpg"
-              },
-              {
-                "title": "Cuba",
-                "linkUrl": "/collections/cuba",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340685/storefront_media/file_iwvyic.jpg"
-              },
-              {
-                "title": "Maggie",
-                "linkUrl": "front/collections/maggie",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340678/storefront_media/file_w59uhn.jpg"
-              },
-              {
-                "title": "Nordic Spirit",
-                "linkUrl": "/collections/nordic-spirit",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340672/storefront_media/file_svvqvu.jpg"
-              },
-              {
-                "title": "XQS",
-                "linkUrl": "/collections/xqs",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340747/storefront_media/file_jnemfb.jpg"
-              },
-              {
-                "title": "Zyn",
-                "linkUrl": "/collections/zyn",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340742/storefront_media/file_ejx2jl.jpg"
-              },
-              {
-                "title": "Pablo",
-                "linkUrl": "/collections/pablo",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340738/storefront_media/file_tpulby.png"
-              },
-              {
-                "title": "Killa",
-                "linkUrl": "/collections/killa",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340731/storefront_media/file_syckye.png"
-              },
-              {
-                "title": "Fumi",
-                "linkUrl": "/collections/fumi",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340726/storefront_media/file_e22oq0.png"
-              },
-              {
-                "title": "Velo",
-                "linkUrl": "/collections/velo",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340720/storefront_media/file_xbjkv3.png"
-              },
-              {
-                "title": "White Fox",
-                "linkUrl": "/collections/white-fox",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340772/storefront_media/file_kp7jnq.png"
-              },
-              {
-                "title": "Snu",
-                "linkUrl": "/collections/snu",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1786340767/storefront_media/file_ve1qm2.png"
-              }
-            ],
-            "description": "Explore our catalog of certified compounding premium brands.",
-            "headingColor": "#0C1017",
-            "buttonBgColor": "#bcbcbd",
-            "cardTextColor": "#ffffff",
+            "title": "",
+            "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785241912/storefront_media/file_hhelpo.png",
+            "fullWidth": true,
+            "textColor": "#64748B",
+            "buttonLink": "",
+            "buttonText": "",
+            "description": "",
+            "headingColor": "#1E293B",
+            "marqueeSpeed": 3,
             "backgroundColor": "#FFFFFF"
+          }
+        },
+        {
+          "id": "about-sec-1",
+          "type": "Rich text",
+          "settings": {
+            "title": "About Pouch Supply",
+            "fullWidth": false,
+            "textColor": "#475569",
+            "description": "Pouch Supply is Europe’s premier directory and depot for tobacco-free nicotine slim white canisters. We source directly from certified manufacturing laboratories across Sweden, Poland, Germany, and Europe, ensuring 100% genuine products, freshness guarantees, and rapid worldwide dispatch.",
+            "headingColor": "#0F172A",
+            "backgroundColor": "#FFFFFF"
+          }
+        },
+        {
+          "id": "sec-1786341376195-beju7",
+          "type": "Rich text",
+          "settings": {
+            "title": "What Are Nicotine Pouches?",
+            "fullWidth": false,
+            "textColor": "#64748B",
+            "buttonLink": "frontend-shop",
+            "buttonText": "Purchase Packs",
+            "description": "Nicotine pouches are small, soft pouches designed to deliver nicotine without smoke, vapor, or tobacco leaf. They are placed between the gum and upper lip where nicotine is gradually absorbed through the oral tissue.\n\nUnlike cigarettes or traditional smokeless tobacco, nicotine pouches are clean, discreet, and easy to use. They don’t produce smoke or require spitting, making them a convenient option for adult nicotine users.\n\nEach pouch typically contains nicotine, plant-based fibres, flavourings, and stabilizers that provide a smooth release of flavour and nicotine.\n\nUsers can enjoy a pouch for around 20–60 minutes, depending on the brand and strength.",
+            "headingColor": "#1E293B",
+            "marqueeSpeed": 3,
+            "backgroundColor": "#FFFFFF"
+          }
+        },
+        {
+          "id": "about-sec-2",
+          "type": "Trust badges",
+          "settings": {
+            "fullWidth": false,
+            "textColor": "#64748B",
+            "headingColor": "#0F172A",
+            "backgroundColor": "#F8FAFC"
           }
         }
       ],
-      "updatedAt": "Jun 23, 2026",
+      "updatedAt": "Jul 20, 2026",
       "isHomepage": false,
       "visibility": "Visible"
     },
@@ -7253,69 +7737,6 @@
         }
       ],
       "updatedAt": "Jul 10, 2026",
-      "isHomepage": false,
-      "visibility": "Visible"
-    },
-    {
-      "id": "about",
-      "slug": "about",
-      "title": "About Us",
-      "sections": [
-        {
-          "id": "sec-1786341240876-xx4we",
-          "type": "Image banner",
-          "settings": {
-            "title": "",
-            "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785241912/storefront_media/file_hhelpo.png",
-            "fullWidth": true,
-            "textColor": "#64748B",
-            "buttonLink": "",
-            "buttonText": "",
-            "description": "",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "about-sec-1",
-          "type": "Rich text",
-          "settings": {
-            "title": "About Pouch Supply",
-            "fullWidth": false,
-            "textColor": "#475569",
-            "description": "Pouch Supply is Europe’s premier directory and depot for tobacco-free nicotine slim white canisters. We source directly from certified manufacturing laboratories across Sweden, Poland, Germany, and Europe, ensuring 100% genuine products, freshness guarantees, and rapid worldwide dispatch.",
-            "headingColor": "#0F172A",
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1786341376195-beju7",
-          "type": "Rich text",
-          "settings": {
-            "title": "What Are Nicotine Pouches?",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "buttonLink": "frontend-shop",
-            "buttonText": "Purchase Packs",
-            "description": "Nicotine pouches are small, soft pouches designed to deliver nicotine without smoke, vapor, or tobacco leaf. They are placed between the gum and upper lip where nicotine is gradually absorbed through the oral tissue.\n\nUnlike cigarettes or traditional smokeless tobacco, nicotine pouches are clean, discreet, and easy to use. They don’t produce smoke or require spitting, making them a convenient option for adult nicotine users.\n\nEach pouch typically contains nicotine, plant-based fibres, flavourings, and stabilizers that provide a smooth release of flavour and nicotine.\n\nUsers can enjoy a pouch for around 20–60 minutes, depending on the brand and strength.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "about-sec-2",
-          "type": "Trust badges",
-          "settings": {
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "headingColor": "#0F172A",
-            "backgroundColor": "#F8FAFC"
-          }
-        }
-      ],
-      "updatedAt": "Jul 20, 2026",
       "isHomepage": false,
       "visibility": "Visible"
     },
@@ -8087,24 +8508,39 @@
   ],
   "email_logs": [
     {
-      "type": "order_refunded",
-      "recipient": "nehabhardwaz.gtl@gmail.com",
-      "subject": "Refund Confirmation - Pouch Supply Co.",
+      "type": "admin_new_order",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
       "status": "sent",
       "provider": "gmail",
-      "messageId": "<5f1f30b9-3e89-1925-32a7-4ffb4a24db21@gmail.com>",
+      "messageId": "<3c5d5f92-332d-447f-5a4f-fcc24f0b4b86@gmail.com>",
       "metadata": {
         "data": {
-          "customerName": "neha",
-          "customerEmail": "nehabhardwaz.gtl@gmail.com",
-          "orderId": "PS54558",
-          "total": 27.99,
-          "refundAmount": 27.99,
-          "refundReason": "Customer requested refund"
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "orderId": "PS16610",
+          "orderDate": "Sep 8, 2026 at 05:33 pm",
+          "items": [
+            {
+              "productId": "sub-pack-1786955725878",
+              "productTitle": "ULTIMATE Plan (Recurring Renewal)",
+              "price": 45.71,
+              "quantity": 1,
+              "isSubscription": true,
+              "subscriptionPlan": "ULTIMATE Plan",
+              "subscriptionItems": [],
+              "selectedProducts": [],
+              "subscriptionSummary": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2))",
+              "total": 45.71
+            }
+          ],
+          "total": 45.71,
+          "destination": "United Kingdom",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
         }
       },
-      "id": "log_1788861679429_mljcr",
-      "timestamp": "2026-09-08T10:01:19.429Z"
+      "id": "log_1788869064873_b1uzr",
+      "timestamp": "2026-09-08T12:04:24.873Z"
     },
     {
       "id": "log_1785587115800_ryi5w",
@@ -13173,37 +13609,6 @@
       "timestamp": "2026-09-05T22:17:05.496Z"
     },
     {
-      "id": "log_1788646631230_xb1vb",
-      "type": "admin_new_order",
-      "status": "sent",
-      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
-      "metadata": {
-        "data": {
-          "items": [
-            {
-              "price": 29.4,
-              "total": 29.4,
-              "quantity": 1,
-              "productId": "sub-pack-1786955324998",
-              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-              "isSubscription": true
-            }
-          ],
-          "total": 32.39,
-          "orderId": "PS20017",
-          "orderDate": "Sep 5, 2026 at 03:16 pm",
-          "destination": "United Kingdom",
-          "customerName": "Ritesh Dhiman",
-          "customerEmail": "info@gtlofficial.com",
-          "deliveryMethod": "Royal Mail Tracked 24/48"
-        }
-      },
-      "provider": "gmail",
-      "messageId": "<b8b60bcf-803f-f4e1-1312-ef294d66dc93@gmail.com>",
-      "recipient": "scottkivlinpouch@gmail.com",
-      "timestamp": "2026-09-05T22:17:11.230Z"
-    },
-    {
       "id": "log_1788646629994_qi29g",
       "type": "order_confirmation",
       "status": "sent",
@@ -13235,10 +13640,10 @@
       "timestamp": "2026-09-05T22:17:09.994Z"
     },
     {
-      "id": "log_1788646627106_6sgvu",
-      "type": "order_shipped",
+      "id": "log_1788646631230_xb1vb",
+      "type": "admin_new_order",
       "status": "sent",
-      "subject": "Order Dispatched & Tracking Info - Pouch Supply Co.",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
       "metadata": {
         "data": {
           "items": [
@@ -13252,18 +13657,18 @@
             }
           ],
           "total": 32.39,
-          "carrier": "Royal Mail Tracked 24®",
           "orderId": "PS20017",
+          "orderDate": "Sep 5, 2026 at 03:16 pm",
           "destination": "United Kingdom",
           "customerName": "Ritesh Dhiman",
           "customerEmail": "info@gtlofficial.com",
-          "trackingNumber": "RM876434737GB"
+          "deliveryMethod": "Royal Mail Tracked 24/48"
         }
       },
       "provider": "gmail",
-      "messageId": "<a9684be3-80af-f7a9-59f9-598d81405917@gmail.com>",
-      "recipient": "info@gtlofficial.com",
-      "timestamp": "2026-09-05T22:17:07.106Z"
+      "messageId": "<b8b60bcf-803f-f4e1-1312-ef294d66dc93@gmail.com>",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "timestamp": "2026-09-05T22:17:11.230Z"
     },
     {
       "id": "log_1788646629724_z7ddj",
@@ -13295,6 +13700,37 @@
       "messageId": "<297ce50a-f157-f3ea-f689-246838f0c34a@gmail.com>",
       "recipient": "info@gtlofficial.com",
       "timestamp": "2026-09-05T22:17:09.724Z"
+    },
+    {
+      "id": "log_1788646627106_6sgvu",
+      "type": "order_shipped",
+      "status": "sent",
+      "subject": "Order Dispatched & Tracking Info - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 29.4,
+              "total": 29.4,
+              "quantity": 1,
+              "productId": "sub-pack-1786955324998",
+              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
+              "isSubscription": true
+            }
+          ],
+          "total": 32.39,
+          "carrier": "Royal Mail Tracked 24®",
+          "orderId": "PS20017",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "trackingNumber": "RM876434737GB"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<a9684be3-80af-f7a9-59f9-598d81405917@gmail.com>",
+      "recipient": "info@gtlofficial.com",
+      "timestamp": "2026-09-05T22:17:07.106Z"
     },
     {
       "id": "log_1788646688278_ahul1",
@@ -14408,6 +14844,216 @@
       "messageId": "<35bfbefa-3385-e6e9-6c95-e3cfaa925bd4@gmail.com>",
       "recipient": "nehabhardwaz.gtl@gmail.com",
       "timestamp": "2026-09-08T09:59:34.833Z"
+    },
+    {
+      "id": "log_1788868813166_u45jj",
+      "type": "order_confirmation",
+      "status": "sent",
+      "subject": "Order Confirmation - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 32.39,
+              "total": 32.39,
+              "quantity": 1,
+              "productId": "sub-pack-1786955324998",
+              "productTitle": "CORE Plan (Recurring Renewal)",
+              "isSubscription": true,
+              "selectedProducts": [],
+              "subscriptionPlan": "CORE Plan",
+              "subscriptionItems": [],
+              "subscriptionSummary": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4))"
+            }
+          ],
+          "total": 32.39,
+          "orderId": "PS22743",
+          "orderDate": "Sep 8, 2026 at 05:30 pm",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<5e219d62-118c-b7d6-cdcd-2807d2884a1d@gmail.com>",
+      "recipient": "info@gtlofficial.com",
+      "timestamp": "2026-09-08T12:00:13.166Z"
+    },
+    {
+      "id": "log_1788868941255_z7lk8",
+      "type": "admin_new_order",
+      "status": "sent",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 27.99,
+              "total": 27.99,
+              "quantity": 1,
+              "productId": "lite",
+              "productTitle": "LITE Plan (Recurring Renewal)",
+              "isSubscription": true,
+              "selectedProducts": [],
+              "subscriptionPlan": "LITE Plan",
+              "subscriptionItems": [],
+              "subscriptionSummary": "lite"
+            }
+          ],
+          "total": 27.99,
+          "orderId": "PS46141",
+          "orderDate": "Sep 8, 2026 at 05:31 pm",
+          "destination": "United Kingdom",
+          "customerName": "neha",
+          "customerEmail": "nehabhardwaz.gtl@gmail.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<0263f155-6827-f27f-746e-94d2b010a61c@gmail.com>",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "timestamp": "2026-09-08T12:02:21.255Z"
+    },
+    {
+      "id": "log_1788868987746_7l4p0",
+      "type": "admin_new_order",
+      "status": "sent",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 36.89,
+              "total": 36.89,
+              "quantity": 1,
+              "productId": "sub-pack-1786955823894",
+              "productTitle": "PRO Plan (Recurring Renewal)",
+              "isSubscription": true,
+              "selectedProducts": [],
+              "subscriptionPlan": "PRO Plan",
+              "subscriptionItems": [],
+              "subscriptionSummary": "PRO Plan [Next Day (Test) - 10% OFF] - (20 mg Ghost Cola Ice (Qty:3), 5.2 mg Watermelon ice (Qty:2), 5.6 mg Zesty Pear Regular (Qty:1), 8 mg Mint Dry (Qty:2), 17 mg Frosty Mint Max (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:1))"
+            }
+          ],
+          "total": 36.89,
+          "orderId": "PS11833",
+          "orderDate": "Sep 8, 2026 at 05:32 pm",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<439ad909-390c-c9d4-561d-0b2deb1d43b6@gmail.com>",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "timestamp": "2026-09-08T12:03:07.746Z"
+    },
+    {
+      "id": "log_1788869002163_y3lot",
+      "type": "order_confirmation",
+      "status": "sent",
+      "subject": "Order Confirmation - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 25.19,
+              "total": 25.19,
+              "quantity": 1,
+              "productId": "sub-pack-1787133835286",
+              "productTitle": "LITE Plan (Recurring Renewal)",
+              "isSubscription": true,
+              "selectedProducts": [],
+              "subscriptionPlan": "LITE Plan",
+              "subscriptionItems": [],
+              "subscriptionSummary": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3))"
+            }
+          ],
+          "total": 25.19,
+          "orderId": "PS58451",
+          "orderDate": "Sep 8, 2026 at 05:33 pm",
+          "destination": "United Kingdom",
+          "customerName": "Scott Kivlin",
+          "customerEmail": "scott@pouch-supply.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<c794f98f-e259-0521-5c22-78fc17a1b6a6@gmail.com>",
+      "recipient": "scott@pouch-supply.com",
+      "timestamp": "2026-09-08T12:03:22.163Z"
+    },
+    {
+      "id": "log_1788869028222_y6vej",
+      "type": "admin_new_order",
+      "status": "sent",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 25.19,
+              "total": 25.19,
+              "quantity": 1,
+              "productId": "sub-pack-1787133835286",
+              "productTitle": "LITE Plan (Recurring Renewal)",
+              "isSubscription": true,
+              "selectedProducts": [],
+              "subscriptionPlan": "LITE Plan",
+              "subscriptionItems": [],
+              "subscriptionSummary": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3))"
+            }
+          ],
+          "total": 25.19,
+          "orderId": "PS58451",
+          "orderDate": "Sep 8, 2026 at 05:33 pm",
+          "destination": "United Kingdom",
+          "customerName": "Scott Kivlin",
+          "customerEmail": "scott@pouch-supply.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<bfc44979-2980-5b2d-d27c-0e2c25bcaeaf@gmail.com>",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "timestamp": "2026-09-08T12:03:48.222Z"
+    },
+    {
+      "id": "log_1788869039065_o1ous",
+      "type": "order_confirmation",
+      "status": "sent",
+      "subject": "Order Confirmation - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 45.71,
+              "total": 45.71,
+              "quantity": 1,
+              "productId": "sub-pack-1786955725878",
+              "productTitle": "ULTIMATE Plan (Recurring Renewal)",
+              "isSubscription": true,
+              "selectedProducts": [],
+              "subscriptionPlan": "ULTIMATE Plan",
+              "subscriptionItems": [],
+              "subscriptionSummary": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2))"
+            }
+          ],
+          "total": 45.71,
+          "orderId": "PS16610",
+          "orderDate": "Sep 8, 2026 at 05:33 pm",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<01739ea2-3c37-6e37-bace-937375ee8160@gmail.com>",
+      "recipient": "info@gtlofficial.com",
+      "timestamp": "2026-09-08T12:03:59.065Z"
     }
   ],
   "subscriptions": [
@@ -14436,13 +15082,13 @@
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.696Z",
-      "updatedAt": "2026-09-08T10:00:37.181Z",
+      "updatedAt": "2026-09-08T12:04:00.459Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-08-11T08:09:30.915Z",
       "lastPaymentId": "WP-TEST-TXN-656948",
-      "billingInterval": "1day",
+      "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-11T08:09:30.915Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
@@ -14475,13 +15121,13 @@
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.699Z",
-      "updatedAt": "2026-09-08T10:00:37.181Z",
+      "updatedAt": "2026-09-08T12:04:00.477Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-08-13T10:31:44.208Z",
       "lastPaymentId": "WP-TEST-TXN-566805",
-      "billingInterval": "1day",
+      "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-13T10:31:44.208Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
@@ -14514,13 +15160,13 @@
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.698Z",
-      "updatedAt": "2026-09-08T10:00:37.181Z",
+      "updatedAt": "2026-09-08T12:04:00.480Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-08-13T10:45:21.514Z",
       "lastPaymentId": "WP-TEST-TXN-656083",
-      "billingInterval": "1day",
+      "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-13T10:45:21.514Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
@@ -14536,7 +15182,7 @@
       "currency": "GBP",
       "planName": "CORE Plan [Bi-Weekly - 10% OFF] - (5.2 mg Watermelon ice (Qty:5), 20 mg Ghost Cola Ice (Qty:3))",
       "createdAt": "2026-08-17T07:17:44.700Z",
-      "updatedAt": "2026-09-07T08:11:44.190Z",
+      "updatedAt": "2026-09-08T12:04:00.272Z",
       "customerId": "info@gtlofficial.com",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
@@ -14558,7 +15204,7 @@
       "currency": "GBP",
       "planName": "PRO Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:5), 20 mg Ghost Cola Ice (Qty:5))",
       "createdAt": "2026-08-17T07:17:44.702Z",
-      "updatedAt": "2026-09-07T08:11:44.190Z",
+      "updatedAt": "2026-09-08T12:04:00.448Z",
       "customerId": "info@gtlofficial.com",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
@@ -14597,18 +15243,18 @@
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.555Z",
-      "updatedAt": "2026-09-08T10:00:37.181Z",
+      "updatedAt": "2026-09-08T12:04:00.477Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
-      "lastPaymentAt": "2026-09-08T06:01:26.244Z",
-      "lastPaymentId": "WP-SIM-277234",
-      "billingInterval": "1day",
+      "lastPaymentAt": "2026-09-08T12:00:52.971Z",
+      "lastPaymentId": "WP-SIM-825230",
+      "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-09T05:34:14.201Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-381705",
-      "worldpayTransactionId": "WP-SIM-277234",
+      "worldpayTransactionId": "WP-SIM-825230",
       "worldpaySchemeReference": "SCHEME-WP-TEST-TXN-381705"
     },
     {
@@ -14636,18 +15282,18 @@
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T08:27:06.575Z",
-      "updatedAt": "2026-09-08T10:00:37.181Z",
+      "updatedAt": "2026-09-08T12:04:00.736Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
-      "lastPaymentAt": "2026-09-08T08:05:12.173Z",
-      "lastPaymentId": "WP-SIM-703033",
-      "billingInterval": "1day",
+      "lastPaymentAt": "2026-09-08T12:01:29.165Z",
+      "lastPaymentId": "WP-SIM-874247",
+      "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-09T08:02:01.671Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-226573",
-      "worldpayTransactionId": "WP-SIM-703033",
+      "worldpayTransactionId": "WP-SIM-874247",
       "worldpaySchemeReference": "SCHEME-WP-CB-226573"
     },
     {
@@ -14658,18 +15304,18 @@
       "currency": "GBP",
       "planName": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4))",
       "createdAt": "2026-08-17T08:30:15.173Z",
-      "updatedAt": "2026-09-07T08:11:44.189Z",
+      "updatedAt": "2026-09-08T12:04:00.524Z",
       "customerId": "info@gtlofficial.com",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
-      "lastPaymentAt": "2026-09-08T08:05:42.358Z",
-      "lastPaymentId": "WP-SIM-734332",
+      "lastPaymentAt": "2026-09-08T12:00:07.788Z",
+      "lastPaymentId": "WP-SIM-803289",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-09T08:00:23.424Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-415160",
-      "worldpayTransactionId": "WP-SIM-734332",
+      "worldpayTransactionId": "WP-SIM-803289",
       "worldpaySchemeReference": "SCHEME-WP-CB-415160"
     },
     {
@@ -14680,18 +15326,18 @@
       "currency": "GBP",
       "planName": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2))",
       "createdAt": "2026-08-17T08:36:34.958Z",
-      "updatedAt": "2026-09-07T08:11:44.247Z",
+      "updatedAt": "2026-09-08T12:04:00.555Z",
       "customerId": "info@gtlofficial.com",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
-      "lastPaymentAt": "2026-09-08T08:00:11.752Z",
-      "lastPaymentId": "WP-SIM-405922",
+      "lastPaymentAt": "2026-09-08T12:03:54.385Z",
+      "lastPaymentId": "WP-SIM-023832",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-09T07:57:01.323Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-794956",
-      "worldpayTransactionId": "WP-SIM-405922",
+      "worldpayTransactionId": "WP-SIM-023832",
       "worldpaySchemeReference": "SCHEME-WP-CB-794956"
     },
     {
@@ -14702,18 +15348,18 @@
       "currency": "GBP",
       "planName": "PRO Plan [Next Day (Test) - 10% OFF] - (20 mg Ghost Cola Ice (Qty:3), 5.2 mg Watermelon ice (Qty:2), 5.6 mg Zesty Pear Regular (Qty:1), 8 mg Mint Dry (Qty:2), 17 mg Frosty Mint Max (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:1))",
       "createdAt": "2026-08-17T08:39:12.986Z",
-      "updatedAt": "2026-09-07T08:11:44.449Z",
+      "updatedAt": "2026-09-08T12:04:00.524Z",
       "customerId": "info@gtlofficial.com",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
-      "lastPaymentAt": "2026-09-08T08:00:38.948Z",
-      "lastPaymentId": "WP-SIM-429481",
+      "lastPaymentAt": "2026-09-08T12:02:19.583Z",
+      "lastPaymentId": "WP-SIM-921486",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-09T07:58:40.960Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-312556",
-      "worldpayTransactionId": "WP-SIM-429481",
+      "worldpayTransactionId": "WP-SIM-921486",
       "worldpaySchemeReference": "SCHEME-WP-TEST-TXN-312556"
     },
     {
@@ -14724,34 +15370,41 @@
       "currency": "GBP",
       "planName": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3))",
       "createdAt": "2026-08-19T10:10:13.852Z",
-      "updatedAt": "2026-09-07T08:11:44.452Z",
+      "updatedAt": "2026-09-08T12:04:00.587Z",
       "customerId": "scott@pouch-supply.com",
       "customerName": "Scott Kivlin",
       "customerEmail": "scott@pouch-supply.com",
-      "lastPaymentAt": "2026-09-08T06:01:54.439Z",
-      "lastPaymentId": "WP-SIM-305028",
+      "lastPaymentAt": "2026-09-08T12:03:11.604Z",
+      "lastPaymentId": "WP-SIM-983194",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-09T05:32:14.941Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-213847",
-      "worldpayTransactionId": "WP-SIM-305028",
+      "worldpayTransactionId": "WP-SIM-983194",
       "worldpaySchemeReference": "SCHEME-WP-CB-213847"
     }
   ],
   "klaviyo_logs": [
     {
-      "eventName": "Refunded Order",
-      "customerEmail": "nehabhardwaz.gtl@gmail.com",
+      "eventName": "Ordered Product",
+      "customerEmail": "info@gtlofficial.com",
       "status": "sent",
       "payload": {
         "eventProperties": {
-          "OrderId": "PS54558"
+          "OrderId": "PS16610",
+          "ProductID": "sub-pack-1786955725878",
+          "SKU": "sub-pack-1786955725878",
+          "ProductName": "ULTIMATE Plan (Recurring Renewal)",
+          "Quantity": 1,
+          "ItemPrice": 45.71,
+          "RowTotal": 45.71,
+          "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300"
         },
         "transport": "private_api"
       },
-      "id": "klaviyo_1788861676387_oy2qk",
-      "timestamp": "2026-09-08T10:01:16.387Z"
+      "id": "klaviyo_1788869059245_b8szz",
+      "timestamp": "2026-09-08T12:04:19.245Z"
     },
     {
       "id": "klaviyo_1786359572577_bhm20",
@@ -20159,6 +20812,485 @@
       },
       "eventName": "Ordered Product",
       "timestamp": "2026-09-08T08:06:11.490Z",
+      "customerEmail": "info@gtlofficial.com"
+    },
+    {
+      "id": "klaviyo_1788861676387_oy2qk",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "OrderId": "PS54558"
+        }
+      },
+      "eventName": "Refunded Order",
+      "timestamp": "2026-09-08T10:01:16.387Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788868811057_aibyt",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "Items": [
+            {
+              "SKU": "sub-pack-1786955324998",
+              "Price": 32.39,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+              "Quantity": 1,
+              "RowTotal": 32.39,
+              "ItemPrice": 32.39,
+              "ProductID": "sub-pack-1786955324998",
+              "ProductName": "CORE Plan (Recurring Renewal)"
+            }
+          ],
+          "extra": {
+            "date": "Sep 8, 2026 at 05:30 pm",
+            "items": [
+              {
+                "SKU": "sub-pack-1786955324998",
+                "Price": 32.39,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+                "Quantity": 1,
+                "RowTotal": 32.39,
+                "ItemPrice": 32.39,
+                "ProductID": "sub-pack-1786955324998",
+                "ProductName": "CORE Plan (Recurring Renewal)"
+              }
+            ],
+            "total": 32.39,
+            "order_id": "PS22743"
+          },
+          "OrderId": "PS22743",
+          "order_id": "PS22743",
+          "ItemNames": [
+            "CORE Plan (Recurring Renewal)"
+          ],
+          "Categories": [
+            "Nicotine Pouches",
+            "Storefront"
+          ],
+          "Destination": "United Kingdom",
+          "DeliveryMethod": "Royal Mail Tracked 24/48",
+          "DiscountApplied": null,
+          "ShippingAddress": {
+            "address1": "United Kingdom",
+            "last_name": "Dhiman",
+            "first_name": "Ritesh"
+          },
+          "StoreCreditApplied": 0
+        }
+      },
+      "eventName": "Placed Order",
+      "timestamp": "2026-09-08T12:00:11.057Z",
+      "customerEmail": "info@gtlofficial.com"
+    },
+    {
+      "id": "klaviyo_1788868827762_ltn1x",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "SKU": "sub-pack-1786955324998",
+          "OrderId": "PS22743",
+          "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+          "Quantity": 1,
+          "RowTotal": 32.39,
+          "ItemPrice": 32.39,
+          "ProductID": "sub-pack-1786955324998",
+          "ProductName": "CORE Plan (Recurring Renewal)"
+        }
+      },
+      "eventName": "Ordered Product",
+      "timestamp": "2026-09-08T12:00:27.762Z",
+      "customerEmail": "info@gtlofficial.com"
+    },
+    {
+      "id": "klaviyo_1788868856535_yjsm2",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "Items": [
+            {
+              "SKU": "lite",
+              "Price": 27.99,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+              "Quantity": 1,
+              "RowTotal": 27.99,
+              "ItemPrice": 27.99,
+              "ProductID": "lite",
+              "ProductName": "LITE Plan (Recurring Renewal)"
+            }
+          ],
+          "extra": {
+            "date": "Sep 8, 2026 at 05:30 pm",
+            "items": [
+              {
+                "SKU": "lite",
+                "Price": 27.99,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+                "Quantity": 1,
+                "RowTotal": 27.99,
+                "ItemPrice": 27.99,
+                "ProductID": "lite",
+                "ProductName": "LITE Plan (Recurring Renewal)"
+              }
+            ],
+            "total": 27.99,
+            "order_id": "PS75082"
+          },
+          "OrderId": "PS75082",
+          "order_id": "PS75082",
+          "ItemNames": [
+            "LITE Plan (Recurring Renewal)"
+          ],
+          "Categories": [
+            "Nicotine Pouches",
+            "Storefront"
+          ],
+          "Destination": "United Kingdom",
+          "DeliveryMethod": "Royal Mail Tracked 24/48",
+          "DiscountApplied": null,
+          "ShippingAddress": {
+            "address1": "United Kingdom",
+            "last_name": "Customer",
+            "first_name": "neha"
+          },
+          "StoreCreditApplied": 0
+        }
+      },
+      "eventName": "Placed Order",
+      "timestamp": "2026-09-08T12:00:56.535Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788868878399_23yqk",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "SKU": "lite",
+          "OrderId": "PS75082",
+          "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+          "Quantity": 1,
+          "RowTotal": 27.99,
+          "ItemPrice": 27.99,
+          "ProductID": "lite",
+          "ProductName": "LITE Plan (Recurring Renewal)"
+        }
+      },
+      "eventName": "Ordered Product",
+      "timestamp": "2026-09-08T12:01:18.399Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788868893146_uhgbo",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "Items": [
+            {
+              "SKU": "lite",
+              "Price": 27.99,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+              "Quantity": 1,
+              "RowTotal": 27.99,
+              "ItemPrice": 27.99,
+              "ProductID": "lite",
+              "ProductName": "LITE Plan (Recurring Renewal)"
+            }
+          ],
+          "extra": {
+            "date": "Sep 8, 2026 at 05:31 pm",
+            "items": [
+              {
+                "SKU": "lite",
+                "Price": 27.99,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+                "Quantity": 1,
+                "RowTotal": 27.99,
+                "ItemPrice": 27.99,
+                "ProductID": "lite",
+                "ProductName": "LITE Plan (Recurring Renewal)"
+              }
+            ],
+            "total": 27.99,
+            "order_id": "PS46141"
+          },
+          "OrderId": "PS46141",
+          "order_id": "PS46141",
+          "ItemNames": [
+            "LITE Plan (Recurring Renewal)"
+          ],
+          "Categories": [
+            "Nicotine Pouches",
+            "Storefront"
+          ],
+          "Destination": "United Kingdom",
+          "DeliveryMethod": "Royal Mail Tracked 24/48",
+          "DiscountApplied": null,
+          "ShippingAddress": {
+            "address1": "United Kingdom",
+            "last_name": "Customer",
+            "first_name": "neha"
+          },
+          "StoreCreditApplied": 0
+        }
+      },
+      "eventName": "Placed Order",
+      "timestamp": "2026-09-08T12:01:33.146Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788868932482_lyo3e",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "SKU": "lite",
+          "OrderId": "PS46141",
+          "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+          "Quantity": 1,
+          "RowTotal": 27.99,
+          "ItemPrice": 27.99,
+          "ProductID": "lite",
+          "ProductName": "LITE Plan (Recurring Renewal)"
+        }
+      },
+      "eventName": "Ordered Product",
+      "timestamp": "2026-09-08T12:02:12.482Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788868946062_scna3",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "Items": [
+            {
+              "SKU": "sub-pack-1786955823894",
+              "Price": 36.89,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+              "Quantity": 1,
+              "RowTotal": 36.89,
+              "ItemPrice": 36.89,
+              "ProductID": "sub-pack-1786955823894",
+              "ProductName": "PRO Plan (Recurring Renewal)"
+            }
+          ],
+          "extra": {
+            "date": "Sep 8, 2026 at 05:32 pm",
+            "items": [
+              {
+                "SKU": "sub-pack-1786955823894",
+                "Price": 36.89,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+                "Quantity": 1,
+                "RowTotal": 36.89,
+                "ItemPrice": 36.89,
+                "ProductID": "sub-pack-1786955823894",
+                "ProductName": "PRO Plan (Recurring Renewal)"
+              }
+            ],
+            "total": 36.89,
+            "order_id": "PS11833"
+          },
+          "OrderId": "PS11833",
+          "order_id": "PS11833",
+          "ItemNames": [
+            "PRO Plan (Recurring Renewal)"
+          ],
+          "Categories": [
+            "Nicotine Pouches",
+            "Storefront"
+          ],
+          "Destination": "United Kingdom",
+          "DeliveryMethod": "Royal Mail Tracked 24/48",
+          "DiscountApplied": null,
+          "ShippingAddress": {
+            "address1": "United Kingdom",
+            "last_name": "Dhiman",
+            "first_name": "Ritesh"
+          },
+          "StoreCreditApplied": 0
+        }
+      },
+      "eventName": "Placed Order",
+      "timestamp": "2026-09-08T12:02:26.062Z",
+      "customerEmail": "info@gtlofficial.com"
+    },
+    {
+      "id": "klaviyo_1788868985376_dzw8u",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "SKU": "sub-pack-1786955823894",
+          "OrderId": "PS11833",
+          "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+          "Quantity": 1,
+          "RowTotal": 36.89,
+          "ItemPrice": 36.89,
+          "ProductID": "sub-pack-1786955823894",
+          "ProductName": "PRO Plan (Recurring Renewal)"
+        }
+      },
+      "eventName": "Ordered Product",
+      "timestamp": "2026-09-08T12:03:05.376Z",
+      "customerEmail": "info@gtlofficial.com"
+    },
+    {
+      "id": "klaviyo_1788869005921_3zdes",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "Items": [
+            {
+              "SKU": "sub-pack-1787133835286",
+              "Price": 25.19,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+              "Quantity": 1,
+              "RowTotal": 25.19,
+              "ItemPrice": 25.19,
+              "ProductID": "sub-pack-1787133835286",
+              "ProductName": "LITE Plan (Recurring Renewal)"
+            }
+          ],
+          "extra": {
+            "date": "Sep 8, 2026 at 05:33 pm",
+            "items": [
+              {
+                "SKU": "sub-pack-1787133835286",
+                "Price": 25.19,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+                "Quantity": 1,
+                "RowTotal": 25.19,
+                "ItemPrice": 25.19,
+                "ProductID": "sub-pack-1787133835286",
+                "ProductName": "LITE Plan (Recurring Renewal)"
+              }
+            ],
+            "total": 25.19,
+            "order_id": "PS58451"
+          },
+          "OrderId": "PS58451",
+          "order_id": "PS58451",
+          "ItemNames": [
+            "LITE Plan (Recurring Renewal)"
+          ],
+          "Categories": [
+            "Nicotine Pouches",
+            "Storefront"
+          ],
+          "Destination": "United Kingdom",
+          "DeliveryMethod": "Royal Mail Tracked 24/48",
+          "DiscountApplied": null,
+          "ShippingAddress": {
+            "address1": "United Kingdom",
+            "last_name": "Kivlin",
+            "first_name": "Scott"
+          },
+          "StoreCreditApplied": 0
+        }
+      },
+      "eventName": "Placed Order",
+      "timestamp": "2026-09-08T12:03:25.921Z",
+      "customerEmail": "scott@pouch-supply.com"
+    },
+    {
+      "id": "klaviyo_1788869024281_hxu45",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "SKU": "sub-pack-1787133835286",
+          "OrderId": "PS58451",
+          "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+          "Quantity": 1,
+          "RowTotal": 25.19,
+          "ItemPrice": 25.19,
+          "ProductID": "sub-pack-1787133835286",
+          "ProductName": "LITE Plan (Recurring Renewal)"
+        }
+      },
+      "eventName": "Ordered Product",
+      "timestamp": "2026-09-08T12:03:44.281Z",
+      "customerEmail": "scott@pouch-supply.com"
+    },
+    {
+      "id": "klaviyo_1788869042792_ifeqv",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "Items": [
+            {
+              "SKU": "sub-pack-1786955725878",
+              "Price": 45.71,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+              "Quantity": 1,
+              "RowTotal": 45.71,
+              "ItemPrice": 45.71,
+              "ProductID": "sub-pack-1786955725878",
+              "ProductName": "ULTIMATE Plan (Recurring Renewal)"
+            }
+          ],
+          "extra": {
+            "date": "Sep 8, 2026 at 05:33 pm",
+            "items": [
+              {
+                "SKU": "sub-pack-1786955725878",
+                "Price": 45.71,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
+                "Quantity": 1,
+                "RowTotal": 45.71,
+                "ItemPrice": 45.71,
+                "ProductID": "sub-pack-1786955725878",
+                "ProductName": "ULTIMATE Plan (Recurring Renewal)"
+              }
+            ],
+            "total": 45.71,
+            "order_id": "PS16610"
+          },
+          "OrderId": "PS16610",
+          "order_id": "PS16610",
+          "ItemNames": [
+            "ULTIMATE Plan (Recurring Renewal)"
+          ],
+          "Categories": [
+            "Nicotine Pouches",
+            "Storefront"
+          ],
+          "Destination": "United Kingdom",
+          "DeliveryMethod": "Royal Mail Tracked 24/48",
+          "DiscountApplied": null,
+          "ShippingAddress": {
+            "address1": "United Kingdom",
+            "last_name": "Dhiman",
+            "first_name": "Ritesh"
+          },
+          "StoreCreditApplied": 0
+        }
+      },
+      "eventName": "Placed Order",
+      "timestamp": "2026-09-08T12:04:02.792Z",
       "customerEmail": "info@gtlofficial.com"
     }
   ],

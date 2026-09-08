@@ -30,7 +30,7 @@ export interface RoyalMailSettings {
    * packed, not when it is paid for.
    */
   autoCreateShipmentOnPayment: boolean;
-  defaultServiceCode: string; // e.g. 'CRL2', 'TPS24', 'TPS48', 'SD1'
+  defaultServiceCode: string; // Royal Mail service code, e.g. 'TPN', 'TPS', 'SD1'
   defaultPackageType: string; // 'Parcel', 'LargeLetter', 'Letter'
   defaultWeightGrams: number;
   senderAddress: {
@@ -56,7 +56,7 @@ export const DEFAULT_ROYAL_MAIL_SETTINGS: RoyalMailSettings = {
   enabled: true,
   autoCreateShipmentOnPayment:
     String(process.env.ROYAL_MAIL_AUTO_DISPATCH || '').toLowerCase() === 'true',
-  defaultServiceCode: 'TPS24',
+  defaultServiceCode: 'TPN',
   defaultPackageType: 'Parcel',
   defaultWeightGrams: 350,
   senderAddress: {
@@ -241,15 +241,21 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
  * These are the prices YOU charge the customer at checkout and the service
  * codes you offer. Click & Drop has no public rating API — what you are billed
  * by Royal Mail comes from your account's contracted rates, not from here.
- * Keep these aligned with your Royal Mail contract.
+ *
+ * The service codes, however, are not ours to choose. They must be real Royal
+ * Mail codes AND present on your OBA / Royal Mail Tracked contract, or Click &
+ * Drop rejects the shipment with error 31. The domestic Tracked codes are TPN
+ * (Tracked 24) and TPS (Tracked 48) — note there is no "TPS24"; that value was
+ * invented here and matched nothing. Letterboxable variants are TRN and TRS.
+ * Confirm what your own account exposes before adding a code to this list.
  */
 export function getShippingRates(weightGrams: number = 350, countryCode: string = 'GB'): ShippingRateOption[] {
-  const isUK = countryCode.toUpperCase() === 'GB' || countryCode.toUpperCase() === 'UK';
+  const isUK = normalizeCountryCode(countryCode) === 'GB';
 
   if (isUK) {
     return [
       {
-        serviceCode: 'TPS24',
+        serviceCode: 'TPN',
         serviceName: 'Royal Mail Tracked 24®',
         estimatedDelivery: 'Next Working Day',
         price: 4.95,
@@ -258,7 +264,7 @@ export function getShippingRates(weightGrams: number = 350, countryCode: string 
         signatureRequired: false
       },
       {
-        serviceCode: 'TPS48',
+        serviceCode: 'TPS',
         serviceName: 'Royal Mail Tracked 48®',
         estimatedDelivery: '2-3 Working Days',
         price: 3.85,
@@ -465,6 +471,100 @@ function resolveRecipientFromOrder(order: any): { valid: boolean; errors: string
   };
 }
 
+/**
+ * Tests whether Royal Mail will accept a service code on THIS account.
+ *
+ * Which codes are valid is not a property of the API — it is a property of the
+ * account's OBA / Royal Mail Tracked contract, and there is no endpoint that
+ * lists them. The only authoritative check is to offer Click & Drop an order and
+ * see whether it takes it, so that is what this does: it submits one throwaway
+ * order and immediately deletes it again when it is accepted.
+ *
+ * Nothing is ever labelled, manifested or dispatched, so no postage is bought.
+ * A code that is rejected creates nothing in the first place.
+ */
+export async function testServiceCode(serviceCode: string): Promise<{
+  serviceCode: string;
+  accepted: boolean;
+  message: string;
+  cleanedUp: boolean;
+}> {
+  const code = String(serviceCode || '').trim().toUpperCase();
+  if (!code) {
+    return { serviceCode: code, accepted: false, message: 'No service code supplied.', cleanedUp: false };
+  }
+
+  const settings = await getRoyalMailSettings();
+  const apiKey = await requireApiKey(settings);
+  const sender = requireSender(settings);
+
+  const reference = `SVC-TEST-${Date.now().toString().slice(-8)}`;
+  const payload: CreateRoyalMailOrderRequest = {
+    orderReference: reference,
+    isRecipientABusiness: false,
+    recipient: {
+      address: {
+        fullName: 'Service Code Test',
+        addressLine1: sender.addressLine1 || '1 Test Street',
+        city: sender.city || 'London',
+        postcode: sender.postcode || 'EC1A 1BB',
+        countryCode: 'GB'
+      }
+    },
+    sender: { tradingName: sender.companyName.trim() },
+    subtotal: 1,
+    shippingCostCharged: 0,
+    total: 1,
+    currencyCode: 'GBP',
+    orderDate: new Date().toISOString(),
+    packages: [
+      {
+        weightInGrams: settings.defaultWeightGrams || 350,
+        packageFormatIdentifier: settings.defaultPackageType || 'Parcel',
+        contents: [{ name: 'Service code test', quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
+      }
+    ],
+    postageDetails: { serviceCode: code, sendNotificationsTo: 'none' }
+  };
+
+  let result: any;
+  try {
+    result = await createRoyalMailOrders([payload], apiKey);
+  } catch (err: any) {
+    return { serviceCode: code, accepted: false, message: err?.message || String(err), cleanedUp: false };
+  }
+
+  const failed = result?.failedOrders?.[0];
+  if (failed) {
+    const errors = Array.isArray(failed.errors) ? failed.errors : failed.errors ? [failed.errors] : [];
+    const message = errors.map((e: any) => e?.errorMessage || e?.message || JSON.stringify(e)).join(' | ');
+    return { serviceCode: code, accepted: false, message: message || 'Rejected by Royal Mail.', cleanedUp: false };
+  }
+
+  const identifier = result?.createdOrders?.[0]?.orderIdentifier;
+  let cleanedUp = false;
+  if (identifier) {
+    try {
+      await cancelRoyalMailOrder(String(identifier), apiKey);
+      cleanedUp = true;
+    } catch (delErr: any) {
+      console.warn(
+        `[RoyalMailService] Test order ${identifier} for ${code} could not be removed automatically:`,
+        delErr?.message
+      );
+    }
+  }
+
+  return {
+    serviceCode: code,
+    accepted: true,
+    message: cleanedUp
+      ? `Royal Mail accepts "${code}" on this account.`
+      : `Royal Mail accepts "${code}", but the throwaway test order (${identifier}) is still in Click & Drop and should be deleted manually.`,
+    cleanedUp
+  };
+}
+
 export interface CreateShipmentResult {
   success: boolean;
   trackingNumber: string | null;
@@ -518,7 +618,7 @@ export async function createRoyalMailShipment(orderId: string, options: {
     );
   }
 
-  const serviceCode = options.serviceCode || settings.defaultServiceCode || 'TPS24';
+  const serviceCode = options.serviceCode || settings.defaultServiceCode || 'TPN';
   const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
   const selectedRate = rates.find(r => r.serviceCode === serviceCode);
   const serviceName = selectedRate?.serviceName || `Royal Mail (${serviceCode})`;
@@ -593,16 +693,30 @@ export async function createRoyalMailShipment(orderId: string, options: {
 
   if (result?.failedOrders && result.failedOrders.length > 0) {
     const errMsgs: string[] = [];
+    let unknownServiceCode = false;
+
     result.failedOrders.forEach((f: any) => {
-      if (Array.isArray(f.errors)) {
-        f.errors.forEach((e: any) => errMsgs.push(e.message || e.code || JSON.stringify(e)));
-      } else if (f.errors) {
-        errMsgs.push(JSON.stringify(f.errors));
-      }
+      const errors = Array.isArray(f.errors) ? f.errors : f.errors ? [f.errors] : [];
+      errors.forEach((e: any) => {
+        // Error 31 is the one operators actually hit: the code is either not a
+        // Royal Mail code at all, or not on this account's contract. Saying so
+        // beats echoing the raw JSON back into the dashboard.
+        if (Number(e?.errorCode) === 31) unknownServiceCode = true;
+        errMsgs.push(e?.errorMessage || e?.message || e?.code || JSON.stringify(e));
+      });
     });
-    throw new Error(
-      `Royal Mail rejected the shipment for order #${orderId}: ${errMsgs.join(' | ') || 'unknown error'}`
-    );
+
+    let detail = errMsgs.join(' | ') || 'unknown error';
+    if (unknownServiceCode) {
+      detail +=
+        ` — "${serviceCode}" is not a service Royal Mail will accept for this account. ` +
+        'The domestic Tracked codes are TPN (Tracked 24) and TPS (Tracked 48); ' +
+        'TRN and TRS are the letterboxable variants. Check which services are on ' +
+        'your contract under Click & Drop > Settings > Shipping services, then set ' +
+        'the code in Admin > Settings > Royal Mail.';
+    }
+
+    throw new Error(`Royal Mail rejected the shipment for order #${orderId}: ${detail}`);
   }
 
   const createdOrder = result?.createdOrders?.[0];

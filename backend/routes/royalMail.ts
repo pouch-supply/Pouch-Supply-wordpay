@@ -4,6 +4,7 @@ import {
   saveRoyalMailSettings,
   validateAddress,
   getShippingRates,
+  testServiceCode,
   createRoyalMailShipment,
   cancelRoyalMailShipment,
   getRoyalMailTracking,
@@ -262,6 +263,31 @@ router.post("/validate-address", async (req: Request, res: Response) => {
 });
 
 // POST /api/royalmail/rates - Calculate rates
+// POST /api/royalmail/test-service-code - Ask Royal Mail whether a code is usable
+// on this account. Which codes are valid depends on the OBA / Tracked contract and
+// no endpoint lists them, so the only real answer comes from offering an order.
+// The throwaway order is deleted again as soon as it is accepted.
+router.post("/test-service-code", async (req: Request, res: Response) => {
+  try {
+    const codes: string[] = Array.isArray(req.body?.serviceCodes)
+      ? req.body.serviceCodes
+      : [req.body?.serviceCode].filter(Boolean);
+
+    if (codes.length === 0) {
+      return res.status(400).json({ success: false, message: "Provide serviceCode or serviceCodes." });
+    }
+
+    const results = [];
+    for (const code of codes.slice(0, 10)) {
+      results.push(await testServiceCode(String(code)));
+    }
+
+    return res.json({ success: true, results, accepted: results.filter(r => r.accepted).map(r => r.serviceCode) });
+  } catch (error: any) {
+    return res.status(200).json({ success: false, message: error?.message || "Service code test failed." });
+  }
+});
+
 router.post("/rates", async (req: Request, res: Response) => {
   try {
     const { weightGrams, countryCode } = req.body;

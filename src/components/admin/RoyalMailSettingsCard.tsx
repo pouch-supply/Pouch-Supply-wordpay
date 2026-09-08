@@ -30,7 +30,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
     integrationName: 'Pouch-Supply',
     enabled: true,
     autoCreateShipmentOnPayment: false,
-    defaultServiceCode: 'TPS24',
+    defaultServiceCode: 'TPN',
     defaultPackageType: 'Parcel',
     defaultWeightGrams: 350,
     senderAddress: {
@@ -336,17 +336,25 @@ export const RoyalMailSettingsCard: React.FC = () => {
                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
                   Default Postage Service
                 </label>
-                <select
+                <input
+                  list="royalmail-service-codes"
                   value={settings.defaultServiceCode}
-                  onChange={(e) => setSettings({ ...settings, defaultServiceCode: e.target.value })}
+                  onChange={(e) => setSettings({ ...settings, defaultServiceCode: e.target.value.trim().toUpperCase() })}
+                  placeholder="e.g. TPN"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                >
-                  <option value="TPS24">Royal Mail Tracked 24® (TPS24)</option>
-                  <option value="TPS48">Royal Mail Tracked 48® (TPS48)</option>
-                  <option value="SD1">Special Delivery Guaranteed 1pm® (SD1)</option>
-                  <option value="CRL2">Royal Mail 24 Business Parcel (CRL2)</option>
-                  <option value="MP1">Royal Mail International Tracked (MP1)</option>
-                </select>
+                />
+                <datalist id="royalmail-service-codes">
+                  <option value="TPN">Royal Mail Tracked 24®</option>
+                  <option value="TPS">Royal Mail Tracked 48®</option>
+                  <option value="TRN">Royal Mail Tracked 24® Letterboxable</option>
+                  <option value="TRS">Royal Mail Tracked 48® Letterboxable</option>
+                  <option value="SD1">Special Delivery Guaranteed by 1pm®</option>
+                </datalist>
+                <p className="text-[10px] text-slate-500 font-medium mt-1 leading-snug">
+                  Must be a service on your Royal Mail contract. Click &amp; Drop rejects
+                  anything else with &quot;service code could not be found&quot;. Check
+                  Click &amp; Drop &rarr; Settings &rarr; Shipping services for your list.
+                </p>
               </div>
 
               <div>

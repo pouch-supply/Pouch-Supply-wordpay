@@ -5,7 +5,8 @@ import { fetchResource, saveResource } from '../../serverDb';
 import {
   extractRecurringAuthorizationHref,
   extractSchemeReference,
-  isPlaceholderCredential
+  isPlaceholderCredential,
+  isUsableRecurringHref
 } from '../services/worldpaySubscription';
 import { calculateNextBillingDate, normalizeBillingInterval } from '../services/subscriptionCron';
 
@@ -123,6 +124,67 @@ function extractWorldpayRedirectUrl(responseBody: any): string | null {
  * reference Worldpay issued for the stored card. Without it there is nothing to
  * present on the recurring charges, which is why renewals never took money.
  */
+/**
+ * Records a Worldpay stored-credential against a subscription that was created
+ * without one.
+ *
+ * The redirect back from the Hosted Payment Page carries no payment detail, so a
+ * subscription is often created before Worldpay has told us anything about the
+ * stored card. The reference then arrives on a later webhook or payment query.
+ * Existing credentials are never overwritten, and a value that is not a genuine
+ * Worldpay one is ignored rather than stored.
+ */
+async function backfillSubscriptionCredential(orderId: string, gatewayResponse: any): Promise<boolean> {
+  const href = extractRecurringAuthorizationHref(gatewayResponse);
+  const scheme = extractSchemeReference(gatewayResponse);
+  if (!href && !scheme) return false;
+
+  let updated = false;
+
+  try {
+    const storedSubs: any[] = (await fetchResource('subscriptions')) || [];
+    const next = storedSubs.map((sub: any) => {
+      if (String(sub?.sourceOrderId || sub?.worldpayTransactionId || "") !== String(orderId)) return sub;
+
+      const hasUsable =
+        isUsableRecurringHref(sub.worldpayRecurringHref) ||
+        (Boolean(sub.worldpaySchemeReference) && !isPlaceholderCredential(sub.worldpaySchemeReference));
+      if (hasUsable) return sub;
+
+      updated = true;
+      console.log(
+        `[Worldpay Order] Recording Worldpay stored credential for subscription ${sub.id} ` +
+          `from a later gateway response for order ${orderId}.`
+      );
+      return {
+        ...sub,
+        worldpayRecurringHref: href || sub.worldpayRecurringHref || null,
+        worldpaySchemeReference: scheme || sub.worldpaySchemeReference || null
+      };
+    });
+
+    if (updated) {
+      await saveResource('subscriptions', next);
+      const target = next.find(
+        (sub: any) => String(sub?.sourceOrderId || sub?.worldpayTransactionId || "") === String(orderId)
+      );
+      if (target?.id) {
+        try {
+          await prisma.subscription.update({
+            where: { id: String(target.id) },
+            data: {
+              worldpayRecurringHref: target.worldpayRecurringHref,
+              worldpaySchemeReference: target.worldpaySchemeReference
+            }
+          });
+        } catch (_e) {}
+      }
+    }
+  } catch (_e) {}
+
+  return updated;
+}
+
 async function fetchWorldpayPaymentDetails(transactionReference: string): Promise<any | null> {
   const cfg = getEnvironmentConfig();
   if (!cfg.authHeader || !cfg.entity) return null;
@@ -230,6 +292,9 @@ async function saveVerifiedOrder(
     const already = existingOrders.find((o: any) => String(o.id) === String(orderId));
     if (already && already.paymentStatus === 'Paid') {
       console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid — skipping duplicate creation.`);
+      // The order is done, but this callback may be the one carrying the stored
+      // credential the subscription still needs.
+      await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
       return already;
     }
   } catch (_e) {}
@@ -241,6 +306,7 @@ async function saveVerifiedOrder(
       console.log(
         `[Worldpay Order] A subscription (${dupeSub.id}) already exists for order ${orderId} — not creating another.`
       );
+      await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
       return (await fetchResource('orders')).find((o: any) => String(o.id) === String(orderId)) || null;
     }
   } catch (_e) {}
@@ -444,7 +510,7 @@ async function saveVerifiedOrder(
     if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
       console.log(`[Worldpay Order] Auto-registering Click & Drop shipment with Royal Mail for order #${orderId}`);
       createRoyalMailShipment(orderId, {
-        serviceCode: rmSettings.defaultServiceCode || 'TPS24',
+        serviceCode: rmSettings.defaultServiceCode || 'TPN',
         weightGrams: rmSettings.defaultWeightGrams || 350
       }).catch(err => {
         console.warn(`[Worldpay Order] Background Royal Mail shipment creation note for #${orderId}:`, err?.message);
@@ -490,6 +556,7 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       shippingAddress,
       address,
       items,
+      recurring,
       discountApplied,
       storeCreditApplied,
       origin: bodyOrigin
@@ -632,6 +699,40 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       }
     };
 
+    // A subscription basket needs Worldpay to STORE the card, not just charge it.
+    //
+    // Without a customerAgreement on this first payment Worldpay treats it as a
+    // one-off: it issues no scheme transaction reference and no recurring
+    // authorization link, so there is nothing to charge on the renewal date and
+    // every recurring payment fails. `createToken` is required alongside the
+    // agreement by the Hosted Payment Pages API.
+    const isSubscriptionCheckout = Boolean(
+      recurring ||
+      (Array.isArray(items) &&
+        items.some(
+          (it: any) =>
+            it?.isSubscription ||
+            (typeof it?.productId === 'string' && it.productId.includes('sub-pack'))
+        ))
+    );
+
+    if (isSubscriptionCheckout) {
+      body.customerAgreement = {
+        type: 'subscription',
+        storedCardUsage: 'first'
+      };
+      body.createToken = {
+        type: 'worldpay',
+        // Groups the shopper's stored cards. Their email keeps renewals for one
+        // person together without exposing anything Worldpay does not already hold.
+        namespace: String(customerEmail || transactionReference).toLowerCase().slice(0, 64),
+        description: 'Pouch Supply subscription',
+        // Consent for the stored card is taken in our own checkout terms, so the
+        // shopper is not asked a second time on Worldpay's page.
+        optIn: 'Silent'
+      };
+    }
+
     const correlationId = crypto.randomUUID ? crypto.randomUUID() : `hpp-${Math.random().toString(36).slice(2, 12)}`;
     const userAgent = req.headers['user-agent'] || 'worldpay-hpp/1.0';
 
@@ -639,19 +740,42 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
 
     console.log(`[Worldpay HPP ${cfg.environment.toUpperCase()}] POST ${worldpayUrl} for Order: ${transactionReference}`);
 
-    const response = await fetch(worldpayUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': cfg.authHeader,
-        'Content-Type': 'application/vnd.worldpay.payment_pages-v1.hal+json',
-        'Accept': 'application/vnd.worldpay.payment_pages-v1.hal+json',
-        'WP-CorrelationId': correlationId,
-        'User-Agent': userAgent
-      },
-      body: JSON.stringify(body)
-    });
+    const postPaymentPage = async (payload: Record<string, unknown>) => {
+      const res = await fetch(worldpayUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': cfg.authHeader,
+          'Content-Type': 'application/vnd.worldpay.payment_pages-v1.hal+json',
+          'Accept': 'application/vnd.worldpay.payment_pages-v1.hal+json',
+          'WP-CorrelationId': correlationId,
+          'User-Agent': userAgent
+        },
+        body: JSON.stringify(payload)
+      });
+      const parsed: any = await res.json().catch(() => ({ message: 'Invalid response from Worldpay.' }));
+      return { res, parsed };
+    };
 
-    const responseBody: any = await response.json().catch(() => ({ message: 'Invalid response from Worldpay.' }));
+    let { res: response, parsed: responseBody } = await postPaymentPage(body);
+
+    // Taking no payment at all is worse than taking one without a stored-card
+    // mandate. If the account is not enabled for customer agreements, the sale
+    // still completes — but loudly, because that subscription cannot renew and
+    // somebody has to enable it on the Worldpay account.
+    if (!response.ok && isSubscriptionCheckout) {
+      const rejection = String(responseBody?.description || responseBody?.message || responseBody?.errorName || "");
+      console.error(
+        `[Worldpay HPP] Subscription mandate rejected for ${transactionReference} ` +
+          `(${response.status}): ${rejection}. Retrying as a one-off payment — this ` +
+          `subscription will NOT be able to take recurring payments until ` +
+          `customer agreements / tokenisation are enabled on entity ${cfg.entity}.`
+      );
+
+      const fallbackBody = { ...body };
+      delete (fallbackBody as any).customerAgreement;
+      delete (fallbackBody as any).createToken;
+      ({ res: response, parsed: responseBody } = await postPaymentPage(fallbackBody));
+    }
 
     if (!response.ok) {
       const errMsg = responseBody?.description || responseBody?.message || 'Hosted Payment Pages creation failed.';

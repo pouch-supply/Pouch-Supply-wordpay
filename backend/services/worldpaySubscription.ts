@@ -49,9 +49,40 @@ export function isUsableRecurringHref(href?: string | null): boolean {
  * order as Paid without any money moving, so they must be opted into
  * explicitly — otherwise a live store silently reports fake successful
  * renewals, which is exactly the failure this flag exists to prevent.
+ *
+ * The opt-in is ignored entirely on a live Worldpay account. A live store was
+ * booking renewal orders as Paid, emailing dispatch confirmations and adding to
+ * the customer's lifetime spend on authorizations that never reached Worldpay.
+ * Testing that flow belongs on the try/sandbox environment.
  */
-function simulationAllowed(): boolean {
-  return String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+export function simulationAllowed(): boolean {
+  const optedIn = String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+  if (!optedIn) return false;
+
+  if (isLiveWorldpayEnvironment()) {
+    console.error(
+      "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT is set but the environment is LIVE. " +
+        "Simulated charges are refused: a renewal without a real Worldpay stored credential " +
+        "will fail instead of being recorded as paid. Point WORLDPAY_BASE_URL at the try " +
+        "environment to exercise the recurring flow."
+    );
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * True when this process is pointed at a real, money-moving Worldpay account.
+ * Both the declared environment and the base URL are checked, so a stale
+ * WORLDPAY_ENVIRONMENT value cannot re-enable simulation against production.
+ */
+export function isLiveWorldpayEnvironment(): boolean {
+  const declared = String(process.env.WORLDPAY_ENVIRONMENT || "live").toLowerCase();
+  const baseUrl = String(process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").toLowerCase();
+  const looksSandboxed = /try\.|sandbox|test\.access\.worldpay/.test(baseUrl);
+  if (looksSandboxed) return false;
+  return declared === "live" || declared === "production" || baseUrl.includes("access.worldpay.com");
 }
 
 function getWorldpayConfig(): WorldpayConfig {
