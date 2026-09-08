@@ -7780,9 +7780,6 @@ async function handleCreateHostedPaymentPage(req, res) {
     }
     const cleanDescription = String(rawLabel || "Pouch Supply").replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40) || "Pouch Supply Order";
     const cleanBillingName = String(customerName || "Scott Kivlin").replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40) || "Scott Kivlin";
-    const hasSubscriptionItem = Array.isArray(items) && items.some(
-      (it) => it?.isSubscription || it?.productId && String(it.productId).includes("sub-pack")
-    );
     const body = {
       transactionReference,
       merchant: {
@@ -7792,12 +7789,6 @@ async function handleCreateHostedPaymentPage(req, res) {
       value: { currency: "GBP", amount: priceNum },
       description: cleanDescription,
       billingAddressName: cleanBillingName,
-      ...hasSubscriptionItem ? {
-        customerAgreement: {
-          type: "subscription",
-          storedCardUsage: "first"
-        }
-      } : {},
       resultURLs: {
         successURL: successReturnUrl,
         pendingURL: pendingReturnUrl,

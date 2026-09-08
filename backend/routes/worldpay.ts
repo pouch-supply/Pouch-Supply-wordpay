@@ -603,15 +603,6 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       .trim()
       .slice(0, 40) || 'Scott Kivlin';
 
-    // If the basket contains a subscription item, the Hosted Payment Page must
-    // be created with a customer agreement. That is what makes Worldpay store
-    // the credential and return a scheme transaction reference, which is the
-    // only thing that lets later renewals be charged without the shopper.
-    const hasSubscriptionItem = Array.isArray(items) && items.some((it: any) =>
-      it?.isSubscription ||
-      (it?.productId && String(it.productId).includes('sub-pack'))
-    );
-
     const body: Record<string, unknown> = {
       transactionReference,
       merchant: {
@@ -621,14 +612,6 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       value: { currency: 'GBP', amount: priceNum },
       description: cleanDescription,
       billingAddressName: cleanBillingName,
-      ...(hasSubscriptionItem
-        ? {
-            customerAgreement: {
-              type: 'subscription',
-              storedCardUsage: 'first'
-            }
-          }
-        : {}),
       resultURLs: {
         successURL: successReturnUrl,
         pendingURL: pendingReturnUrl,
