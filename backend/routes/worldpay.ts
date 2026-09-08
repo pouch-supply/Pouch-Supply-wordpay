@@ -535,18 +535,20 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
         }
         return {
           productId: it.productId || it.id || 'prod',
-          productTitle: it.productTitle || it.title || 'Product',
+          // The title the storefront sent is kept verbatim. A stand-in name here
+          // would follow the item all the way into the order detail view.
+          productTitle: it.productTitle || it.title || '',
           price: typeof it.price === 'number' ? it.price : parseFloat(it.price) || 0,
           quantity: typeof it.quantity === 'number' ? it.quantity : parseInt(it.quantity) || 1,
           image: it.image || '',
-          variant: it.variant || it.concreteVariantName || it.strength || it.flavour || 'Standard',
-          sku: it.sku || it.concreteVariantId || it.productId || 'SKU-GENERIC',
+          variant: it.variant || it.concreteVariantName || it.strength || it.flavour || '',
+          sku: it.sku || it.concreteVariantId || it.productId || '',
           vendor: it.vendor || '',
           isSubscription: Boolean(it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack')))),
           subscriptionPlan: planName || it.subscriptionPlan || 'PRO Plan',
           subscriptionFrequency: it.subscriptionFrequency || 'Bi-Weekly',
           frequencyDiscount: it.frequencyDiscount || '10%',
-          subscriptionItems: it.subscriptionItems || it.items || []
+          subscriptionItems: it.subscriptionItems || it.selectedProducts || it.items || []
         };
       }) : [],
       total: effectiveTotal,

@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronUp, MoreHorizontal, Calendar, Truck, Tag, MessageSquare, Send, Trash2, RotateCcw, CheckSquare, Square,
   RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink, Package
 } from 'lucide-react';
-import { Order } from '../../types';
+import { Order, Product } from '../../types';
 import { parseOrderTime } from '../../utils';
 import { RoyalMailOrderActions } from './RoyalMailOrderActions';
 import SubscriptionIcon from '../SubscriptionIcon';
@@ -15,6 +15,8 @@ const PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1527864550417-7fd91
 
 interface OrdersTabProps {
   orders: Order[];
+  /** Live catalogue, used to show each subscription box item under its exact product name. */
+  products?: Product[];
   orderStatusFilter: 'All' | 'Unfulfilled' | 'Fulfilled';
   setOrderStatusFilter: (val: 'All' | 'Unfulfilled' | 'Fulfilled') => void;
   handleExportOrders: () => void;
@@ -40,6 +42,7 @@ interface OrdersTabProps {
 
 export const OrdersTab: React.FC<OrdersTabProps> = ({
   orders,
+  products = [],
   orderStatusFilter,
   setOrderStatusFilter,
   handleExportOrders,
@@ -93,9 +96,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     return false;
   };
 
-  // Helper to extract subscription metadata and selected products for detailed display
+  // Helper to extract subscription metadata and selected products for detailed display.
+  // The catalogue is passed in so every box item is reported under its exact
+  // product title and the variant the customer actually picked.
   const getSubscriptionDetails = (order: Order) => {
-    return extractSubscriptionDetails(order);
+    return extractSubscriptionDetails(order, products as any);
   };
 
   const handleExecuteRefund = async () => {
@@ -781,7 +786,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                             <div key={pIdx} className="flex items-center justify-between bg-slate-900/90 border border-slate-700/60 p-2.5 rounded-lg text-xs">
                               <div className="min-w-0 pr-2">
                                 <p className="font-extrabold text-white text-xs truncate">{p.name}</p>
-                                <p className="text-[10px] text-indigo-300 font-bold">Variant: {p.variant || 'Standard'}</p>
+                                {(p.variant || p.variantName) && (
+                                  <p className="text-[10px] text-indigo-300 font-bold">Variant: {p.variant || p.variantName}</p>
+                                )}
                               </div>
                               <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-full shrink-0">
                                 × {p.quantity}
@@ -984,9 +991,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   {/* Order Items List */}
                   <div className="divide-y divide-slate-100 border-t border-b border-slate-100">
                     {selectedOrder.items.map((item, idx) => {
-                      const isKupanac = item.productTitle?.toLowerCase().includes('kupanac');
-                      
-                      // Extract chosen variant for normal products
+                      // Only the variant the order actually recorded is shown. The
+                      // demo values that stood in here previously described a size
+                      // and colour for a product this store does not sell.
                       let explicitVariant = (item as any).variantName || (item as any).variant || (item as any).selectedVariant?.name || (item as any).flavour || (item as any).strength || '';
                       if (!explicitVariant && item.productTitle) {
                         const titleMatch = item.productTitle.match(/\(([^)]+)\)$/);
@@ -994,9 +1001,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           explicitVariant = titleMatch[1].trim();
                         }
                       }
-                      const variantLabel = explicitVariant || (isKupanac ? 'M / Green' : 'Standard');
-                      const skuLabel = (item as any).sku || (isKupanac ? '010401015' : `SKU-${item.productId || idx + 1}`);
-                      
+                      const variantLabel = String(explicitVariant).trim();
+
                       const isSubscriptionItem = Boolean(
                         (item as any).isSubscription ||
                         item.productId?.startsWith('sub-pack') ||
@@ -1010,19 +1016,20 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       const planSlug = getPlanSlug(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan);
                       const planImage = getPlanImage(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan, item.image);
                       const displayPlanTitle = subDetails?.planName || (item as any).subscriptionPlan || item.productTitle || 'Subscription Plan';
-                      const selectedBoxItems = isSubscriptionItem 
-                        ? (subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 
-                            ? subDetails.selectedProducts 
-                            : parseSubscriptionProducts(selectedOrder, item)) 
+                      const selectedBoxItems = isSubscriptionItem
+                        ? (subDetails?.selectedProducts && subDetails.selectedProducts.length > 0
+                            ? subDetails.selectedProducts
+                            : parseSubscriptionProducts(selectedOrder, item, products as any))
                         : [];
 
-                      let finalSkuLabel = (item as any).sku;
-                      if (isSubscriptionItem) {
-                        if (!finalSkuLabel || (finalSkuLabel.toLowerCase().includes('lite') && planSlug !== 'lite')) {
-                          finalSkuLabel = `SUB-${planSlug.toUpperCase()}-BOX`;
-                        }
+                      // A subscription box is identified by its plan tier. Every other
+                      // line falls back to the id it was ordered under rather than a
+                      // manufactured code.
+                      let finalSkuLabel: string = (item as any).sku || '';
+                      if (isSubscriptionItem && (!finalSkuLabel || (finalSkuLabel.toLowerCase().includes('lite') && planSlug !== 'lite'))) {
+                        finalSkuLabel = `SUB-${planSlug.toUpperCase()}-BOX`;
                       } else if (!finalSkuLabel) {
-                        finalSkuLabel = isKupanac ? '010401015' : `SKU-${item.productId || idx + 1}`;
+                        finalSkuLabel = item.productId || '';
                       }
 
                       return (
@@ -1066,11 +1073,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                       <span className="text-[9px] text-indigo-500 uppercase">Variant:</span> {variantLabel}
                                     </span>
                                   ) : (
-                                    <span className="text-slate-400">Standard Variant</span>
+                                    <span className="text-slate-400">No variant recorded</span>
                                   )
                                 )}
-                                <span className="text-slate-300">•</span>
-                                <span className="text-slate-400 font-mono text-[9.5px]">{finalSkuLabel}</span>
+                                {finalSkuLabel && <span className="text-slate-300">•</span>}
+                                {finalSkuLabel && <span className="text-slate-400 font-mono text-[9.5px]">{finalSkuLabel}</span>}
                               </div>
 
                               {/* Subscription Box: List of Chosen Products with Brand, Product Name, Variant Name & Quantity */}
@@ -1090,7 +1097,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                     {selectedBoxItems.map((p: any, pIdx: number) => {
                                       const brand = p.brand || p.vendor || '';
                                       const name = p.name || p.productTitle || '';
-                                      const variant = p.variant || p.variantName || 'Standard';
+                                      const variant = p.variant || p.variantName || '';
+                                      // The vendor chip is dropped when the exact product
+                                      // title already begins with it, so "77 5.2 mg" is not
+                                      // rendered as "77  77 5.2 mg".
+                                      const showBrand = Boolean(brand) && !name.toLowerCase().startsWith(brand.toLowerCase());
                                       const qty = p.quantity || 1;
                                       const formatted = p.formattedLabel || formatSubscriptionItemDisplay(p);
 
@@ -1099,7 +1110,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                           <div className="min-w-0 pr-2">
                                             <div className="flex items-center gap-1.5 flex-wrap">
                                               <span className="text-slate-400 font-mono text-[10px] font-bold">{pIdx + 1}.</span>
-                                              {brand && (
+                                              {showBrand && (
                                                 <span className="bg-slate-900 text-white font-black text-[9.5px] px-1.5 py-0.5 rounded uppercase tracking-wide">
                                                   {brand}
                                                 </span>
@@ -1107,7 +1118,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                               <span className="font-extrabold text-slate-900 text-xs">
                                                 {name}
                                               </span>
-                                              {variant && variant !== 'Standard' && (
+                                              {variant && (
                                                 <span className="bg-indigo-50 border border-indigo-150 text-indigo-800 font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1">
                                                   <span className="text-[8.5px] text-indigo-500 uppercase">Variant:</span> {variant}
                                                 </span>

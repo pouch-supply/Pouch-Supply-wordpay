@@ -6,10 +6,34 @@ import {
 } from 'lucide-react';
 import PlansCanOverlay from './PlansCanOverlay';
 
+/**
+ * One product the customer put in their box, with the identity needed to show
+ * its exact name again later: the real product id, the concrete variant id and
+ * the untouched catalogue title.
+ */
+export interface SubscriptionSelection {
+  product: Product;
+  quantity: number;
+  brand: string;
+  vendor: string;
+  productId: string;
+  variantId?: string;
+  productTitle: string;
+  variantName: string;
+  variant: string;
+  price: number;
+  image?: string;
+}
+
 interface SubscriptionBuilderProps {
   allProducts: Product[];
   collections: Collection[];
-  onAddSubToCart: (packName: string, items: { product: Product; quantity: number }[], frequency: string, flatPrice: number) => void;
+  onAddSubToCart: (
+    packName: string,
+    items: SubscriptionSelection[],
+    frequency: string,
+    flatPrice: number
+  ) => void;
   plansSection?: PageSection;
 }
 
@@ -276,12 +300,16 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
           : prod.image
       };
 
-      return { 
-        product: finalProduct, 
+      // `finalProduct.id` is the concrete variant id when one was picked, so the
+      // real product id and the variant id are carried separately. Without both,
+      // the order can only be described by a display string later on.
+      return {
+        product: finalProduct,
         quantity,
         brand: brandName,
         vendor: brandName,
         productId: prod.id,
+        variantId: variant ? variant.id : undefined,
         productTitle: prod.title,
         variantName: variantName,
         variant: variantName,
@@ -300,7 +328,7 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
       ? `${planUpper} Plan (+${extraCans} Extra)` 
       : `${planUpper} Plan`;
 
-    onAddSubToCart(displayName, compiledItems as any, frequency, finalPrice);
+    onAddSubToCart(displayName, compiledItems, frequency, finalPrice);
     
     setSuccessAnimation(true);
     setTimeout(() => {

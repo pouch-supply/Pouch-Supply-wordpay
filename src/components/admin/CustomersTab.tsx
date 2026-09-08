@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Download, Upload, Plus, Eye, User, Mail, MapPin, Package, ShoppingBag, X, Check, ArrowRight, RefreshCw, AlertTriangle } from 'lucide-react';
-import { Order } from '../../types';
+import { Order, Product } from '../../types';
 import { extractSubscriptionDetails } from '../../utils/subscriptionParser';
 
 interface CustomerItem {
@@ -25,6 +25,8 @@ interface CustomersTabProps {
   newCustomerForm: { name: string; email: string; location: string; subscriptionStatus: 'Subscribed' | 'Not subscribed' | 'Unsubscribed' };
   setNewCustomerForm: React.Dispatch<React.SetStateAction<{ name: string; email: string; location: string; subscriptionStatus: 'Subscribed' | 'Not subscribed' | 'Unsubscribed' }>>;
   orders?: Order[];
+  /** Live catalogue, used to show each box item under its exact product name. */
+  products?: Product[];
 }
 
 export const CustomersTab: React.FC<CustomersTabProps> = ({
@@ -38,7 +40,8 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
   handleAddCustomerSubmit,
   newCustomerForm,
   setNewCustomerForm,
-  orders = []
+  orders = [],
+  products = []
 }) => {
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerItem | null>(null);
 
@@ -54,9 +57,10 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
     return false;
   };
 
-  // Helper to extract subscription metadata
+  // Helper to extract subscription metadata. The catalogue is passed in so each
+  // box item is reported under its exact product title and chosen variant.
   const getSubscriptionDetails = (order: Order) => {
-    return extractSubscriptionDetails(order);
+    return extractSubscriptionDetails(order, products as any);
   };
 
   // Check if customer's subscription was cancelled
@@ -346,9 +350,11 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
                                 <div key={pIdx} className="flex justify-between items-center text-[10.5px] text-slate-200 bg-slate-900/90 border border-slate-700 px-2.5 py-1.5 rounded-lg">
                                   <div className="min-w-0 pr-1.5">
                                     <p className="font-extrabold text-white truncate leading-tight">{p.name}</p>
-                                    <p className="text-[9px] text-indigo-300 font-bold mt-0.5">
-                                      Variant: <span className="text-amber-300 font-extrabold">{p.variant || 'Standard'}</span>
-                                    </p>
+                                    {(p.variant || p.variantName) && (
+                                      <p className="text-[9px] text-indigo-300 font-bold mt-0.5">
+                                        Variant: <span className="text-amber-300 font-extrabold">{p.variant || p.variantName}</span>
+                                      </p>
+                                    )}
                                   </div>
                                   <span className="shrink-0 font-black text-amber-300 text-[10px] ml-1 bg-slate-800 border border-slate-650 px-2 py-0.5 rounded-md">
                                     × {p.quantity}

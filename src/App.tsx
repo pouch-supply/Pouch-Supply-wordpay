@@ -12,6 +12,7 @@ import Header from './components/Header';
 import Footer from './components/Footer';
 import ProductsGrid from './components/ProductsGrid';
 import SubscriptionBuilder from './components/SubscriptionBuilder';
+import type { SubscriptionSelection } from './components/SubscriptionBuilder';
 import BrandList from './components/BrandList';
 import CustomerAccount from './components/CustomerAccount';
 import CartDrawer from './components/CartDrawer';
@@ -35,6 +36,7 @@ import {
 import OrderWithdrawalModal from './components/OrderWithdrawalModal';
 import { cleanMediaUrl } from './utils/mediaUtils';
 import { getPlanImage } from './utils/planImages';
+import { formatSubscriptionItemDisplay } from './utils/subscriptionParser';
 import { 
   initializeKlaviyo,
   initKlaviyo, 
@@ -1231,33 +1233,38 @@ export default function App() {
 
   // Add customized subscription pack package directly to cart
   const handleAddSubBoxToCart = (
-    packName: string, 
-    items: { product: Product; quantity: number; brand?: string; vendor?: string; variantName?: string; variant?: string }[], 
+    packName: string,
+    items: SubscriptionSelection[],
     frequency: string,
     flatPrice: number
   ) => {
+    // The exact catalogue title and variant the customer picked are stored as-is,
+    // together with the product and variant ids. The order detail view reads these
+    // back directly, so nothing downstream has to guess a product name from text.
     const structuredSubItems = items.map(i => {
       const p = i.product;
       const brand = (i.brand || i.vendor || p.vendor || (p as any).brand || '').trim();
-      let cleanTitle = (p.title || (i as any).productTitle || '').trim();
-      if (brand && cleanTitle.toLowerCase().startsWith(brand.toLowerCase())) {
-        cleanTitle = cleanTitle.substring(brand.length).replace(/^[\s—–-]+/, '').trim();
-      }
-      const vName = (i as any).variantName || (i as any).variant || p.concreteVariantName || (p as any).variant || 'Standard';
-      const formattedLabel = `${brand ? `${brand} — ` : ''}${cleanTitle} — ${vName} (Qty:${i.quantity})`;
+      const productTitle = (i.productTitle || p.title || '').trim();
+      const variantName = (i.variantName || i.variant || p.concreteVariantName || (p as any).variant || '').trim();
 
       return {
-        brand: brand,
+        brand,
         vendor: brand,
-        productId: p.id,
-        productTitle: cleanTitle,
-        name: cleanTitle,
-        variantName: vName,
-        variant: vName,
+        productId: i.productId || p.id,
+        variantId: i.variantId,
+        productTitle,
+        name: productTitle,
+        variantName,
+        variant: variantName,
         quantity: i.quantity,
-        price: p.price,
-        image: p.image || (i as any).image || PLACEHOLDER_IMAGE,
-        formattedLabel
+        price: i.price ?? p.price,
+        image: p.image || i.image || PLACEHOLDER_IMAGE,
+        formattedLabel: formatSubscriptionItemDisplay({
+          brand,
+          name: productTitle,
+          variant: variantName,
+          quantity: i.quantity
+        })
       };
     });
 

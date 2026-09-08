@@ -1,16 +1,25 @@
 import { getPlanSlug, getPlanImage } from './planImages';
 
 export interface SubscriptionProductItem {
+  productId?: string;
+  variantId?: string;
   brand?: string;
   vendor?: string;
-  name: string; // Product Name (e.g. "5.2 mg", "9 mg", "Freeze Max")
+  /** Exact product title as it exists in the catalogue (e.g. "77 5.2 mg"). Never invented. */
+  name: string;
   productTitle?: string;
-  variant: string; // Variant Name (e.g. "Watermelon Ice", "Wild Cherry", "Standard")
+  /** Exact variant name the customer picked (e.g. "Watermelon ice"). Empty when the product has none. */
+  variant: string;
   variantName?: string;
   quantity: number;
   image?: string;
   price?: number;
-  formattedLabel?: string; // e.g. "77 — 5.2 mg — Watermelon Ice (Qty:1)"
+  /** Display-only label built from the exact fields above. */
+  formattedLabel?: string;
+  /** True when the item was matched against the live product catalogue. */
+  isResolved?: boolean;
+  /** True when the item had to be recovered from a legacy order summary string. */
+  isReconstructed?: boolean;
 }
 
 export interface ExtractedSubscriptionDetails {
@@ -29,15 +38,196 @@ export interface ExtractedSubscriptionDetails {
   selectedProducts: SubscriptionProductItem[];
 }
 
-const KNOWN_BRANDS = [
-  '77', 'SNU', 'CUBA', 'KILLA', 'PABLO', 'VELO', 'WHITE FOX', 'ZYN', 
-  'XQS', 'NORDIC SPIRIT', 'CLEW', 'FUMI', 'FEDRS', 'GRANT', 'ICE', 
-  'LOOP', 'KURWA', 'DZRT', 'SIBERIA', 'SKRUF', 'DOPE', 'CHAPO', 
-  'HIT', 'VOLT', 'FIX', 'STRNG', 'ACE', 'THUNDER'
-];
+/** Minimal shape of a catalogue product needed to resolve an ordered item. */
+export interface CatalogProductLike {
+  id: string;
+  title: string;
+  vendor?: string;
+  image?: string;
+  price?: number;
+  variant?: string;
+  flavour?: string;
+  concreteVariantName?: string;
+  concreteVariants?: Array<{
+    id: string;
+    name: string;
+    price?: number;
+    images?: string[];
+  }>;
+}
+
+const norm = (s: any) =>
+  String(s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 
 /**
- * Normalizes and formats a single subscription product representation
+ * Names earlier builds emitted when they could not work out what the customer
+ * actually bought. They are never displayed — an item carrying one of these is
+ * treated as having no name at all.
+ */
+const PLACEHOLDER_NAMES = new Set([
+  'product',
+  'products',
+  'item',
+  'unknown',
+  'n a',
+  'na',
+  'sku 001',
+  'subscription pack'
+]);
+
+function isPlaceholderName(value?: string): boolean {
+  const n = norm(value);
+  return !n || PLACEHOLDER_NAMES.has(n);
+}
+
+/** "Standard" was a synthetic default, not a variant a customer could pick. */
+function cleanVariant(value?: string): string {
+  const v = String(value ?? '').trim();
+  if (!v || norm(v) === 'standard') return '';
+  return v;
+}
+
+/**
+ * Removes wreckage left on names that older builds derived by slicing a display
+ * string — an unbalanced bracket, or the " (Recurring Renewal)" the renewal
+ * worker appended after the product list had already been closed. Stripping it
+ * lets the name match the catalogue again, which is what restores the real title.
+ */
+function repairStoredName(value: string): string {
+  return value
+    .replace(/\)?\s*\(\s*(?:recurring renewal|renewal)\s*\)?\s*$/i, '')
+    .replace(/^[\s)]+/, '')
+    .replace(/[\s(]+$/, '')
+    .trim();
+}
+
+/**
+ * Catalogue lookup tables, built once per resolution pass.
+ *
+ * Three keys are indexed because orders written by different code paths stored
+ * different identifiers: the product id, the concrete variant id (older carts
+ * put the variant id in `productId`), and the normalised "title + variant" text
+ * that legacy summary strings were flattened into.
+ */
+interface CatalogIndex {
+  byProductId: Map<string, CatalogProductLike>;
+  byVariantId: Map<string, { product: CatalogProductLike; variant: { id: string; name: string; price?: number; images?: string[] } }>;
+  byText: Map<string, { product: CatalogProductLike; variantName: string }>;
+}
+
+function buildCatalogIndex(catalog: CatalogProductLike[]): CatalogIndex {
+  const byProductId = new Map<string, CatalogProductLike>();
+  const byVariantId = new Map<string, any>();
+  const byText = new Map<string, any>();
+
+  const addText = (key: string, value: any) => {
+    const k = norm(key);
+    // First writer wins so an ambiguous phrase never silently flips to a
+    // different product between renders.
+    if (k && !byText.has(k)) byText.set(k, value);
+  };
+
+  catalog.forEach(product => {
+    if (!product || !product.id) return;
+    byProductId.set(String(product.id), product);
+
+    const vendor = String(product.vendor || '').trim();
+    const titleNoVendor = vendor && norm(product.title).startsWith(norm(vendor))
+      ? product.title.slice(vendor.length).replace(/^[\s—–-]+/, '').trim()
+      : product.title;
+
+    const variants = Array.isArray(product.concreteVariants) ? product.concreteVariants : [];
+    if (variants.length > 0) {
+      variants.forEach(variant => {
+        if (!variant || !variant.id) return;
+        byVariantId.set(String(variant.id), { product, variant });
+        addText(`${product.title} ${variant.name}`, { product, variantName: variant.name });
+        addText(`${titleNoVendor} ${variant.name}`, { product, variantName: variant.name });
+      });
+    } else {
+      addText(product.title, { product, variantName: '' });
+      addText(titleNoVendor, { product, variantName: '' });
+    }
+  });
+
+  return { byProductId, byVariantId, byText };
+}
+
+/**
+ * Replaces a stored item's name and variant with the exact catalogue entry the
+ * customer selected. Matching is by identifier first; the text index is only
+ * consulted for legacy rows that carry no ids, and only on an exact normalised
+ * match, so a near-miss is left untouched rather than renamed to another product.
+ */
+function resolveFromCatalog(item: SubscriptionProductItem, index: CatalogIndex | null): SubscriptionProductItem {
+  if (!index) return item;
+
+  let product: CatalogProductLike | undefined;
+  let variantName = item.variant;
+  let variantId = item.variantId;
+  let image = item.image;
+  let price = item.price;
+
+  const variantHit =
+    (item.variantId ? index.byVariantId.get(String(item.variantId)) : undefined) ||
+    (item.productId ? index.byVariantId.get(String(item.productId)) : undefined);
+
+  if (variantHit) {
+    product = variantHit.product;
+    variantName = variantHit.variant.name;
+    variantId = variantHit.variant.id;
+    if (!image && variantHit.variant.images && variantHit.variant.images[0]) image = variantHit.variant.images[0];
+    if (!price && typeof variantHit.variant.price === 'number') price = variantHit.variant.price;
+  } else if (item.productId && index.byProductId.has(String(item.productId))) {
+    product = index.byProductId.get(String(item.productId));
+  } else {
+    const combined = [item.name, item.variant].filter(Boolean).join(' ');
+    const textHit = index.byText.get(norm(combined)) || (item.name ? index.byText.get(norm(item.name)) : undefined);
+    if (textHit) {
+      product = textHit.product;
+      if (!variantName) variantName = textHit.variantName;
+    }
+  }
+
+  if (!product) return item;
+
+  if (!image) image = product.image;
+  if (!price && typeof product.price === 'number') price = product.price;
+
+  const resolvedVariant = cleanVariant(variantName);
+
+  return {
+    ...item,
+    productId: product.id,
+    variantId,
+    brand: product.vendor || item.brand,
+    vendor: product.vendor || item.vendor,
+    name: product.title,
+    productTitle: product.title,
+    variant: resolvedVariant,
+    variantName: resolvedVariant,
+    image,
+    price,
+    isResolved: true,
+    formattedLabel: formatSubscriptionItemDisplay({
+      brand: product.vendor,
+      name: product.title,
+      variant: resolvedVariant,
+      quantity: item.quantity
+    })
+  };
+}
+
+/**
+ * Formats a single subscription product for display.
+ *
+ * The label is built strictly from the values passed in: no brand guessing, no
+ * "Product" stand-in and no "Standard" variant. A brand is only prefixed when
+ * the title does not already start with it, so "77 5.2 mg" never renders as
+ * "77 — 77 5.2 mg".
  */
 export function formatSubscriptionItemDisplay(item: {
   brand?: string;
@@ -49,288 +239,287 @@ export function formatSubscriptionItemDisplay(item: {
   quantity?: number;
 }): string {
   const brand = (item.brand || item.vendor || '').trim();
-  let name = (item.name || item.productTitle || 'Product').trim();
-  let variant = (item.variant || item.variantName || 'Standard').trim();
+  const rawName = (item.name || item.productTitle || '').trim();
+  const name = isPlaceholderName(rawName) ? '' : rawName;
+  const variant = cleanVariant(item.variant || item.variantName);
   const qty = Number(item.quantity || 1);
 
-  // If name contains brand at start, remove it so brand is not duplicated
-  if (brand && name.toLowerCase().startsWith(brand.toLowerCase())) {
-    name = name.substring(brand.length).replace(/^[\s—–-]+/, '').trim();
-  }
-
-  // If variant is embedded in name in parentheses e.g. "5.2 mg (Watermelon Ice)"
-  const titleVarMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
-  if (titleVarMatch && titleVarMatch[1] && titleVarMatch[2] && (!variant || variant === 'Standard')) {
-    name = titleVarMatch[1].trim();
-    variant = titleVarMatch[2].trim();
-  }
-
   const parts: string[] = [];
-  if (brand) parts.push(brand);
+  if (brand && (!name || !norm(name).startsWith(norm(brand)))) parts.push(brand);
   if (name) parts.push(name);
-  if (variant && variant !== 'Standard') {
-    parts.push(variant);
-  } else if (brand && (!variant || variant === 'Standard')) {
-    parts.push('Standard');
+  if (variant) parts.push(variant);
+
+  if (parts.length === 0) return `(Qty:${qty})`;
+  return `${parts.join(' — ')} (Qty:${qty})`;
+}
+
+/** Reads the structured selection an order stored, in order of preference. */
+function findStoredItems(order: any, subItem?: any): any[] | null {
+  const candidates = [
+    subItem?.selectedProducts,
+    subItem?.subscriptionItems,
+    subItem?.selectedFlavors,
+    subItem?.subItems,
+    subItem?.items,
+    order?.subscriptionDetails?.selectedProducts,
+    order?.subscriptionDetails?.items,
+    order?.subscriptionDetails?.subItems,
+    order?.selectedProducts,
+    order?.subscriptionItems,
+    order?.customer?.subItems,
+    order?.customer?.data?.subItems
+  ];
+
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length > 0) return c;
   }
 
-  const mainLabel = parts.join(' — ');
-  return `${mainLabel} (Qty:${qty})`;
+  if (Array.isArray(order?.items)) {
+    for (const it of order.items) {
+      for (const key of ['selectedProducts', 'subscriptionItems', 'selectedFlavors', 'items']) {
+        if (Array.isArray(it?.[key]) && it[key].length > 0) return it[key];
+      }
+    }
+  }
+
+  return null;
+}
+
+/** Normalises one stored row without inventing anything that is not already in it. */
+function normalizeStoredItem(raw: any): SubscriptionProductItem | null {
+  const p = (raw && raw.product) || raw;
+
+  const name = [raw?.productTitle, raw?.name, raw?.title, p?.title, p?.productTitle, p?.name]
+    .map((v: any) => repairStoredName(String(v ?? '')))
+    .find((v: string) => v && !isPlaceholderName(v)) || '';
+
+  const variant = cleanVariant(
+    raw?.variantName || raw?.variant || raw?.concreteVariantName ||
+    p?.concreteVariantName || p?.variantName || p?.variant ||
+    raw?.strength || raw?.flavour || p?.strength || p?.flavour
+  );
+
+  const productId = String(raw?.productId || p?.productId || p?.id || '').trim();
+  const variantId = String(raw?.variantId || raw?.concreteVariantId || p?.variantId || '').trim();
+
+  // A row with neither a name nor an identifier carries no product information
+  // at all. Dropping it is honest; showing "Product" is not.
+  if (!name && !productId && !variantId) return null;
+
+  const brand = String(raw?.brand || raw?.vendor || p?.vendor || p?.brand || '').trim();
+  const quantity = Number(raw?.quantity || p?.quantity || 1) || 1;
+
+  return {
+    productId: productId || undefined,
+    variantId: variantId || undefined,
+    brand: brand || undefined,
+    vendor: brand || undefined,
+    name,
+    productTitle: name,
+    variant,
+    variantName: variant,
+    quantity,
+    image: raw?.image || p?.image || '',
+    price: Number(raw?.price || p?.price || 0) || undefined,
+    formattedLabel: formatSubscriptionItemDisplay({ brand, name, variant, quantity })
+  };
 }
 
 /**
- * Parses products and chosen variant names from subscription objects or summary strings
+ * Splits the "( … , … )" product summary that older subscription orders stored
+ * in place of a structured item list.
+ *
+ * Everything recovered here is flagged `isReconstructed` and is re-matched
+ * against the catalogue by the caller, because the summary is a display string:
+ * it has already lost the brand and the product/variant boundary, and the
+ * renewal worker appended " (Recurring Renewal)" to it — which is what produced
+ * names such as "20 mg Ghost Cola Ice ) (Recurring Renewal".
  */
-export function parseSubscriptionProducts(order: any, subItem?: any): SubscriptionProductItem[] {
+function reconstructFromSummary(rawTitle: string): SubscriptionProductItem[] {
   const results: SubscriptionProductItem[] = [];
-
-  // 1. First priority: Check if structured items already exist in subItem or order
-  let rawItems = 
-    subItem?.selectedProducts ||
-    subItem?.selectedFlavors ||
-    subItem?.subscriptionItems || 
-    subItem?.subItems ||
-    subItem?.items || 
-    order?.subscriptionDetails?.selectedProducts || 
-    order?.subscriptionDetails?.items || 
-    order?.subscriptionDetails?.subItems || 
-    order?.selectedProducts ||
-    order?.subscriptionItems ||
-    order?.customer?.subItems ||
-    order?.customer?.data?.subItems;
-
-  if (!rawItems && Array.isArray(order?.items)) {
-    for (const it of order.items) {
-      if (Array.isArray(it?.selectedProducts) && it.selectedProducts.length > 0) {
-        rawItems = it.selectedProducts;
-        break;
-      }
-      if (Array.isArray(it?.selectedFlavors) && it.selectedFlavors.length > 0) {
-        rawItems = it.selectedFlavors;
-        break;
-      }
-      if (Array.isArray(it?.subscriptionItems) && it.subscriptionItems.length > 0) {
-        rawItems = it.subscriptionItems;
-        break;
-      }
-      if (Array.isArray(it?.items) && it.items.length > 0) {
-        rawItems = it.items;
-        break;
-      }
-    }
-  }
-
-  if (Array.isArray(rawItems) && rawItems.length > 0) {
-    rawItems.forEach((it: any) => {
-      const p = it.product || it;
-      let rawName = p.title || p.productTitle || p.name || it.productTitle || it.title || 'Product';
-      let rawBrand = (it.brand || it.vendor || p.vendor || p.brand || '').trim();
-      let variant = (it as any).variantName || (it as any).variant || (p as any).concreteVariantName || (p as any).variant || (it as any).strength || (it as any).flavour || (p as any).strength || (p as any).flavour || '';
-
-      // Check if rawName starts with known brand if brand is missing
-      if (!rawBrand) {
-        for (const kb of KNOWN_BRANDS) {
-          if (rawName.toLowerCase().startsWith(kb.toLowerCase())) {
-            rawBrand = kb;
-            break;
-          }
-        }
-      }
-
-      // If rawName starts with rawBrand, strip brand from name
-      let name = rawName;
-      if (rawBrand && name.toLowerCase().startsWith(rawBrand.toLowerCase())) {
-        name = name.substring(rawBrand.length).replace(/^[\s—–-]+/, '').trim();
-      }
-
-      // If variant is empty, check if it's formatted like "5.2 mg (Watermelon Ice)" or "5.2 mg — Watermelon Ice"
-      if (!variant || variant === 'Standard') {
-        const titleMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
-        if (titleMatch && titleMatch[1] && titleMatch[2] && !titleMatch[2].toLowerCase().includes('qty:')) {
-          name = titleMatch[1].trim();
-          variant = titleMatch[2].trim();
-        } else if (name.includes(' — ') || name.includes(' - ')) {
-          const split = name.split(/\s*(?:—|–|-)\s*/);
-          if (split.length > 1) {
-            name = split[0].trim();
-            variant = split.slice(1).join(' — ').trim();
-          }
-        }
-      }
-
-      if (!variant) variant = 'Standard';
-
-      const quantity = Number(it.quantity || p.quantity || 1);
-      const image = it.image || p.image || '';
-      const price = Number(it.price || p.price || 0);
-
-      const formattedLabel = formatSubscriptionItemDisplay({
-        brand: rawBrand,
-        name,
-        variant,
-        quantity
-      });
-
-      results.push({ 
-        brand: rawBrand,
-        vendor: rawBrand,
-        name, 
-        productTitle: name,
-        variant, 
-        variantName: variant,
-        quantity, 
-        image, 
-        price,
-        formattedLabel
-      });
-    });
-
-    if (results.length > 0) return results;
-  }
-
-  // 2. Second priority: Parse from subscription productTitle description summary
-  // Example formats:
-  // "PRO Plan [Bi-Weekly - 10% OFF] - (77 — 5.2 mg — Watermelon Ice (Qty:1), SNU — 9 mg — Wild Cherry (Qty:1))"
-  // "PRO Plan [Bi-Weekly - 10% OFF] - (9 mg (Wild Cherry) (Qty:1), 10.9 mg (Freezing Peppermint) (Qty:1))"
-  const rawTitle: string = (subItem?.productTitle || order?.items?.[0]?.productTitle || '').trim();
   if (!rawTitle) return results;
 
+  // Drop the suffix the renewal worker appends after the product list closes.
+  const title = rawTitle.replace(/\)\s*\((?:recurring renewal|renewal)\)\s*$/i, ')').trim();
+
   let itemsSummary = '';
-  if (rawTitle.includes(' - (')) {
-    const start = rawTitle.indexOf(' - (') + 4;
-    const end = rawTitle.lastIndexOf(')');
-    itemsSummary = end > start ? rawTitle.substring(start, end) : rawTitle.substring(start);
-  } else if (rawTitle.includes(' - ')) {
-    const dashParts = rawTitle.split(' - ');
-    itemsSummary = dashParts.slice(1).join(' - ').trim();
-    if (itemsSummary.startsWith('(') && itemsSummary.endsWith(')')) {
-      itemsSummary = itemsSummary.slice(1, -1);
-    }
-  } else if (rawTitle.startsWith('(') && rawTitle.endsWith(')')) {
-    itemsSummary = rawTitle.slice(1, -1);
+  const open = title.indexOf(' - (');
+  if (open > -1) {
+    const start = open + 4;
+    const end = title.lastIndexOf(')');
+    itemsSummary = end > start ? title.substring(start, end) : title.substring(start);
+  } else if (title.startsWith('(') && title.endsWith(')')) {
+    itemsSummary = title.slice(1, -1);
   }
+  if (!itemsSummary.trim()) return results;
 
-  if (itemsSummary) {
-    // Split by comma outside parentheses so nested tags do not split
-    const parts: string[] = [];
-    let cur = '';
-    let depth = 0;
-    for (let i = 0; i < itemsSummary.length; i++) {
-      const c = itemsSummary[i];
-      if (c === '(') depth++;
-      else if (c === ')') depth--;
-      if (c === ',' && depth === 0) {
-        if (cur.trim()) parts.push(cur.trim());
-        cur = '';
-      } else {
-        cur += c;
+  // Split on commas outside parentheses so "Cola & Cherry (Qty:2)" stays whole.
+  const parts: string[] = [];
+  let cur = '';
+  let depth = 0;
+  for (const c of itemsSummary) {
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    if (c === ',' && depth === 0) {
+      if (cur.trim()) parts.push(cur.trim());
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  if (cur.trim()) parts.push(cur.trim());
+
+  parts.forEach(part => {
+    let cleanPart = part.trim();
+    if (!cleanPart) return;
+
+    let qty = 1;
+    const qtyMatch = cleanPart.match(/\(\s*Qty\s*:\s*(\d+)\s*\)/i) || cleanPart.match(/\bx\s*(\d+)\b/i);
+    if (qtyMatch) {
+      qty = parseInt(qtyMatch[1], 10) || 1;
+      cleanPart = cleanPart
+        .replace(/\(\s*Qty\s*:\s*(\d+)\s*\)/i, '')
+        .replace(/\bx\s*(\d+)\b/i, '')
+        .trim();
+    }
+
+    // Strip unbalanced brackets left behind by the old renewal suffix.
+    cleanPart = cleanPart.replace(/^[\s)]+/, '').replace(/[\s(]+$/, '').trim();
+    if (!cleanPart || isPlaceholderName(cleanPart)) return;
+
+    // The summary joined its pieces with an em dash. A plain hyphen belongs to a
+    // real product name far more often than it separates fields, so it is not split on.
+    let name = cleanPart;
+    let variant = '';
+    let brand = '';
+
+    if (/\s[—–]\s/.test(cleanPart)) {
+      const segments = cleanPart.split(/\s*[—–]\s*/).map(s => s.trim()).filter(Boolean);
+      if (segments.length >= 3) {
+        brand = segments[0];
+        name = segments[1];
+        variant = segments.slice(2).join(' — ');
+      } else if (segments.length === 2) {
+        name = segments[0];
+        variant = segments[1];
+      }
+    } else {
+      const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
+      if (varMatch && varMatch[1] && varMatch[2]) {
+        name = varMatch[1].trim();
+        variant = varMatch[2].trim();
       }
     }
-    if (cur.trim()) parts.push(cur.trim());
 
-    parts.forEach(part => {
-      const trimmed = part.trim();
-      if (!trimmed) return;
+    variant = cleanVariant(variant);
+    if (!name) return;
 
-      // Extract quantity e.g. (Qty:5) or x 5 or * 5
-      let qty = 1;
-      let cleanPart = trimmed;
-
-      const qtyMatch = cleanPart.match(/\(Qty\s*:\s*(\d+)\)/i) || cleanPart.match(/\bx\s*(\d+)\b/i) || cleanPart.match(/\*\s*(\d+)\b/);
-      if (qtyMatch) {
-        qty = parseInt(qtyMatch[1], 10) || 1;
-        cleanPart = cleanPart.replace(/\(Qty\s*:\s*(\d+)\)/i, '').replace(/\bx\s*(\d+)\b/i, '').replace(/\*\s*(\d+)\b/, '').trim();
-      }
-
-      let brand = '';
-      let name = cleanPart;
-      let variant = 'Standard';
-
-      // Check if separated by " — " or " - " (e.g. "77 — 5.2 mg — Watermelon Ice")
-      if (cleanPart.includes(' — ') || cleanPart.includes(' – ') || (cleanPart.includes(' - ') && !cleanPart.includes(')-('))) {
-        const segments = cleanPart.split(/\s*(?:—|–|-)\s*/);
-        if (segments.length >= 3) {
-          brand = segments[0].trim();
-          name = segments[1].trim();
-          variant = segments.slice(2).join(' — ').trim();
-        } else if (segments.length === 2) {
-          // Check if first segment is known brand
-          const firstSeg = segments[0].trim();
-          const isBrand = KNOWN_BRANDS.some(kb => kb.toLowerCase() === firstSeg.toLowerCase());
-          if (isBrand) {
-            brand = firstSeg;
-            name = segments[1].trim();
-            // Check if name has variant in parentheses e.g. "5.2 mg (Watermelon Ice)"
-            const nestedMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
-            if (nestedMatch && nestedMatch[1] && nestedMatch[2]) {
-              name = nestedMatch[1].trim();
-              variant = nestedMatch[2].trim();
-            }
-          } else {
-            name = segments[0].trim();
-            variant = segments[1].trim();
-          }
-        }
-      } else {
-        // Formats like "9 mg (Wild Cherry)" or "77 5.2 mg (Watermelon Ice)"
-        const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
-        if (varMatch && varMatch[1] && varMatch[2]) {
-          name = varMatch[1].trim();
-          variant = varMatch[2].trim();
-        }
-
-        // Check if name starts with known brand
-        for (const kb of KNOWN_BRANDS) {
-          if (name.toLowerCase().startsWith(kb.toLowerCase())) {
-            brand = kb;
-            name = name.substring(kb.length).replace(/^[\s—–-]+/, '').trim();
-            break;
-          }
-        }
-      }
-
-      const formattedLabel = formatSubscriptionItemDisplay({
-        brand,
-        name,
-        variant,
-        quantity: qty
-      });
-
-      results.push({
-        brand: brand || undefined,
-        vendor: brand || undefined,
-        name: name || 'Product',
-        productTitle: name || 'Product',
-        variant: variant || 'Standard',
-        variantName: variant || 'Standard',
-        quantity: qty,
-        formattedLabel
-      });
+    results.push({
+      brand: brand || undefined,
+      vendor: brand || undefined,
+      name,
+      productTitle: name,
+      variant,
+      variantName: variant,
+      quantity: qty,
+      isReconstructed: true,
+      formattedLabel: formatSubscriptionItemDisplay({ brand, name, variant, quantity: qty })
     });
-
-    if (results.length > 0) return results;
-  }
+  });
 
   return results;
 }
 
 /**
- * Extracts complete, normalized subscription metadata for any order
+ * Returns the products the customer actually put in their subscription box.
+ *
+ * Structured selections stored on the order win outright. The summary string is
+ * only parsed for orders that predate structured storage, and whatever it yields
+ * is matched back against `catalog` so the customer and the admin see the real
+ * catalogue title and variant rather than a fragment of a display string.
  */
-export function extractSubscriptionDetails(order: any): ExtractedSubscriptionDetails {
+export function parseSubscriptionProducts(
+  order: any,
+  subItem?: any,
+  catalog?: CatalogProductLike[]
+): SubscriptionProductItem[] {
+  const index = Array.isArray(catalog) && catalog.length > 0 ? buildCatalogIndex(catalog) : null;
+
+  const stored = findStoredItems(order, subItem);
+  if (stored) {
+    const normalized = stored
+      .map(normalizeStoredItem)
+      .filter((i): i is SubscriptionProductItem => i !== null)
+      .map(i => resolveFromCatalog(i, index))
+      .filter(i => Boolean(i.name));
+    if (normalized.length > 0) return normalized;
+  }
+
+  // `subscriptionSummary` holds the untouched plan string for subscriptions that
+  // predate structured storage; it is preferred because, unlike the title, it has
+  // never had a renewal suffix concatenated onto it.
+  const rawTitle: string = String(
+    subItem?.subscriptionSummary ||
+    order?.subscriptionSummary ||
+    subItem?.productTitle ||
+    subItem?.title ||
+    order?.items?.[0]?.productTitle ||
+    order?.items?.[0]?.title ||
+    ''
+  ).trim();
+
+  const fromSummary = reconstructFromSummary(rawTitle)
+    .map(i => resolveFromCatalog(i, index))
+    .filter(i => Boolean(i.name));
+  if (fromSummary.length > 0) return fromSummary;
+
+  // Some subscription orders have no wrapper line at all: the renewal worker
+  // wrote the chosen products straight into `items`. Those lines are the box.
+  const lines = Array.isArray(order?.items) ? order.items.filter((it: any) => !isPackWrapperLine(it)) : [];
+  return lines
+    .map(normalizeStoredItem)
+    .filter((i: SubscriptionProductItem | null): i is SubscriptionProductItem => i !== null)
+    .map((i: SubscriptionProductItem) => resolveFromCatalog(i, index))
+    .filter((i: SubscriptionProductItem) => Boolean(i.name));
+}
+
+/** True for the wrapper line that stands in for the box, rather than a product in it. */
+function isPackWrapperLine(item: any): boolean {
+  if (!item) return false;
+  const title = String(item.productTitle || item.title || '');
+  return Boolean(
+    item.vendor === 'Subscription Pack' ||
+    (typeof item.productId === 'string' && item.productId.includes('sub-pack')) ||
+    / - \(/.test(title) ||
+    /\b(plan|subscription|pack)\b/i.test(title)
+  );
+}
+
+/** Finds the cart line that represents the subscription box itself. */
+export function findSubscriptionItem(order: any): any {
+  return order?.items?.find((i: any) =>
+    i.isSubscription ||
+    i.vendor === 'Subscription Pack' ||
+    (typeof i.productId === 'string' && i.productId.includes('sub-pack')) ||
+    (i.productTitle && /subscription|plan|pack/i.test(i.productTitle))
+  );
+}
+
+/**
+ * Extracts complete, normalized subscription metadata for any order.
+ *
+ * Pass `catalog` (the live product list) wherever it is available so the box
+ * contents are reported with their exact catalogue names.
+ */
+export function extractSubscriptionDetails(order: any, catalog?: CatalogProductLike[]): ExtractedSubscriptionDetails {
   const details: any = order.subscriptionDetails ? { ...order.subscriptionDetails } : {};
 
-  const subItem = order.items?.find((i: any) => 
-    i.isSubscription || 
-    i.vendor === 'Subscription Pack' || 
-    (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('plan') || i.productTitle.toLowerCase().includes('pack'))) ||
-    (i.productId && (i.productId.startsWith('sub-pack') || i.productId.includes('sub-pack')))
-  ) as any;
+  const subItem = findSubscriptionItem(order);
 
   // 1. Resolve plan name and slug accurately
   const rawPlanString = details.planName || subItem?.subscriptionPlan || subItem?.productTitle || order.subPlan || order.subscriptionPlan || '';
   const planSlug = getPlanSlug(rawPlanString);
-  
+
   let planName = 'PRO Plan';
   if (planSlug === 'ultimate') planName = 'ULTIMATE Plan';
   else if (planSlug === 'pro') planName = 'PRO Plan';
@@ -377,12 +566,12 @@ export function extractSubscriptionDetails(order: any): ExtractedSubscriptionDet
     nextDate.setDate(baseDate.getDate() + 30);
   }
 
-  // 3. Extract selected products with brand, name, variant, and quantities
-  const selectedProducts = parseSubscriptionProducts(order, subItem);
+  // 3. Extract selected products with their exact catalogue names and variants
+  const selectedProducts = parseSubscriptionProducts(order, subItem, catalog);
 
-  const isCancelled = 
-    Boolean(order.subscriptionCancelled) || 
-    details.status === 'Cancelled' || 
+  const isCancelled =
+    Boolean(order.subscriptionCancelled) ||
+    details.status === 'Cancelled' ||
     Boolean(details.isCancelled) ||
     (Array.isArray(order.tags) && order.tags.some((t: any) => typeof t === 'string' && t.toLowerCase().includes('subscription cancelled')));
 

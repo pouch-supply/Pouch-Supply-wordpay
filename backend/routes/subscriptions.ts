@@ -14,6 +14,7 @@ import {
   nextBillingDateAfterCharge,
   normalizeBillingInterval
 } from "../services/subscriptionCron";
+import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from "../services/subscriptionBox";
 
 const router = Router();
 
@@ -673,18 +674,7 @@ router.post(
 
       // Create recurring order record in database
       const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
-      const orderItems = (Array.isArray(subscription.items) && subscription.items.length > 0)
-        ? subscription.items.map((it: any) => ({ ...it, isSubscription: true }))
-        : [
-            {
-              productId: subscription.planId || 'sub-pack',
-              productTitle: `${subscription.planName || 'Pouch Supply Subscription'} (Recurring Renewal)`,
-              price: itemSubtotal,
-              quantity: 1,
-              isSubscription: true,
-              total: itemSubtotal
-            }
-          ];
+      const orderItems = buildRenewalOrderItems(subscription, itemSubtotal, planTitleFromSubscription(subscription));
 
       const newOrderData = {
         id: newOrderId,
@@ -693,6 +683,10 @@ router.post(
         customerEmail: subscription.customerEmail,
         destination: subscription.shippingAddress || subscription.destination || 'United Kingdom',
         items: orderItems,
+        // The chosen products travel with the renewal so the order detail view
+        // shows the real box contents rather than re-parsing the plan title.
+        subscriptionItems: extractBoxItems(subscription),
+        subscriptionPlan: planTitleFromSubscription(subscription),
         total: chargeAmount,
         subtotal: itemSubtotal,
         shippingCost: shippingAmount,

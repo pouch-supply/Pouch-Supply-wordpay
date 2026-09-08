@@ -3632,6 +3632,7 @@ export default function AdminDashboard({
         {activeTab === 'orders' && (
           <OrdersTab
             orders={orders}
+            products={products}
             orderStatusFilter={orderStatusFilter}
             setOrderStatusFilter={setOrderStatusFilter}
             handleExportOrders={handleExportOrders}
@@ -3772,6 +3773,7 @@ export default function AdminDashboard({
         {activeTab === 'customers' && (
           <CustomersTab
             customerQuery={customerQuery}
+            products={products}
             setCustomerQuery={setCustomerQuery}
             handleExportCustomers={handleExportCustomers}
             handleImportCustomers={handleImportCustomers}

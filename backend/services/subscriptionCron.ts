@@ -5,6 +5,7 @@ import {
   isUsableRecurringHref,
   isPlaceholderCredential
 } from './worldpaySubscription';
+import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from './subscriptionBox';
 
 export interface RenewalResult {
   processed: number;
@@ -253,7 +254,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       const schemeReference = sub.worldpaySchemeReference;
       const amount = Number(sub.amount || 25.0);
       const currency = sub.currency || 'GBP';
-      const planName = sub.planName || 'Pouch Supply Subscription';
+      const planName = planTitleFromSubscription(sub);
       const interval = normalizeBillingInterval(sub.billingInterval);
 
       console.log(
@@ -329,21 +330,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
 
         // 3. Create the recurring order
         const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
-        const orderItems = (Array.isArray(sub.items) && sub.items.length > 0)
-          ? sub.items.map((it: any) => ({
-              ...it,
-              isSubscription: true
-            }))
-          : [
-              {
-                productId: sub.planId || 'sub-pack',
-                productTitle: `${planName} (Recurring Renewal)`,
-                price: itemSubtotal,
-                quantity: 1,
-                isSubscription: true,
-                total: itemSubtotal
-              }
-            ];
+        const orderItems = buildRenewalOrderItems(sub, itemSubtotal, planTitleFromSubscription(sub));
 
         const newOrderData = {
           id: newOrderId,
@@ -352,6 +339,10 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           customerEmail,
           destination: sub.shippingAddress || sub.destination || 'United Kingdom',
           items: orderItems,
+          // The chosen products travel with the renewal so the order detail view
+          // shows the real box contents rather than re-parsing the plan title.
+          subscriptionItems: extractBoxItems(sub),
+          subscriptionPlan: planName,
           total: amount,
           subtotal: itemSubtotal,
           shippingCost: shippingAmount,

@@ -6085,724 +6085,92 @@
   ],
   "orders": [
     {
-      "id": "PS65600",
+      "id": "PS32113",
       "data": {
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 48®",
-          "shippedAt": "2026-08-17T09:35:10.399Z",
-          "isSimulated": true,
-          "serviceCode": "Royal Mail Tracked 48®",
-          "trackingNumber": "RM922736853GB",
-          "royalMailOrderId": "RM-ORD-726514"
+        "subtotal": 25,
+        "deliveryCost": 2.99,
+        "shippingCost": 2.99,
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1786951064554_rbsj9e",
+        "schemeReference": "SCHEME-WP-TEST-TXN-381705",
+        "recurringRenewal": true,
+        "simulatedPayment": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-08T06:01:19.073Z"
         }
       },
-      "date": "Aug 17, 2026 at 08:27 AM",
+      "date": "Sep 8, 2026 at 11:31 am",
       "tags": [
         "Storefront",
-        "Worldpay Test Order",
-        "Subscription Order"
+        "Subscription Order",
+        "Worldpay Recurring"
       ],
       "items": [
         {
-          "sku": "sub-pack-1786955160401",
-          "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=500&auto=format&fit=crop&q=80",
-          "items": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "price": 27.99,
-          "vendor": "Subscription Pack",
-          "variant": "Standard",
-          "quantity": 1,
-          "productId": "sub-pack-1786955160401",
-          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (30 mg Strawberry (Qty:6))",
-          "selectedFlavors": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "selectedProducts": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "subscriptionPlan": "lite",
-          "subscriptionItems": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "subscriptionFrequency": "Next Day (Test)"
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+          "price": 4.99,
+          "title": "77 5.2 mg",
+          "quantity": 4,
+          "productId": "77-52-mg",
+          "isSubscription": true
+        },
+        {
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
+          "price": 4.99,
+          "title": "77 20 mg",
+          "quantity": 2,
+          "productId": "77-20-mg",
+          "isSubscription": true
         }
       ],
       "total": 27.99,
-      "carrier": "Royal Mail Tracked 48®",
-      "cardBrand": "Worldpay Card",
-      "destination": "Daari, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
-      "gatewayTxId": "WP-CB-226573",
+      "carrier": "Royal Mail",
+      "subtotal": 25,
+      "cardBrand": "Worldpay Stored Card",
+      "destination": "United Kingdom",
+      "gatewayTxId": "WP-SIM-277234",
       "customerName": "neha",
-      "worldpayTxId": "WP-CB-226573",
+      "deliveryCost": 2.99,
+      "shippingCost": 2.99,
+      "worldpayTxId": "WP-SIM-277234",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "paymentStatus": "Paid",
       "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM922736853GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "CALLBACK-OK",
-      "worldpayAuthCode": "CALLBACK-OK",
-      "fulfillmentStatus": "Fulfilled",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS77942",
-      "data": {
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-08-17T09:41:33.067Z",
-          "isSimulated": true,
-          "serviceCode": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM420365592GB",
-          "royalMailOrderId": "RM-ORD-538167"
-        }
-      },
-      "date": "Aug 17, 2026 at 08:30 AM",
-      "tags": [
-        "Storefront",
-        "Worldpay Test Order",
-        "Subscription Order"
-      ],
-      "items": [
-        {
-          "sku": "sub-pack-1786955324998",
-          "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=500&auto=format&fit=crop&q=80",
-          "price": 32.39,
-          "vendor": "Subscription Pack",
-          "variant": "Standard",
-          "quantity": 1,
-          "productId": "sub-pack-1786955324998",
-          "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4))"
-        }
-      ],
-      "total": 35.38,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Card",
-      "destination": "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
-      "gatewayTxId": "WP-CB-415160",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-CB-415160",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM420365592GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "CALLBACK-OK",
-      "worldpayAuthCode": "CALLBACK-OK",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS97761",
-      "data": {
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-08-17T09:41:49.667Z",
-          "isSimulated": true,
-          "serviceCode": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM521840206GB",
-          "royalMailOrderId": "RM-ORD-187720"
-        }
-      },
-      "date": "Aug 17, 2026 at 08:36 AM",
-      "tags": [
-        "Storefront",
-        "Worldpay Test Order",
-        "Subscription Order"
-      ],
-      "items": [
-        {
-          "sku": "sub-pack-1786955725878",
-          "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=500&auto=format&fit=crop&q=80",
-          "price": 45.71,
-          "vendor": "Subscription Pack",
-          "variant": "Standard",
-          "quantity": 1,
-          "productId": "sub-pack-1786955725878",
-          "productTitle": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2))"
-        }
-      ],
-      "total": 45.71,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Card",
-      "destination": "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
-      "gatewayTxId": "WP-CB-794956",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-CB-794956",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM521840206GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "CALLBACK-OK",
-      "worldpayAuthCode": "CALLBACK-OK",
-      "fulfillmentStatus": "Fulfilled",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS25592",
-      "data": {
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-08-17T09:41:59.199Z",
-          "isSimulated": true,
-          "serviceCode": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM311866779GB",
-          "royalMailOrderId": "RM-ORD-507943"
-        }
-      },
-      "date": "Aug 17, 2026 at 08:39 AM",
-      "tags": [
-        "Storefront",
-        "Worldpay Test Order",
-        "Subscription Order"
-      ],
-      "items": [
-        {
-          "sku": "sub-pack-1786955823894",
-          "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=500&auto=format&fit=crop&q=80",
-          "price": 36.89,
-          "total": 36.89,
-          "vendor": "Subscription Pack",
-          "variant": "Standard",
-          "quantity": 1,
-          "productId": "sub-pack-1786955823894",
-          "productTitle": "PRO Plan [Next Day (Test) - 10% OFF] - (20 mg Ghost Cola Ice (Qty:3), 5.2 mg Watermelon ice (Qty:2), 5.6 mg Zesty Pear Regular (Qty:1), 8 mg Mint Dry (Qty:2), 17 mg Frosty Mint Max (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:1))",
-          "isSubscription": true
-        }
-      ],
-      "total": 39.88,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Test Visa",
-      "destination": "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
-      "gatewayTxId": "WP-TEST-TXN-312556",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-TEST-TXN-312556",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM311866779GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-TEST-6947",
-      "worldpayAuthCode": "AUTH-TEST-6947",
-      "fulfillmentStatus": "Fulfilled",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS17110",
-      "data": {
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-08-19T06:51:30.913Z",
-          "isSimulated": true,
-          "serviceCode": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM837938451GB",
-          "royalMailOrderId": "RM-ORD-854313"
-        },
-        "paymentMethod": "Worldpay Recurring Subscription"
-      },
-      "date": "Aug 19, 2026 at 05:48 AM",
-      "tags": [
-        "Storefront",
-        "Online Order",
-        "Subscription Order"
-      ],
-      "items": [
-        {
-          "price": 32.39,
-          "total": 32.39,
-          "quantity": 1,
-          "productId": "sub-pack-1786955324998",
-          "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 32.39,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Card",
-      "destination": "Customer Address on File",
-      "gatewayTxId": "WP-SUB-RECURRING-517174",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-RECURRING-517174",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid (Recurring MIT)",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM837938451GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK",
-      "worldpayAuthCode": "AUTH-OK",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS53109",
-      "data": {
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-08-19T10:11:38.452Z",
-          "isSimulated": true,
-          "serviceCode": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM630915008GB",
-          "royalMailOrderId": "RM-ORD-251536"
-        }
-      },
-      "date": "Aug 19, 2026 at 10:10 AM",
-      "tags": [
-        "Storefront",
-        "Worldpay Test Order",
-        "Subscription Order"
-      ],
-      "items": [
-        {
-          "sku": "sub-pack-1787133835286",
-          "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=500&auto=format&fit=crop&q=80",
-          "price": 25.19,
-          "vendor": "Subscription Pack",
-          "variant": "Standard",
-          "quantity": 1,
-          "productId": "sub-pack-1787133835286",
-          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3))"
-        }
-      ],
-      "total": 28.18,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Card",
-      "destination": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
-      "gatewayTxId": "WP-CB-213847",
-      "customerName": "Scott Kivlin",
-      "worldpayTxId": "WP-CB-213847",
-      "customerEmail": "scott@pouch-supply.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM630915008GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "CALLBACK-OK",
-      "worldpayAuthCode": "CALLBACK-OK",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS98971",
-      "data": {},
-      "date": "Aug 20, 2026 at 06:24 AM",
-      "tags": [
-        "Storefront",
-        "Worldpay Test Order"
-      ],
-      "items": [
-        {
-          "sku": "77-52-mg",
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785235958/storefront_media/file_s2q4qz.jpg",
-          "price": 4.99,
-          "vendor": "77",
-          "variant": "Standard",
-          "quantity": 1,
-          "productId": "77-52-mg",
-          "productTitle": "77 5.2 mg"
-        },
-        {
-          "sku": "PCH-563404-WATERMELON-ICE",
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785235958/storefront_media/file_s2q4qz.jpg",
-          "price": 4.99,
-          "vendor": "77",
-          "variant": "Standard",
-          "quantity": 9,
-          "productId": "PCH-563404-WATERMELON-ICE",
-          "productTitle": "77 5.2 mg - Watermelon ice"
-        },
-        {
-          "sku": "PCH-563404-RASPBERRY-ICE",
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785235962/storefront_media/file_xpemob.jpg",
-          "price": 4.99,
-          "vendor": "77",
-          "variant": "Standard",
-          "quantity": 1,
-          "productId": "PCH-563404-RASPBERRY-ICE",
-          "productTitle": "77 5.2 mg - Raspberry Ice"
-        }
-      ],
-      "total": 53.44,
-      "carrier": "Royal Mail",
-      "cardBrand": "Worldpay Card",
-      "destination": "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
-      "gatewayTxId": "WP-CB-057687",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-CB-057687",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "isSubscription": true,
+      "subscriptionId": "sub_1786951064554_rbsj9e",
       "trackingNumber": null,
       "discountApplied": null,
-      "gatewayAuthCode": "CALLBACK-OK",
-      "worldpayAuthCode": "CALLBACK-OK",
+      "gatewayAuthCode": "AUTH-SIMULATED",
+      "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
-      "storeCreditApplied": 0
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [],
+        "planName": "PRO Plan",
+        "frequency": "Bi-Weekly",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "8 Sept 2026",
+        "nextPaymentDate": "22 Sept 2026",
+        "selectedProducts": [],
+        "frequencyDiscount": "10%"
+      }
     },
     {
-      "id": "PS20017",
-      "data": {
-        "subtotal": 29.4,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-05T22:16:28.694Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM876434737GB",
-          "royalMailOrderId": "RM-ORD-933058",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "info@gtlofficial.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Ritesh Dhiman",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
-        "deliveryCost": 2.99,
-        "shippingCost": 2.99,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955415163_8pehk7",
-        "schemeReference": "SCHEME-WP-CB-415160",
-        "recurringRenewal": true
-      },
-      "date": "Sep 5, 2026 at 03:16 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "price": 29.4,
-          "total": 29.4,
-          "quantity": 1,
-          "productId": "sub-pack-1786955324998",
-          "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 32.39,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-565893",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-AUTH-565893",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM876434737GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS12827",
-      "data": {
-        "subtotal": 29.4,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-05T22:16:36.465Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM576557975GB",
-          "royalMailOrderId": "RM-ORD-858022",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "info@gtlofficial.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Ritesh Dhiman",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
-        "deliveryCost": 2.99,
-        "shippingCost": 2.99,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955415163_8pehk7",
-        "schemeReference": "SCHEME-WP-CB-415160",
-        "recurringRenewal": true
-      },
-      "date": "Sep 5, 2026 at 03:16 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "price": 29.4,
-          "total": 29.4,
-          "quantity": 1,
-          "productId": "sub-pack-1786955324998",
-          "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 32.39,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-570108",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-AUTH-570108",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM576557975GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS84903",
-      "data": {
-        "subtotal": 45.71,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-05T22:19:36.715Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM619424427GB",
-          "royalMailOrderId": "RM-ORD-788135",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "info@gtlofficial.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Ritesh Dhiman",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
-        "deliveryCost": 0,
-        "shippingCost": 0,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955794956_cl9l2f",
-        "schemeReference": "SCHEME-WP-CB-794956",
-        "recurringRenewal": true
-      },
-      "date": "Sep 5, 2026 at 03:19 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "price": 45.71,
-          "total": 45.71,
-          "quantity": 1,
-          "productId": "sub-pack-1786955725878",
-          "productTitle": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 45.71,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-760895",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-AUTH-760895",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM619424427GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS98903",
-      "data": {
-        "subtotal": 45.71,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-05T22:19:53.077Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM336541724GB",
-          "royalMailOrderId": "RM-ORD-695743",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "info@gtlofficial.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Ritesh Dhiman",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
-        "deliveryCost": 0,
-        "shippingCost": 0,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955794956_cl9l2f",
-        "schemeReference": "SCHEME-WP-CB-794956",
-        "recurringRenewal": true
-      },
-      "date": "Sep 5, 2026 at 03:19 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "price": 45.71,
-          "total": 45.71,
-          "quantity": 1,
-          "productId": "sub-pack-1786955725878",
-          "productTitle": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 45.71,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-766294",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-AUTH-766294",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM336541724GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS32323",
+      "id": "PS73775",
       "data": {
         "subtotal": 22.2,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-07T05:32:30.179Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM745480842GB",
-          "royalMailOrderId": "RM-ORD-674194",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "scott@pouch-supply.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Scott Kivlin",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
         "deliveryCost": 2.99,
         "shippingCost": 2.99,
         "paymentMethod": "Worldpay Recurring Subscription",
         "subscriptionId": "sub_1787134213848_7vtxnf",
         "schemeReference": "SCHEME-WP-CB-213847",
-        "recurringRenewal": true
+        "recurringRenewal": true,
+        "simulatedPayment": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-08T06:01:46.912Z"
+        }
       },
-      "date": "Sep 6, 2026 at 10:32 pm",
+      "date": "Sep 8, 2026 at 11:31 am",
       "tags": [
         "Storefront",
         "Subscription Order",
@@ -6819,498 +6187,70 @@
         }
       ],
       "total": 25.19,
-      "carrier": "Royal Mail Tracked 24®",
+      "carrier": "Royal Mail",
+      "subtotal": 22.2,
       "cardBrand": "Worldpay Stored Card",
       "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-134941",
+      "gatewayTxId": "WP-SIM-305028",
       "customerName": "Scott Kivlin",
-      "worldpayTxId": "WP-SUB-AUTH-134941",
+      "deliveryCost": 2.99,
+      "shippingCost": 2.99,
+      "worldpayTxId": "WP-SIM-305028",
       "customerEmail": "scott@pouch-supply.com",
       "paymentStatus": "Paid",
       "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM745480842GB",
+      "isSubscription": true,
+      "subscriptionId": "sub_1787134213848_7vtxnf",
+      "trackingNumber": null,
       "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS96553",
-      "data": {
-        "subtotal": 22.2,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-07T05:34:24.755Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM234550257GB",
-          "royalMailOrderId": "RM-ORD-445907",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "nehabhardwaz.gtl@gmail.com",
-              "phone": "",
-              "county": "",
-              "fullName": "neha",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
+      "gatewayAuthCode": "AUTH-SIMULATED",
+      "worldpayAuthCode": "AUTH-SIMULATED",
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [
+          {
+            "name": "5.2 mg Watermelon ice",
+            "variant": "Standard",
+            "quantity": 3,
+            "variantName": "Standard",
+            "productTitle": "5.2 mg Watermelon ice",
+            "formattedLabel": "5.2 mg Watermelon ice — Standard (Qty:3)"
+          },
+          {
+            "name": "20 mg Ghost Cola Ice ) (Recurring Renewal",
+            "variant": "Standard",
+            "quantity": 3,
+            "variantName": "Standard",
+            "productTitle": "20 mg Ghost Cola Ice ) (Recurring Renewal",
+            "formattedLabel": "20 mg Ghost Cola Ice ) (Recurring Renewal — Standard (Qty:3)"
           }
-        },
-        "deliveryCost": 2.99,
-        "shippingCost": 2.99,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786951064554_rbsj9e",
-        "schemeReference": "SCHEME-WP-TEST-TXN-381705",
-        "recurringRenewal": true
-      },
-      "date": "Sep 6, 2026 at 10:34 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "items": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "price": 27.99,
-          "total": 22.2,
-          "quantity": 1,
-          "productId": "sub-pack-1786948467439",
-          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (15 mg Spearmint (Qty:1), 11 mg Spearmint (Qty:2), 4 mg Zingy Ginger (Qty:2), 8 mg Zingy Ginge (Qty:1)) (Recurring Renewal)",
-          "isSubscription": true,
-          "selectedFlavors": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "selectedProducts": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "subscriptionPlan": "lite",
-          "subscriptionItems": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "subscriptionFrequency": "Next Day (Test)"
-        }
-      ],
-      "total": 27.99,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-254201",
-      "customerName": "neha",
-      "worldpayTxId": "WP-SUB-AUTH-254201",
-      "customerEmail": "nehabhardwaz.gtl@gmail.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM234550257GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS74676",
-      "data": {
-        "subtotal": 45.71,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-07T05:35:57.994Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM129981062GB",
-          "royalMailOrderId": "RM-ORD-101148",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "info@gtlofficial.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Ritesh Dhiman",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
+        ],
+        "planName": "LITE Plan",
+        "frequency": "Next Day (Test)",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "8 Sept 2026",
+        "nextPaymentDate": "9 Sept 2026",
+        "selectedProducts": [
+          {
+            "name": "5.2 mg Watermelon ice",
+            "variant": "Standard",
+            "quantity": 3,
+            "variantName": "Standard",
+            "productTitle": "5.2 mg Watermelon ice",
+            "formattedLabel": "5.2 mg Watermelon ice — Standard (Qty:3)"
+          },
+          {
+            "name": "20 mg Ghost Cola Ice ) (Recurring Renewal",
+            "variant": "Standard",
+            "quantity": 3,
+            "variantName": "Standard",
+            "productTitle": "20 mg Ghost Cola Ice ) (Recurring Renewal",
+            "formattedLabel": "20 mg Ghost Cola Ice ) (Recurring Renewal — Standard (Qty:3)"
           }
-        },
-        "deliveryCost": 0,
-        "shippingCost": 0,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955794956_cl9l2f",
-        "schemeReference": "SCHEME-WP-CB-794956",
-        "recurringRenewal": true
-      },
-      "date": "Sep 6, 2026 at 10:35 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "price": 45.71,
-          "total": 45.71,
-          "quantity": 1,
-          "productId": "sub-pack-1786955725878",
-          "productTitle": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 45.71,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-357002",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-AUTH-357002",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM129981062GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS22283",
-      "data": {
-        "subtotal": 33.9,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-07T05:35:23.656Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM847024538GB",
-          "royalMailOrderId": "RM-ORD-616364",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "info@gtlofficial.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Ritesh Dhiman",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
-        "deliveryCost": 2.99,
-        "shippingCost": 2.99,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955952984_df1p1o",
-        "schemeReference": "SCHEME-WP-TEST-TXN-312556",
-        "recurringRenewal": true
-      },
-      "date": "Sep 6, 2026 at 10:35 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "price": 33.9,
-          "total": 33.9,
-          "quantity": 1,
-          "productId": "sub-pack-1786955823894",
-          "productTitle": "PRO Plan [Next Day (Test) - 10% OFF] - (20 mg Ghost Cola Ice (Qty:3), 5.2 mg Watermelon ice (Qty:2), 5.6 mg Zesty Pear Regular (Qty:1), 8 mg Mint Dry (Qty:2), 17 mg Frosty Mint Max (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:1)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 36.89,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-321218",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-AUTH-321218",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM847024538GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS76260",
-      "data": {
-        "subtotal": 22.2,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-07T05:35:47.712Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM142299567GB",
-          "royalMailOrderId": "RM-ORD-760013",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "nehabhardwaz.gtl@gmail.com",
-              "phone": "",
-              "county": "",
-              "fullName": "neha",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
-        "deliveryCost": 2.99,
-        "shippingCost": 2.99,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955226574_6zsr07",
-        "schemeReference": "SCHEME-WP-CB-226573",
-        "recurringRenewal": true
-      },
-      "date": "Sep 6, 2026 at 10:35 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "items": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "price": 27.99,
-          "total": 22.2,
-          "quantity": 1,
-          "productId": "sub-pack-1786955160401",
-          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (30 mg Strawberry (Qty:6)) (Recurring Renewal)",
-          "isSubscription": true,
-          "selectedFlavors": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "selectedProducts": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "subscriptionPlan": "lite",
-          "subscriptionItems": [
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-              "price": 4.99,
-              "title": "77 5.2 mg",
-              "quantity": 4,
-              "productId": "77-52-mg"
-            },
-            {
-              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-              "price": 4.99,
-              "title": "77 20 mg",
-              "quantity": 2,
-              "productId": "77-20-mg"
-            }
-          ],
-          "subscriptionFrequency": "Next Day (Test)"
-        }
-      ],
-      "total": 27.99,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-345609",
-      "customerName": "neha",
-      "worldpayTxId": "WP-SUB-AUTH-345609",
-      "customerEmail": "nehabhardwaz.gtl@gmail.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM142299567GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
-    },
-    {
-      "id": "PS45658",
-      "data": {
-        "subtotal": 29.4,
-        "royalMail": {
-          "carrier": "Royal Mail Tracked 24®",
-          "shippedAt": "2026-09-07T05:35:35.128Z",
-          "isSimulated": true,
-          "serviceCode": "TPS24",
-          "serviceName": "Royal Mail Tracked 24®",
-          "trackingNumber": "RM872583754GB",
-          "royalMailOrderId": "RM-ORD-865437",
-          "addressValidation": {
-            "valid": true,
-            "errors": [],
-            "parsed": {
-              "city": "London",
-              "email": "info@gtlofficial.com",
-              "phone": "",
-              "county": "",
-              "fullName": "Ritesh Dhiman",
-              "postcode": "EC1A 1BB",
-              "companyName": "",
-              "countryCode": "GB",
-              "addressLine1": "United Kingdom",
-              "addressLine2": ""
-            }
-          }
-        },
-        "deliveryCost": 2.99,
-        "shippingCost": 2.99,
-        "paymentMethod": "Worldpay Recurring Subscription",
-        "subscriptionId": "sub_1786955415163_8pehk7",
-        "schemeReference": "SCHEME-WP-CB-415160",
-        "recurringRenewal": true
-      },
-      "date": "Sep 6, 2026 at 10:35 pm",
-      "tags": [
-        "Storefront",
-        "Subscription Order",
-        "Worldpay Recurring"
-      ],
-      "items": [
-        {
-          "price": 29.4,
-          "total": 29.4,
-          "quantity": 1,
-          "productId": "sub-pack-1786955324998",
-          "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-          "isSubscription": true
-        }
-      ],
-      "total": 32.39,
-      "carrier": "Royal Mail Tracked 24®",
-      "cardBrand": "Worldpay Stored Card",
-      "destination": "United Kingdom",
-      "gatewayTxId": "WP-SUB-AUTH-334141",
-      "customerName": "Ritesh Dhiman",
-      "worldpayTxId": "WP-SUB-AUTH-334141",
-      "customerEmail": "info@gtlofficial.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "trackingNumber": "RM872583754GB",
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK-MIT-SIM",
-      "worldpayAuthCode": "AUTH-OK-MIT-SIM",
-      "fulfillmentStatus": "Shipped",
-      "storeCreditApplied": 0
+        ],
+        "frequencyDiscount": "10%"
+      }
     }
   ],
   "files": [
@@ -7553,9 +6493,9 @@
       "subStatus": "active",
       "resetToken": "74594e4858863c74359916a86bdc3878c84fec80dc8495bd",
       "savedCards": [],
-      "amountSpent": 83.97,
+      "amountSpent": 27.99,
       "nextPayment": "8 Sept 2026",
-      "ordersCount": 3,
+      "ordersCount": 1,
       "storeCredit": 0,
       "nextDelivery": "9 Sept 2026",
       "referralCode": "REF-PS-NEHA-OZCP",
@@ -7645,9 +6585,9 @@
         }
       ],
       "ageVerified": false,
-      "amountSpent": 477.99,
+      "amountSpent": 0,
       "nextPayment": "2026-09-08",
-      "ordersCount": 12,
+      "ordersCount": 0,
       "storeCredit": 0,
       "nextDelivery": "24 June 2026",
       "referralCode": "REF-PS-RITESH-CBZK",
@@ -7849,9 +6789,9 @@
           "default": true
         }
       ],
-      "amountSpent": 53.37,
+      "amountSpent": 25.19,
       "nextPayment": "2026-09-08",
-      "ordersCount": 2,
+      "ordersCount": 1,
       "storeCredit": 0,
       "nextDelivery": "24 June 2026",
       "referralCode": "REF-PS-SCOTT-6YXM",
@@ -9311,6 +8251,37 @@
     }
   ],
   "email_logs": [
+    {
+      "type": "admin_new_order",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
+      "status": "sent",
+      "provider": "gmail",
+      "messageId": "<353f3d78-e4a1-dc6e-9676-d22efaf0699c@gmail.com>",
+      "metadata": {
+        "data": {
+          "customerName": "Scott Kivlin",
+          "customerEmail": "scott@pouch-supply.com",
+          "orderId": "PS73775",
+          "orderDate": "Sep 8, 2026 at 11:31 am",
+          "items": [
+            {
+              "productId": "sub-pack-1787133835286",
+              "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3)) (Recurring Renewal)",
+              "price": 22.2,
+              "quantity": 1,
+              "isSubscription": true,
+              "total": 22.2
+            }
+          ],
+          "total": 25.19,
+          "destination": "United Kingdom",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "id": "log_1788847348882_e90nf",
+      "timestamp": "2026-09-08T06:02:28.882Z"
+    },
     {
       "id": "log_1785587115800_ryi5w",
       "type": "order_confirmation",
@@ -14378,6 +13349,68 @@
       "timestamp": "2026-09-05T22:17:05.496Z"
     },
     {
+      "id": "log_1788646629994_qi29g",
+      "type": "order_confirmation",
+      "status": "sent",
+      "subject": "Order Confirmation - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 29.4,
+              "total": 29.4,
+              "quantity": 1,
+              "productId": "sub-pack-1786955324998",
+              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
+              "isSubscription": true
+            }
+          ],
+          "total": 32.39,
+          "orderId": "PS12827",
+          "orderDate": "Sep 5, 2026 at 03:16 pm",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<e59345c8-7653-7d8f-8ba3-a5a5aac1d536@gmail.com>",
+      "recipient": "info@gtlofficial.com",
+      "timestamp": "2026-09-05T22:17:09.994Z"
+    },
+    {
+      "id": "log_1788646631230_xb1vb",
+      "type": "admin_new_order",
+      "status": "sent",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 29.4,
+              "total": 29.4,
+              "quantity": 1,
+              "productId": "sub-pack-1786955324998",
+              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
+              "isSubscription": true
+            }
+          ],
+          "total": 32.39,
+          "orderId": "PS20017",
+          "orderDate": "Sep 5, 2026 at 03:16 pm",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<b8b60bcf-803f-f4e1-1312-ef294d66dc93@gmail.com>",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "timestamp": "2026-09-05T22:17:11.230Z"
+    },
+    {
       "id": "log_1788646629724_z7ddj",
       "type": "order_shipped",
       "status": "sent",
@@ -14438,68 +13471,6 @@
       "messageId": "<a9684be3-80af-f7a9-59f9-598d81405917@gmail.com>",
       "recipient": "info@gtlofficial.com",
       "timestamp": "2026-09-05T22:17:07.106Z"
-    },
-    {
-      "id": "log_1788646631230_xb1vb",
-      "type": "admin_new_order",
-      "status": "sent",
-      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
-      "metadata": {
-        "data": {
-          "items": [
-            {
-              "price": 29.4,
-              "total": 29.4,
-              "quantity": 1,
-              "productId": "sub-pack-1786955324998",
-              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-              "isSubscription": true
-            }
-          ],
-          "total": 32.39,
-          "orderId": "PS20017",
-          "orderDate": "Sep 5, 2026 at 03:16 pm",
-          "destination": "United Kingdom",
-          "customerName": "Ritesh Dhiman",
-          "customerEmail": "info@gtlofficial.com",
-          "deliveryMethod": "Royal Mail Tracked 24/48"
-        }
-      },
-      "provider": "gmail",
-      "messageId": "<b8b60bcf-803f-f4e1-1312-ef294d66dc93@gmail.com>",
-      "recipient": "scottkivlinpouch@gmail.com",
-      "timestamp": "2026-09-05T22:17:11.230Z"
-    },
-    {
-      "id": "log_1788646629994_qi29g",
-      "type": "order_confirmation",
-      "status": "sent",
-      "subject": "Order Confirmation - Pouch Supply Co.",
-      "metadata": {
-        "data": {
-          "items": [
-            {
-              "price": 29.4,
-              "total": 29.4,
-              "quantity": 1,
-              "productId": "sub-pack-1786955324998",
-              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-              "isSubscription": true
-            }
-          ],
-          "total": 32.39,
-          "orderId": "PS12827",
-          "orderDate": "Sep 5, 2026 at 03:16 pm",
-          "destination": "United Kingdom",
-          "customerName": "Ritesh Dhiman",
-          "customerEmail": "info@gtlofficial.com",
-          "deliveryMethod": "Royal Mail Tracked 24/48"
-        }
-      },
-      "provider": "gmail",
-      "messageId": "<e59345c8-7653-7d8f-8ba3-a5a5aac1d536@gmail.com>",
-      "recipient": "info@gtlofficial.com",
-      "timestamp": "2026-09-05T22:17:09.994Z"
     },
     {
       "id": "log_1788646688278_ahul1",
@@ -15014,37 +13985,6 @@
       "timestamp": "2026-09-07T07:58:50.753Z"
     },
     {
-      "id": "log_1788767947060_do9d3",
-      "type": "order_shipped",
-      "status": "sent",
-      "subject": "Order Dispatched & Tracking Info - Pouch Supply Co.",
-      "metadata": {
-        "data": {
-          "items": [
-            {
-              "price": 33.9,
-              "total": 33.9,
-              "quantity": 1,
-              "productId": "sub-pack-1786955823894",
-              "productTitle": "PRO Plan [Next Day (Test) - 10% OFF] - (20 mg Ghost Cola Ice (Qty:3), 5.2 mg Watermelon ice (Qty:2), 5.6 mg Zesty Pear Regular (Qty:1), 8 mg Mint Dry (Qty:2), 17 mg Frosty Mint Max (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:1)) (Recurring Renewal)",
-              "isSubscription": true
-            }
-          ],
-          "total": 36.89,
-          "carrier": "Royal Mail Tracked 24®",
-          "orderId": "PS68932",
-          "destination": "United Kingdom",
-          "customerName": "Ritesh Dhiman",
-          "customerEmail": "info@gtlofficial.com",
-          "trackingNumber": "RM171101406GB"
-        }
-      },
-      "provider": "gmail",
-      "messageId": "<79947630-f8b7-4b15-3d36-172d0f2bae53@gmail.com>",
-      "recipient": "info@gtlofficial.com",
-      "timestamp": "2026-09-07T07:59:07.060Z"
-    },
-    {
       "id": "log_1788767947557_zvlkn",
       "type": "order_confirmation",
       "status": "sent",
@@ -15074,6 +14014,37 @@
       "messageId": "<53d79f1f-7a02-e9bc-c5c6-431280961017@gmail.com>",
       "recipient": "info@gtlofficial.com",
       "timestamp": "2026-09-07T07:59:07.557Z"
+    },
+    {
+      "id": "log_1788767947060_do9d3",
+      "type": "order_shipped",
+      "status": "sent",
+      "subject": "Order Dispatched & Tracking Info - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 33.9,
+              "total": 33.9,
+              "quantity": 1,
+              "productId": "sub-pack-1786955823894",
+              "productTitle": "PRO Plan [Next Day (Test) - 10% OFF] - (20 mg Ghost Cola Ice (Qty:3), 5.2 mg Watermelon ice (Qty:2), 5.6 mg Zesty Pear Regular (Qty:1), 8 mg Mint Dry (Qty:2), 17 mg Frosty Mint Max (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:1)) (Recurring Renewal)",
+              "isSubscription": true
+            }
+          ],
+          "total": 36.89,
+          "carrier": "Royal Mail Tracked 24®",
+          "orderId": "PS68932",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "trackingNumber": "RM171101406GB"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<79947630-f8b7-4b15-3d36-172d0f2bae53@gmail.com>",
+      "recipient": "info@gtlofficial.com",
+      "timestamp": "2026-09-07T07:59:07.060Z"
     },
     {
       "id": "log_1788768035155_6zzkg",
@@ -15305,6 +14276,84 @@
       "messageId": "<53e0cb38-ec4f-052a-29bb-2c573d675797@gmail.com>",
       "recipient": "nehabhardwaz.gtl@gmail.com",
       "timestamp": "2026-09-07T08:10:09.658Z"
+    },
+    {
+      "id": "log_1788847290317_w5a8w",
+      "type": "order_confirmation",
+      "status": "sent",
+      "subject": "Order Confirmation - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "title": "77 5.2 mg",
+              "quantity": 4,
+              "productId": "77-52-mg",
+              "isSubscription": true
+            },
+            {
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
+              "price": 4.99,
+              "title": "77 20 mg",
+              "quantity": 2,
+              "productId": "77-20-mg",
+              "isSubscription": true
+            }
+          ],
+          "total": 27.99,
+          "orderId": "PS32113",
+          "orderDate": "Sep 8, 2026 at 11:31 am",
+          "destination": "United Kingdom",
+          "customerName": "neha",
+          "customerEmail": "nehabhardwaz.gtl@gmail.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<508e45a8-75fe-e912-0484-932c6abaa569@gmail.com>",
+      "recipient": "nehabhardwaz.gtl@gmail.com",
+      "timestamp": "2026-09-08T06:01:30.317Z"
+    },
+    {
+      "id": "log_1788847313877_t2pj2",
+      "type": "admin_new_order",
+      "status": "sent",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "title": "77 5.2 mg",
+              "quantity": 4,
+              "productId": "77-52-mg",
+              "isSubscription": true
+            },
+            {
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
+              "price": 4.99,
+              "title": "77 20 mg",
+              "quantity": 2,
+              "productId": "77-20-mg",
+              "isSubscription": true
+            }
+          ],
+          "total": 27.99,
+          "orderId": "PS32113",
+          "orderDate": "Sep 8, 2026 at 11:31 am",
+          "destination": "United Kingdom",
+          "customerName": "neha",
+          "customerEmail": "nehabhardwaz.gtl@gmail.com",
+          "deliveryMethod": "Royal Mail Tracked 24/48"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<25adf6b1-69a4-2db0-cdf1-09a1870e6dde@gmail.com>",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "timestamp": "2026-09-08T06:01:53.878Z"
     }
   ],
   "subscriptions": [
@@ -15498,14 +14547,14 @@
       "customerId": "nehabhardwaz.gtl@gmail.com",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
-      "lastPaymentAt": "2026-09-07T05:34:20.210Z",
-      "lastPaymentId": "WP-SUB-AUTH-254201",
+      "lastPaymentAt": "2026-09-08T06:01:26.244Z",
+      "lastPaymentId": "WP-SIM-277234",
       "billingInterval": "Next Day (Test)",
-      "nextBillingDate": "2026-09-08T05:34:14.201Z",
+      "nextBillingDate": "2026-09-09T05:34:14.201Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-381705",
-      "worldpayTransactionId": "WP-TEST-TXN-381705",
+      "worldpayTransactionId": "WP-SIM-277234",
       "worldpaySchemeReference": "SCHEME-WP-TEST-TXN-381705"
     },
     {
@@ -15625,28 +14674,28 @@
       "customerId": "scott@pouch-supply.com",
       "customerName": "Scott Kivlin",
       "customerEmail": "scott@pouch-supply.com",
-      "lastPaymentAt": "2026-09-07T05:32:27.088Z",
-      "lastPaymentId": "WP-SUB-AUTH-134941",
+      "lastPaymentAt": "2026-09-08T06:01:54.439Z",
+      "lastPaymentId": "WP-SIM-305028",
       "billingInterval": "1day",
-      "nextBillingDate": "2026-09-08T05:32:14.941Z",
+      "nextBillingDate": "2026-09-09T05:32:14.941Z",
       "lastPaymentStatus": "authorized",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-213847",
-      "worldpayTransactionId": "WP-CB-213847",
+      "worldpayTransactionId": "WP-SIM-305028",
       "worldpaySchemeReference": "SCHEME-WP-CB-213847"
     }
   ],
   "klaviyo_logs": [
     {
       "eventName": "Ordered Product",
-      "customerEmail": "nehabhardwaz.gtl@gmail.com",
+      "customerEmail": "scott@pouch-supply.com",
       "status": "sent",
       "payload": {
         "eventProperties": {
-          "OrderId": "PS72840",
-          "ProductID": "sub-pack-1786955160401",
-          "SKU": "sub-pack-1786955160401",
-          "ProductName": "LITE Plan [Next Day (Test) - 10% OFF] - (30 mg Strawberry (Qty:6)) (Recurring Renewal)",
+          "OrderId": "PS73775",
+          "ProductID": "sub-pack-1787133835286",
+          "SKU": "sub-pack-1787133835286",
+          "ProductName": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3)) (Recurring Renewal)",
           "Quantity": 1,
           "ItemPrice": 22.2,
           "RowTotal": 22.2,
@@ -15654,8 +14703,8 @@
         },
         "transport": "private_api"
       },
-      "id": "klaviyo_1788768358411_9cps8",
-      "timestamp": "2026-09-07T08:05:58.411Z"
+      "id": "klaviyo_1788847343735_lwtpn",
+      "timestamp": "2026-09-08T06:02:23.735Z"
     },
     {
       "id": "klaviyo_1786359572577_bhm20",
@@ -20553,6 +19602,130 @@
       "eventName": "Order Shipped",
       "timestamp": "2026-09-07T08:04:37.434Z",
       "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788847290086_qkmrf",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "Items": [
+            {
+              "SKU": "77-52-mg",
+              "Price": 4.99,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "Quantity": 4,
+              "RowTotal": 19.96,
+              "ItemPrice": 4.99,
+              "ProductID": "77-52-mg",
+              "ProductName": "77 5.2 mg"
+            },
+            {
+              "SKU": "77-20-mg",
+              "Price": 4.99,
+              "Vendor": "Pouch Supply Co.",
+              "ImageURL": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
+              "Quantity": 2,
+              "RowTotal": 9.98,
+              "ItemPrice": 4.99,
+              "ProductID": "77-20-mg",
+              "ProductName": "77 20 mg"
+            }
+          ],
+          "extra": {
+            "date": "Sep 8, 2026 at 11:31 am",
+            "items": [
+              {
+                "SKU": "77-52-mg",
+                "Price": 4.99,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+                "Quantity": 4,
+                "RowTotal": 19.96,
+                "ItemPrice": 4.99,
+                "ProductID": "77-52-mg",
+                "ProductName": "77 5.2 mg"
+              },
+              {
+                "SKU": "77-20-mg",
+                "Price": 4.99,
+                "Vendor": "Pouch Supply Co.",
+                "ImageURL": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
+                "Quantity": 2,
+                "RowTotal": 9.98,
+                "ItemPrice": 4.99,
+                "ProductID": "77-20-mg",
+                "ProductName": "77 20 mg"
+              }
+            ],
+            "total": 27.99,
+            "order_id": "PS32113"
+          },
+          "OrderId": "PS32113",
+          "order_id": "PS32113",
+          "ItemNames": [
+            "77 5.2 mg",
+            "77 20 mg"
+          ],
+          "Categories": [
+            "Nicotine Pouches",
+            "Storefront"
+          ],
+          "Destination": "United Kingdom",
+          "DeliveryMethod": "Royal Mail Tracked 24/48",
+          "DiscountApplied": null,
+          "ShippingAddress": {
+            "address1": "United Kingdom",
+            "last_name": "Customer",
+            "first_name": "neha"
+          },
+          "StoreCreditApplied": 0
+        }
+      },
+      "eventName": "Placed Order",
+      "timestamp": "2026-09-08T06:01:30.086Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788847306289_eddaw",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "SKU": "77-52-mg",
+          "OrderId": "PS32113",
+          "ImageURL": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+          "Quantity": 4,
+          "RowTotal": 19.96,
+          "ItemPrice": 4.99,
+          "ProductID": "77-52-mg",
+          "ProductName": "77 5.2 mg"
+        }
+      },
+      "eventName": "Ordered Product",
+      "timestamp": "2026-09-08T06:01:46.289Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
+    },
+    {
+      "id": "klaviyo_1788847317717_iw7r2",
+      "status": "sent",
+      "payload": {
+        "transport": "private_api",
+        "eventProperties": {
+          "SKU": "77-20-mg",
+          "OrderId": "PS32113",
+          "ImageURL": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
+          "Quantity": 2,
+          "RowTotal": 9.98,
+          "ItemPrice": 4.99,
+          "ProductID": "77-20-mg",
+          "ProductName": "77 20 mg"
+        }
+      },
+      "eventName": "Ordered Product",
+      "timestamp": "2026-09-08T06:01:57.717Z",
+      "customerEmail": "nehabhardwaz.gtl@gmail.com"
     }
   ],
   "pending_checkouts": [
@@ -21876,5 +21049,7 @@
       "storeCreditApplied": 0
     }
   ],
-  "recaptcha_settings": []
+  "recaptcha_settings": [],
+  "royalmail_settings": [],
+  "email_settings": []
 }

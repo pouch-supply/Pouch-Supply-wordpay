@@ -154,38 +154,98 @@ export async function saveSingleOrder(orderData: any) {
       nextDate.setDate(baseDate.getDate() + 30);
     }
 
-    const rawSubItems = subItem?.subscriptionItems || subItem?.items || (orderData as any).subscriptionItems || [];
-    let subItems = rawSubItems;
+    // The customer's actual selection, exactly as the storefront recorded it.
+    // Each entry carries the real product id, the concrete variant id and the
+    // untouched catalogue title, so the order detail view never has to invent or
+    // re-derive a product name.
+    const rawSubItems = subItem?.subscriptionItems || subItem?.selectedProducts || subItem?.items || (orderData as any).subscriptionItems || [];
 
-    const KNOWN_BRANDS = [
-      '77', 'SNU', 'CUBA', 'KILLA', 'PABLO', 'VELO', 'WHITE FOX', 'ZYN', 
-      'XQS', 'NORDIC SPIRIT', 'CLEW', 'FUMI', 'FEDRS', 'GRANT', 'ICE', 
-      'LOOP', 'KURWA', 'DZRT', 'SIBERIA', 'SKRUF', 'DOPE', 'CHAPO', 
-      'HIT', 'VOLT', 'FIX', 'STRNG', 'ACE', 'THUNDER'
-    ];
+    // Names earlier builds wrote when they could not identify the product.
+    // They are dropped rather than persisted as if they were real products.
+    const PLACEHOLDER_NAMES = ['product', 'products', 'item', 'unknown', 'n/a', 'sku-001', 'subscription pack'];
+    const isPlaceholderName = (value: any) => {
+      const v = String(value ?? '').trim().toLowerCase();
+      return !v || PLACEHOLDER_NAMES.includes(v);
+    };
+    const cleanVariant = (value: any) => {
+      const v = String(value ?? '').trim();
+      return v.toLowerCase() === 'standard' ? '' : v;
+    };
+    const buildLabel = (brand: string, name: string, variant: string, qty: number) => {
+      const parts: string[] = [];
+      if (brand && !name.toLowerCase().startsWith(brand.toLowerCase())) parts.push(brand);
+      if (name) parts.push(name);
+      if (variant) parts.push(variant);
+      return parts.length > 0 ? `${parts.join(' — ')} (Qty:${qty})` : `(Qty:${qty})`;
+    };
 
-    // If subItems array is empty, parse from title description
-    if ((!subItems || subItems.length === 0) && subItem?.productTitle) {
-      const rawTitle: string = subItem.productTitle.trim();
+    let subItems: any[] = [];
+
+    if (Array.isArray(rawSubItems) && rawSubItems.length > 0) {
+      subItems = rawSubItems
+        .map((it: any) => {
+          const p = (it && it.product) || it || {};
+          const name = [it?.productTitle, it?.name, it?.title, p?.title, p?.productTitle, p?.name]
+            .map((v: any) => String(v ?? '').trim())
+            .find((v: string) => v && !isPlaceholderName(v)) || '';
+          const productId = String(it?.productId || p?.productId || p?.id || '').trim();
+          const variantId = String(it?.variantId || it?.concreteVariantId || p?.variantId || '').trim();
+
+          // Nothing identifiable in this row — persisting it would only produce a
+          // filler line in the order detail.
+          if (!name && !productId && !variantId) return null;
+
+          const brand = String(it?.brand || it?.vendor || p?.vendor || p?.brand || '').trim();
+          const variant = cleanVariant(
+            it?.variantName || it?.variant || it?.concreteVariantName ||
+            p?.concreteVariantName || p?.variantName || p?.variant
+          );
+          const qty = Number(it?.quantity || p?.quantity || 1) || 1;
+
+          return {
+            productId: productId || undefined,
+            variantId: variantId || undefined,
+            brand: brand || undefined,
+            vendor: brand || undefined,
+            name,
+            productTitle: name,
+            variant,
+            variantName: variant,
+            quantity: qty,
+            image: it?.image || p?.image || '',
+            price: Number(it?.price || p?.price || 0) || undefined,
+            formattedLabel: buildLabel(brand, name, variant, qty)
+          };
+        })
+        .filter((it: any) => it && it.name);
+    }
+
+    // Legacy fallback only: orders placed before the structured selection was
+    // stored describe the box in the plan title. Whatever is recovered here is
+    // flagged so the UI can re-match it against the live catalogue instead of
+    // treating the fragment as a product name.
+    if (subItems.length === 0 && (subItem?.subscriptionSummary || subItem?.productTitle)) {
+      // The summary field, when present, is the untouched plan string; the title
+      // may have had a renewal suffix appended to it.
+      const rawTitle: string = String(subItem.subscriptionSummary || subItem.productTitle)
+        .replace(/\)\s*\((?:recurring renewal|renewal)\)\s*$/i, ')')
+        .trim();
+
       let itemsSummary = '';
-      if (rawTitle.includes(' - (')) {
-        const start = rawTitle.indexOf(' - (') + 4;
+      const open = rawTitle.indexOf(' - (');
+      if (open > -1) {
+        const start = open + 4;
         const end = rawTitle.lastIndexOf(')');
         itemsSummary = end > start ? rawTitle.substring(start, end) : rawTitle.substring(start);
-      } else if (rawTitle.includes(' - ')) {
-        const dashParts = rawTitle.split(' - ');
-        itemsSummary = dashParts.slice(1).join(' - ').trim();
-        if (itemsSummary.startsWith('(') && itemsSummary.endsWith(')')) {
-          itemsSummary = itemsSummary.slice(1, -1);
-        }
+      } else if (rawTitle.startsWith('(') && rawTitle.endsWith(')')) {
+        itemsSummary = rawTitle.slice(1, -1);
       }
 
-      if (itemsSummary) {
+      if (itemsSummary.trim()) {
         const parts: string[] = [];
         let cur = '';
         let depth = 0;
-        for (let i = 0; i < itemsSummary.length; i++) {
-          const c = itemsSummary[i];
+        for (const c of itemsSummary) {
           if (c === '(') depth++;
           else if (c === ')') depth--;
           if (c === ',' && depth === 0) {
@@ -199,41 +259,37 @@ export async function saveSingleOrder(orderData: any) {
 
         const parsedProducts: any[] = [];
         parts.forEach(part => {
-          const trimmed = part.trim();
-          if (!trimmed) return;
+          let cleanPart = part.trim();
+          if (!cleanPart) return;
+
           let qty = 1;
-          let cleanPart = trimmed;
-          const qtyMatch = cleanPart.match(/\(Qty\s*:\s*(\d+)\)/i) || cleanPart.match(/\bx\s*(\d+)\b/i);
+          const qtyMatch = cleanPart.match(/\(\s*Qty\s*:\s*(\d+)\s*\)/i) || cleanPart.match(/\bx\s*(\d+)\b/i);
           if (qtyMatch) {
             qty = parseInt(qtyMatch[1], 10) || 1;
-            cleanPart = cleanPart.replace(/\(Qty\s*:\s*(\d+)\)/i, '').replace(/\bx\s*(\d+)\b/i, '').trim();
+            cleanPart = cleanPart
+              .replace(/\(\s*Qty\s*:\s*(\d+)\s*\)/i, '')
+              .replace(/\bx\s*(\d+)\b/i, '')
+              .trim();
           }
+
+          cleanPart = cleanPart.replace(/^[\s)]+/, '').replace(/[\s(]+$/, '').trim();
+          if (!cleanPart || isPlaceholderName(cleanPart)) return;
 
           let brand = '';
           let name = cleanPart;
-          let variant = 'Standard';
+          let variant = '';
 
-          if (cleanPart.includes(' — ') || cleanPart.includes(' – ') || (cleanPart.includes(' - ') && !cleanPart.includes(')-('))) {
-            const segments = cleanPart.split(/\s*(?:—|–|-)\s*/);
+          // Only the em dash the summary was joined with is treated as a
+          // separator; a plain hyphen usually belongs to the product name.
+          if (/\s[—–]\s/.test(cleanPart)) {
+            const segments = cleanPart.split(/\s*[—–]\s*/).map(s => s.trim()).filter(Boolean);
             if (segments.length >= 3) {
-              brand = segments[0].trim();
-              name = segments[1].trim();
-              variant = segments.slice(2).join(' — ').trim();
+              brand = segments[0];
+              name = segments[1];
+              variant = segments.slice(2).join(' — ');
             } else if (segments.length === 2) {
-              const firstSeg = segments[0].trim();
-              const isBrand = KNOWN_BRANDS.some(kb => kb.toLowerCase() === firstSeg.toLowerCase());
-              if (isBrand) {
-                brand = firstSeg;
-                name = segments[1].trim();
-                const nestedMatch = name.match(/^(.*?)\s*\(([^)]+)\)$/);
-                if (nestedMatch && nestedMatch[1] && nestedMatch[2]) {
-                  name = nestedMatch[1].trim();
-                  variant = nestedMatch[2].trim();
-                }
-              } else {
-                name = segments[0].trim();
-                variant = segments[1].trim();
-              }
+              name = segments[0];
+              variant = segments[1];
             }
           } else {
             const varMatch = cleanPart.match(/^(.*?)\s*\(([^)]+)\)$/);
@@ -241,65 +297,26 @@ export async function saveSingleOrder(orderData: any) {
               name = varMatch[1].trim();
               variant = varMatch[2].trim();
             }
-
-            for (const kb of KNOWN_BRANDS) {
-              if (name.toLowerCase().startsWith(kb.toLowerCase())) {
-                brand = kb;
-                name = name.substring(kb.length).replace(/^[\s—–-]+/, '').trim();
-                break;
-              }
-            }
           }
 
-          const formattedLabel = `${brand ? `${brand} — ` : ''}${name} — ${variant} (Qty:${qty})`;
+          variant = cleanVariant(variant);
+          if (!name) return;
 
-          parsedProducts.push({ 
+          parsedProducts.push({
             brand: brand || undefined,
             vendor: brand || undefined,
-            name, 
+            name,
             productTitle: name,
-            variant, 
+            variant,
             variantName: variant,
             quantity: qty,
-            formattedLabel
+            isReconstructed: true,
+            formattedLabel: buildLabel(brand, name, variant, qty)
           });
         });
-        if (parsedProducts.length > 0) {
-          subItems = parsedProducts;
-        }
+
+        subItems = parsedProducts;
       }
-    } else if (Array.isArray(subItems) && subItems.length > 0) {
-      subItems = subItems.map((it: any) => {
-        const rawBrand = (it.brand || it.vendor || it.product?.vendor || '').trim();
-        let rawName = (it.name || it.productTitle || it.product?.title || it.title || 'Product').trim();
-        let brand = rawBrand;
-        if (!brand) {
-          for (const kb of KNOWN_BRANDS) {
-            if (rawName.toLowerCase().startsWith(kb.toLowerCase())) {
-              brand = kb;
-              break;
-            }
-          }
-        }
-        if (brand && rawName.toLowerCase().startsWith(brand.toLowerCase())) {
-          rawName = rawName.substring(brand.length).replace(/^[\s—–-]+/, '').trim();
-        }
-        const variant = (it.variant || it.variantName || it.product?.concreteVariantName || (it.product as any)?.variant || 'Standard').trim();
-        const qty = Number(it.quantity || 1);
-        const formattedLabel = `${brand ? `${brand} — ` : ''}${rawName} — ${variant} (Qty:${qty})`;
-        return {
-          brand: brand || undefined,
-          vendor: brand || undefined,
-          name: rawName,
-          productTitle: rawName,
-          variant,
-          variantName: variant,
-          quantity: qty,
-          image: it.image || it.product?.image || '',
-          price: it.price || it.product?.price || 0,
-          formattedLabel
-        };
-      });
     }
 
     subscriptionDetails = {

@@ -475,6 +475,8 @@ export default function CustomerAccount({
     let realFreqVal = 'Bi-Weekly';
     let realNextPayment = '';
     let realNextDelivery = '';
+    // The customer's real box contents, read back from their own subscription order.
+    let realBoxItems: any[] = [];
 
     if (latestSubOrder) {
       const subItem = (latestSubOrder.items || []).find((i: any) => 
@@ -483,6 +485,8 @@ export default function CustomerAccount({
         i.subscriptionPlan ||
         (i.productTitle && (i.productTitle.toLowerCase().includes('plan') || i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('pack')))
       ) || latestSubOrder.items[0];
+
+      realBoxItems = parseSubscriptionProducts(latestSubOrder, subItem, allProducts as any);
 
       const titleLower = ((subItem as any)?.subscriptionPlan || subItem?.productTitle || '').toLowerCase();
       if (titleLower.includes('ultimate')) {
@@ -567,10 +571,10 @@ export default function CustomerAccount({
         referralsList: referralsList,
         savedCards: ((loggedInCustomer as any).savedCards || []).filter((c: any) => c.id !== 'card_1'),
         ordersCount: orders.filter(o => o.customerEmail && o.customerEmail.toLowerCase() === loggedInCustomer.email.toLowerCase()).length,
-        subItems: (loggedInCustomer as any).subItems || (latestSubOrder && allProducts.length >= 2 ? [
-          { productId: allProducts[0].id, title: allProducts[0].title, quantity: Math.floor(chosenCans / 2) || 3, image: allProducts[0].image, price: allProducts[0].price },
-          { productId: allProducts[1].id, title: allProducts[1].title, quantity: Math.ceil(chosenCans / 2) || 3, image: allProducts[1].image, price: allProducts[1].price }
-        ] : [])
+        // The box is described by the customer's own order. Seeding it with the
+        // first two catalogue products used to invent a selection that the plan
+        // editor then saved back onto the order as if the customer had chosen it.
+        subItems: (loggedInCustomer as any).subItems || realBoxItems
       };
     } else {
       // Ensure sync with loggedInCustomer's real storeCredit, referralCode, and real subscription orders
@@ -581,6 +585,10 @@ export default function CustomerAccount({
 
       // If user hasn't explicitly customized plan in profile, sync with latest real subscription order
       if (latestSubOrder && !(loggedInCustomer as any).subPlanManuallyConfigured) {
+        // Only fill an empty box; a selection the customer has edited is kept.
+        if (!Array.isArray(state.subItems) || state.subItems.length === 0) {
+          state.subItems = realBoxItems;
+        }
         state.subPlan = realPlanName;
         state.subCansCount = realCansCount;
         state.subPrice = realPriceVal;
@@ -1685,7 +1693,9 @@ export default function CustomerAccount({
     }
     
     const rawBrand = (product.vendor || (product as any).brand || '').trim();
-    const rawVariant = product.variant || product.concreteVariantName || product.flavour || product.strength || 'Standard';
+    // Left empty when the product has no variant, rather than labelled
+    // 'Standard' as though the customer had chosen one.
+    const rawVariant = product.variant || product.concreteVariantName || product.flavour || product.strength || '';
 
     const existingIndex = currentItems.findIndex((item: any) => item.productId === product.id);
     if (existingIndex > -1) {
@@ -1707,7 +1717,7 @@ export default function CustomerAccount({
         quantity: 1,
         image: product.image,
         price: product.price,
-        formattedLabel: `${rawBrand ? rawBrand + ' — ' : ''}${product.title}${rawVariant && rawVariant !== 'Standard' ? ' — ' + rawVariant : ''} (Qty:1)`
+        formattedLabel: formatSubscriptionItemDisplay({ brand: rawBrand, name: product.title, variant: rawVariant, quantity: 1 })
       });
     }
     updateCustState({ ...custState, subItems: currentItems });
@@ -1721,7 +1731,7 @@ export default function CustomerAccount({
     if (oldItemIndex === -1) return;
     const oldQty = Number(updatedItems[oldItemIndex].quantity) || 1;
     const rawBrand = (newProduct.vendor || (newProduct as any).brand || '').trim();
-    const rawVariant = newProduct.variant || newProduct.concreteVariantName || newProduct.flavour || newProduct.strength || 'Standard';
+    const rawVariant = newProduct.variant || newProduct.concreteVariantName || newProduct.flavour || newProduct.strength || '';
     
     if (existingIndex > -1) {
       if (existingIndex === oldItemIndex) return; // same product, no-op
@@ -1743,7 +1753,7 @@ export default function CustomerAccount({
         quantity: oldQty,
         image: newProduct.image,
         price: newProduct.price,
-        formattedLabel: `${rawBrand ? rawBrand + ' — ' : ''}${newProduct.title}${rawVariant && rawVariant !== 'Standard' ? ' — ' + rawVariant : ''} (Qty:${oldQty})`
+        formattedLabel: formatSubscriptionItemDisplay({ brand: rawBrand, name: newProduct.title, variant: rawVariant, quantity: oldQty })
       };
     }
     updateCustState({ ...custState, subItems: updatedItems });
@@ -4315,7 +4325,13 @@ export default function CustomerAccount({
                     const planSlug = getPlanSlug(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan);
                     const planImg = getPlanImage(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan, prodImage);
                     const displayTitle = subDetails?.planName || (item as any).subscriptionPlan || item.productTitle;
-                    const subProducts = isSubscriptionItem ? (subDetails?.selectedProducts && subDetails.selectedProducts.length > 0 ? subDetails.selectedProducts : parseSubscriptionProducts(subDetails, item)) : [];
+                    // Resolved against the live catalogue so each line shows the
+                    // exact product and variant the customer selected. The order
+                    // itself is passed in, not just its subscription block, so
+                    // selections stored on the cart line are found too.
+                    const subProducts = isSubscriptionItem
+                      ? parseSubscriptionProducts(selectedOrderDetails, item, allProducts as any)
+                      : [];
 
                     return (
                       <div key={idx} className="p-3.5 space-y-2">
@@ -4360,15 +4376,18 @@ export default function CustomerAccount({
                               {subProducts.map((p: any, pIdx: number) => {
                                 const brand = p.brand || p.vendor || '';
                                 const name = p.name || p.productTitle || '';
-                                const variant = p.variant || p.variantName || 'Standard';
+                                const variant = p.variant || p.variantName || '';
+                                // The vendor is only prefixed when the exact product
+                                // title does not already start with it.
+                                const showBrand = Boolean(brand) && !name.toLowerCase().startsWith(brand.toLowerCase());
                                 const qty = p.quantity || 1;
                                 const formatted = p.formattedLabel || formatSubscriptionItemDisplay(p);
                                 return (
                                   <div key={pIdx} className="text-[10px] bg-white border border-slate-200/60 px-2 py-1 rounded flex justify-between items-center text-slate-700 font-medium">
                                     <span className="truncate pr-1">
-                                      {brand && <strong className="text-slate-900 font-bold">{brand} — </strong>}
+                                      {showBrand && <strong className="text-slate-900 font-bold">{brand} — </strong>}
                                       <span>{name}</span>
-                                      {variant && variant !== 'Standard' && <span className="text-indigo-600 font-semibold"> — {variant}</span>}
+                                      {variant && <span className="text-indigo-600 font-semibold"> — {variant}</span>}
                                     </span>
                                     <span className="text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-150 px-1 rounded shrink-0">
                                       Qty:{qty}
