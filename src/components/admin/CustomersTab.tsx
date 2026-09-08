@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Download, Upload, Plus, Eye, User, Mail, MapPin, Package, ShoppingBag, X, Check, ArrowRight, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Search, Download, Upload, Plus, Eye, User, Mail, MapPin, Package, ShoppingBag, X, Check, ArrowRight, RefreshCw, AlertTriangle, Trash2 } from 'lucide-react';
 import { Order, Product } from '../../types';
 import { extractSubscriptionDetails } from '../../utils/subscriptionParser';
 
@@ -24,6 +24,7 @@ interface CustomersTabProps {
   handleAddCustomerSubmit: (e: React.FormEvent) => void;
   newCustomerForm: { name: string; email: string; location: string; subscriptionStatus: 'Subscribed' | 'Not subscribed' | 'Unsubscribed' };
   setNewCustomerForm: React.Dispatch<React.SetStateAction<{ name: string; email: string; location: string; subscriptionStatus: 'Subscribed' | 'Not subscribed' | 'Unsubscribed' }>>;
+  onDeleteCustomer: (customer: CustomerItem) => void;
   orders?: Order[];
   /** Live catalogue, used to show each box item under its exact product name. */
   products?: Product[];
@@ -40,6 +41,7 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
   handleAddCustomerSubmit,
   newCustomerForm,
   setNewCustomerForm,
+  onDeleteCustomer,
   orders = [],
   products = []
 }) => {
@@ -428,6 +430,18 @@ export const CustomersTab: React.FC<CustomersTabProps> = ({
 
               {/* Customer Actions */}
               <div className="pt-2 flex justify-end gap-2 border-t border-slate-150">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const confirmed = window.confirm(`Delete customer "${selectedCustomer.name || selectedCustomer.email}"? This cannot be undone.`);
+                    if (!confirmed) return;
+                    onDeleteCustomer(selectedCustomer);
+                    setSelectedCustomer(null);
+                  }}
+                  className="mr-auto bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete Customer
+                </button>
                 <button
                   onClick={() => setSelectedCustomer(null)}
                   className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer"

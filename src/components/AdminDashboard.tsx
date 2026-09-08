@@ -1152,6 +1152,11 @@ export default function AdminDashboard({
     if (onDirtyChange) onDirtyChange(false);
   };
 
+  const handleDeleteCustomer = (customer: { email: string }) => {
+    const customerEmail = customer.email.toLowerCase().trim();
+    onUpdateCustomers(customers.filter(existing => existing.email.toLowerCase().trim() !== customerEmail));
+  };
+
   const onUpdateBlogs = (updatedBlogs: BlogPost[]) => {
     setLocalBlogs(updatedBlogs);
     parentOnUpdateBlogs(updatedBlogs);
@@ -3783,6 +3788,7 @@ export default function AdminDashboard({
             handleAddCustomerSubmit={handleAddCustomerSubmit}
             newCustomerForm={newCustomerForm}
             setNewCustomerForm={setNewCustomerForm}
+            onDeleteCustomer={handleDeleteCustomer}
             orders={orders}
           />
         )}

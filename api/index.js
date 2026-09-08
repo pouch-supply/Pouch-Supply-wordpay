@@ -8907,6 +8907,18 @@ router11.post(
           });
         } catch (_e) {
         }
+      } else if (emailClean) {
+        try {
+          await prisma.subscription.updateMany({
+            where: { customerEmail: emailClean },
+            data: { status: "active" }
+          });
+          subscription = await prisma.subscription.findFirst({
+            where: { customerEmail: emailClean },
+            orderBy: { createdAt: "desc" }
+          });
+        } catch (_e) {
+        }
       }
       try {
         const stored = await fetchResource("subscriptions") || [];
@@ -8949,6 +8961,38 @@ router11.post(
           });
           await saveResource("customers", updatedCustomers);
         } catch (_e) {
+        }
+        try {
+          const orders = await fetchResource("orders") || [];
+          let ordersModified = false;
+          const updatedOrders = orders.map((o) => {
+            const isCustOrder = String(o.customerEmail || "").toLowerCase().trim() === matchedEmail;
+            const isSub = Boolean(
+              o.isSubscription || Array.isArray(o.tags) && o.tags.some((t) => t && t.toLowerCase().includes("subscription")) || Array.isArray(o.items) && o.items.some((i) => i.isSubscription || i.productTitle && i.productTitle.toLowerCase().includes("subscription"))
+            );
+            if (!isCustOrder || !isSub) return o;
+            ordersModified = true;
+            const tags = (Array.isArray(o.tags) ? o.tags : []).filter((tag) => tag.toLowerCase() !== "subscription cancelled");
+            const subDetails = o.subscriptionDetails ? { ...o.subscriptionDetails } : {};
+            subDetails.status = "Active";
+            subDetails.isCancelled = false;
+            delete subDetails.cancelledAt;
+            delete subDetails.cancellationReason;
+            return {
+              ...o,
+              tags,
+              subscriptionCancelled: false,
+              subscriptionCancelledAt: null,
+              subscriptionCancellationReason: null,
+              subscriptionDetails: subDetails
+            };
+          });
+          if (ordersModified) {
+            await saveResource("orders", updatedOrders);
+            console.log(`[Subscription Reactivate] Updated matching orders for customer: ${matchedEmail}`);
+          }
+        } catch (orderErr) {
+          console.warn("[Subscription Reactivate] Failed to update orders:", orderErr);
         }
       }
       return res.json({

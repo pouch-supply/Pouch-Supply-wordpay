@@ -171,7 +171,6 @@ export default function CustomerAccount({
     subscriptions: '/pages/account/subscriptions',
     loyalty: '/pages/account/loyalty-rewards',
     referrals: '/pages/account/referrals',
-    payments: '/pages/account/payment-methods',
     details: '/pages/account/account-details',
     addresses: '/pages/account/delivery-addresses',
     support: '/pages/account/help-and-support'
@@ -1160,6 +1159,36 @@ export default function CustomerAccount({
         } as any);
       }
 
+      if (onUpdateOrder) {
+        const emailLower = loggedInCustomer.email.toLowerCase().trim();
+        orders.forEach(order => {
+          const isCustomerOrder = order.customerEmail?.toLowerCase().trim() === emailLower;
+          const isSubscriptionOrder = Boolean(
+            order.isSubscription ||
+            order.tags?.some(tag => tag.toLowerCase().includes('subscription')) ||
+            order.items?.some((item: any) => item.isSubscription || item.productTitle?.toLowerCase().includes('subscription'))
+          );
+          if (!isCustomerOrder || !isSubscriptionOrder) return;
+
+          const tags = (order.tags || []).filter(tag => tag.toLowerCase() !== 'subscription cancelled');
+          const subscriptionDetails: any = order.subscriptionDetails
+            ? { ...order.subscriptionDetails, status: 'Active', isCancelled: false }
+            : undefined;
+          if (subscriptionDetails) {
+            delete subscriptionDetails.cancelledAt;
+            delete subscriptionDetails.cancellationReason;
+          }
+          onUpdateOrder({
+            ...order,
+            tags,
+            subscriptionCancelled: false,
+            subscriptionCancelledAt: undefined,
+            subscriptionCancellationReason: undefined,
+            subscriptionDetails
+          });
+        });
+      }
+
       setSubActionToast({
         type: 'success',
         message: 'Subscription plan reactivated! Your automatic deliveries and benefits are resumed.'
@@ -1739,7 +1768,6 @@ export default function CustomerAccount({
     { id: 'subscriptions', label: 'Subscriptions', icon: RefreshCw },
     { id: 'loyalty', label: 'Loyalty Rewards', icon: Award },
     { id: 'referrals', label: 'Referrals', icon: Share2 },
-    { id: 'payments', label: 'Payment Methods', icon: CreditCard },
     { id: 'details', label: 'Account Details', icon: User },
     { id: 'addresses', label: 'Delivery Addresses', icon: MapPin },
     { id: 'support', label: 'Help & Support', icon: LifeBuoy }
@@ -4533,29 +4561,6 @@ export default function CustomerAccount({
                   <span>£{selectedOrderDetails.total.toFixed(2)}</span>
                 </div>
 
-                {/* Customer Actions */}
-                <div className="pt-4 border-t border-slate-100 flex flex-wrap gap-2 justify-end">
-                  {selectedOrderDetails.fulfillmentStatus !== 'Cancelled' &&
-                   selectedOrderDetails.fulfillmentStatus !== 'Shipped' &&
-                   selectedOrderDetails.fulfillmentStatus !== 'Delivered' && (
-                    <button
-                      onClick={() => setShowCancelModal(true)}
-                      className="py-2 px-3.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs cursor-pointer transition flex items-center gap-1.5"
-                    >
-                      <span>Cancel Order</span>
-                    </button>
-                  )}
-
-                  {selectedOrderDetails.fulfillmentStatus !== 'Cancelled' && (
-                    <button
-                      onClick={() => setShowReturnModal(true)}
-                      className="py-2 px-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs cursor-pointer transition flex items-center gap-1.5 shadow-xs"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>Return / Exchange Item</span>
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           </div>
