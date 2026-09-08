@@ -837,7 +837,7 @@ export default function App() {
           setCurrentTab(prev => (prev === 'frontend-subscribe' ? prev : 'frontend-subscribe'));
         } else if (slug === 'brands') {
           setCurrentTab(prev => (prev === 'frontend-brands' ? prev : 'frontend-brands'));
-        } else if (slug === 'account') {
+        } else if (slug === 'account' || slug.startsWith('account/')) {
           setCurrentTab(prev => (prev === 'frontend-account' ? prev : 'frontend-account'));
         } else if (slug === 'checkout') {
           setCurrentTab(prev => (prev === 'frontend-checkout' ? prev : 'frontend-checkout'));

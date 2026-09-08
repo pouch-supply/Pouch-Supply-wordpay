@@ -164,7 +164,28 @@ export default function CustomerAccount({
   const [returnRefundMethod, setReturnRefundMethod] = useState<'original' | 'store_credit'>('original');
 
   // Active view tab state (mimicking the sidebar items)
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const accountTabPaths: Record<string, string> = {
+    dashboard: '/pages/account',
+    orders: '/pages/account/orders',
+    wishlist: '/pages/account/wishlist',
+    subscriptions: '/pages/account/subscriptions',
+    loyalty: '/pages/account/loyalty-rewards',
+    referrals: '/pages/account/referrals',
+    payments: '/pages/account/payment-methods',
+    details: '/pages/account/account-details',
+    addresses: '/pages/account/delivery-addresses',
+    support: '/pages/account/help-and-support'
+  };
+  const accountPathTabs = Object.fromEntries(Object.entries(accountTabPaths).map(([tab, path]) => [path, tab]));
+  const initialAccountPath = window.location.pathname.replace(/\/$/, '') || '/pages/account';
+  const [activeTab, setActiveTabState] = useState<string>(accountPathTabs[initialAccountPath] || 'dashboard');
+  const setActiveTab = (tab: string) => {
+    setActiveTabState(tab);
+    const nextPath = accountTabPaths[tab] || accountTabPaths.dashboard;
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({ accountTab: tab }, '', nextPath);
+    }
+  };
   const [accountSubscriptions, setAccountSubscriptions] = useState<any[]>([]);
 
   // Track order in customer portal
@@ -399,9 +420,13 @@ export default function CustomerAccount({
     const params = new URLSearchParams(window.location.search);
     const trackId = params.get('track');
     const tabParam = params.get('tab');
-    if (tabParam) {
-      setActiveTab(tabParam);
-    }
+    const syncAccountPath = () => {
+      const path = window.location.pathname.replace(/\/$/, '') || '/pages/account';
+      const pathTab = accountPathTabs[path];
+      setActiveTabState(pathTab || tabParam || 'dashboard');
+    };
+    syncAccountPath();
+    window.addEventListener('popstate', syncAccountPath);
     if (trackId) {
       setTrackerInput(trackId);
       const found = orders.find(o => 
@@ -412,6 +437,7 @@ export default function CustomerAccount({
         setTrackedOrder(found);
       }
     }
+    return () => window.removeEventListener('popstate', syncAccountPath);
   }, [orders]);
 
   // Local storage state helper for customer properties
@@ -1019,6 +1045,10 @@ export default function CustomerAccount({
         subscriptionCancelledAt: cancellationTime,
         subscriptionCancellationReason: finalReason
       };
+      setAccountSubscriptions(previous => previous.map(subscription => ({
+        ...subscription,
+        status: 'cancelled'
+      })));
       updateCustState(updatedState);
 
       if (onUpdateProfile) {
@@ -1115,6 +1145,10 @@ export default function CustomerAccount({
         subStatus: 'Active',
         isSubscriptionCancelled: false
       };
+      setAccountSubscriptions(previous => previous.map(subscription => ({
+        ...subscription,
+        status: 'active'
+      })));
       updateCustState(updatedState);
 
       if (onUpdateProfile) {
@@ -2865,7 +2899,7 @@ export default function CustomerAccount({
               {/* TAB 3: SUBSCRIPTIONS (Interactive controls for active sub, swaps, pause/resume) */}
               {activeTab === 'subscriptions' && (
                 <div className="space-y-6">
-                  {!hasRealSubscription ? (
+                  {!hasRealSubscription && !hasCancelledSubscription ? (
                     <div className="bg-white border border-slate-200 rounded-3xl p-8 sm:p-12 shadow-xs text-center space-y-6 max-w-2xl mx-auto my-4">
                       <div className="w-16 h-16 bg-amber-50 border border-amber-200/80 rounded-full flex items-center justify-center mx-auto text-[#dfa047] shadow-2xs">
                         <RefreshCw className="w-8 h-8" />
