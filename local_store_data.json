@@ -21048,8 +21048,5 @@
       "discountApplied": null,
       "storeCreditApplied": 0
     }
-  ],
-  "recaptcha_settings": [],
-  "royalmail_settings": [],
-  "email_settings": []
+  ]
 }
