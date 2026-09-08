@@ -165,6 +165,7 @@ export default function CustomerAccount({
 
   // Active view tab state (mimicking the sidebar items)
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [accountSubscriptions, setAccountSubscriptions] = useState<any[]>([]);
 
   // Track order in customer portal
   const [trackerInput, setTrackerInput] = useState('');
@@ -259,11 +260,49 @@ export default function CustomerAccount({
     ))
   );
 
-  const latestSubOrder = mySubOrders[0] || null;
-  const hasRealSubscription = mySubOrders.length > 0 || Boolean(
-    loggedInCustomer && 
+  useEffect(() => {
+    let cancelled = false;
+    const email = loggedInCustomer?.email?.trim();
+    if (!email) {
+      setAccountSubscriptions([]);
+      return () => { cancelled = true; };
+    }
+
+    fetch('/api/subscriptions/status')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled) return;
+        const customerSubscriptions = Array.isArray(data?.subscriptions)
+          ? data.subscriptions.filter((subscription: any) =>
+              String(subscription.customerEmail || '').toLowerCase().trim() === email.toLowerCase()
+            )
+          : [];
+        setAccountSubscriptions(customerSubscriptions);
+      })
+      .catch(() => {
+        if (!cancelled) setAccountSubscriptions([]);
+      });
+
+    return () => { cancelled = true; };
+  }, [loggedInCustomer?.email]);
+
+  const activeAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
+    ['active', 'subscribed', 'paused'].includes(String(subscription.status || '').toLowerCase())
+  );
+  const cancelledAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
+    ['cancelled', 'canceled', 'inactive', 'cancelled_at'].includes(String(subscription.status || '').toLowerCase())
+  );
+  const hasCancelledSubscription = cancelledAccountSubscriptions.length > 0 || String((loggedInCustomer as any)?.subStatus || '').toLowerCase() === 'cancelled';
+  const hasRealSubscription = activeAccountSubscriptions.length > 0 || (
+    accountSubscriptions.length === 0 && mySubOrders.length > 0 &&
+    !mySubOrders.some(order => order.subscriptionCancelled || String(order.subscriptionDetails?.status || '').toLowerCase() === 'cancelled')
+  ) || Boolean(
+    loggedInCustomer &&
+    accountSubscriptions.length === 0 &&
+    !hasCancelledSubscription &&
     ((loggedInCustomer as any).hasPurchasedSubscription || (loggedInCustomer as any).subscriptionStatus === 'Subscribed' || (loggedInCustomer as any).hasActiveSubscription || (loggedInCustomer as any).subStatus === 'Active' || (loggedInCustomer as any).subStatus === 'Paused' || (loggedInCustomer as any).subPlan)
   );
+  const latestSubOrder = mySubOrders[0] || null;
 
   const getUnlockedRewardsCount = (count: number): number => {
     const staticMilestones = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29];
@@ -732,6 +771,18 @@ export default function CustomerAccount({
     ACCOUNT_SUB_PLANS.find(p => p.id === 'core')!;
 
   const subPlanPrice = Number(custState?.subPrice ?? selectedPlanTier.price) || selectedPlanTier.price;
+  const dashboardSubscriptions = activeAccountSubscriptions.length > 0
+    ? activeAccountSubscriptions
+    : hasRealSubscription && !hasCancelledSubscription
+      ? [{
+          id: 'profile-subscription',
+          planName: getAccountPlanLabel(custState?.subPlan),
+          amount: custState?.subPrice,
+          billingInterval: custState?.subFrequency,
+          nextBillingDate: custState?.nextPayment,
+          planImage: getPlanImage(custState?.subPlan)
+        }]
+      : [];
 
   // calculateDiscountAmount expects cart items; the plan is a single line item.
   const subPseudoCart = [
@@ -2239,72 +2290,48 @@ export default function CustomerAccount({
                             <RefreshCw className="h-4.5 w-4.5 text-[#dfa047]" />
                             Your active subscription
                           </h3>
-                          <span className={`text-[10px] font-bold py-1 px-3 rounded-full border ${hasRealSubscription ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                            {hasRealSubscription ? 'Active' : 'Not Subscribed'}
+                          <span className={`text-[10px] font-bold py-1 px-3 rounded-full border ${dashboardSubscriptions.length > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : hasCancelledSubscription ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                            {dashboardSubscriptions.length > 0 ? 'Active' : hasCancelledSubscription ? 'Cancelled' : 'Inactive'}
                           </span>
                         </div>
 
-                        {hasRealSubscription ? (
-                          <div className="flex flex-col md:flex-row gap-6 items-center">
-                            {/* Left: overlapping canisters preview */}
-                            <div className="flex -space-x-4 shrink-0">
-                              {(() => {
-                                const images = (custState.subItems || [])
-                                  .map((item: any) => item.image)
-                                  .filter(Boolean);
-                                const defaults = [
-                                  'https://images.unsplash.com/photo-1547887537-6158d64c35b3?auto=format&fit=crop&w=120&q=80',
-                                  'https://images.unsplash.com/photo-1616949755610-8c9bbc08f138?auto=format&fit=crop&w=120&q=80',
-                                  'https://images.unsplash.com/photo-1594035910387-fea47794261f?auto=format&fit=crop&w=120&q=80'
-                                ];
-                                const subscriptionImages = images.length > 0 ? [...images, ...defaults].slice(0, 3) : defaults;
-                                return subscriptionImages.map((imgSrc, i) => (
-                                  <img 
-                                    key={i} 
-                                    src={imgSrc} 
-                                    className="w-14 h-14 object-cover rounded-full border-2 border-white shadow-md bg-slate-100" 
-                                    alt="canister preview" 
-                                    referrerPolicy="no-referrer"
+                        {dashboardSubscriptions.length > 0 ? (
+                          <div className="space-y-3">
+                            {dashboardSubscriptions.map((subscription: any) => {
+                              const planName = subscription.planName || subscription.name || custState?.subPlan || 'Subscription Box';
+                              const planSlug = getPlanSlug(planName);
+                              const planTier = ACCOUNT_SUB_PLANS.find(tier => tier.id === planSlug);
+                              const amount = Number(subscription.amount ?? subscription.subPrice ?? planTier?.price ?? 0);
+                              return (
+                                <div key={subscription.id || planName} className="flex flex-col md:flex-row gap-4 items-center border border-slate-100 rounded-2xl p-3">
+                                  <img
+                                    src={getPlanImage(planName)}
+                                    className="w-20 h-20 object-contain rounded-xl bg-slate-50"
+                                    alt={`${planName} subscription plan`}
                                   />
-                                ));
-                              })()}
-                            </div>
-
-                            <div className="flex-1 space-y-1 text-center md:text-left">
-                              <h4 className="text-sm font-black text-[#071d37] uppercase tracking-wide">{(custState.subPlan || 'LITE').toUpperCase()} BOX PLAN</h4>
-                              <p className="text-xs text-slate-500">{custState.subCansCount || 6} items • Deliver {custState.subFrequency || 'Bi-Weekly'}</p>
-                              <p className="text-xs font-bold text-[#dfa047]">£{(Number(custState.subPrice || 27.99)).toFixed(2)} per delivery{custState.nextPayment ? ` • Next charge: ${custState.nextPayment}` : ''}</p>
-                            </div>
-
-                            <div className="flex md:flex-col gap-2 w-full md:w-auto shrink-0">
-                              <button 
-                                onClick={() => setActiveTab('subscriptions')}
-                                className="flex-1 md:w-44 bg-white hover:bg-slate-50 border border-slate-200 text-[#071d37] font-bold text-xs py-2 rounded-xl cursor-pointer text-center"
-                              >
-                                Manage Plan
-                              </button>
-                            </div>
+                                  <div className="flex-1 space-y-1 text-center md:text-left">
+                                    <h4 className="text-sm font-black text-[#071d37] uppercase tracking-wide">{planName}</h4>
+                                    <p className="text-xs text-slate-500">{planTier?.cans || subscription.cansCount || custState?.subCansCount || 6} items • Deliver {subscription.billingInterval || subscription.subFrequency || custState?.subFrequency || 'Bi-Weekly'}</p>
+                                    <p className="text-xs font-bold text-[#dfa047]">£{amount.toFixed(2)} per delivery{subscription.nextBillingDate ? ` • Next charge: ${subscription.nextBillingDate}` : ''}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => setActiveTab('subscriptions')}
+                                    className="w-full md:w-36 bg-white hover:bg-slate-50 border border-slate-200 text-[#071d37] font-bold text-xs py-2 rounded-xl cursor-pointer text-center"
+                                  >
+                                    Manage Plan
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : hasCancelledSubscription ? (
+                          <div className="text-center py-6 px-4 bg-rose-50 rounded-2xl border border-rose-100 space-y-2">
+                            <h4 className="text-sm font-black text-rose-900 uppercase tracking-wide">Subscription Cancelled</h4>
+                            <p className="text-xs text-rose-700">Your recurring subscription has been cancelled. No active plan is currently running.</p>
                           </div>
                         ) : (
-                          <div className="text-center py-6 px-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
-                            <div className="w-12 h-12 bg-amber-50 border border-amber-200/60 rounded-full flex items-center justify-center mx-auto text-[#dfa047]">
-                              <RefreshCw className="w-6 h-6" />
-                            </div>
-                            <div>
-                              <h4 className="text-sm font-black text-[#071d37] uppercase tracking-wide">No Active Subscription Yet</h4>
-                              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-                                You haven't subscribed to a pouch box yet. Subscribe now to get automated deliveries & up to 12% off on every order!
-                              </p>
-                            </div>
-                            <button 
-                              onClick={() => {
-                                window.location.href = '/subscribe';
-                              }}
-                              className="mt-1 inline-flex items-center gap-2 bg-[#071d37] hover:bg-[#0c2e56] text-white font-extrabold text-xs uppercase tracking-wider py-2.5 px-6 rounded-xl transition-all shadow-2xs cursor-pointer"
-                            >
-                              <RefreshCw className="w-3.5 h-3.5 text-[#dfa047]" />
-                              Explore Subscription Plans
-                            </button>
+                          <div className="text-center py-6 px-4 bg-slate-50 rounded-2xl border border-slate-100">
+                            <h4 className="text-sm font-black text-slate-700 uppercase tracking-wide">Subscription Inactive</h4>
                           </div>
                         )}
                       </div>
@@ -2314,48 +2341,6 @@ export default function CustomerAccount({
                     {/* Right Side Column: Free Rewards Redemptions list & Friends Invites */}
                     <div className="space-y-6">
                       
-                      {/* Redeem rewards list */}
-                      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
-                        <div className="border-b border-slate-100 pb-3">
-                          <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">Redeem Your Free Gifts</h3>
-                          <p className="text-slate-400 text-[10px] mt-0.5">Select a premium unlocked loyalty gift below.</p>
-                        </div>
-
-                        <div className="space-y-3">
-                          {custState.unlockedRewards.map((rew: any) => (
-                            <div key={rew.id} className="flex items-center justify-between p-2.5 bg-[#f4f6f9] rounded-2xl border border-slate-100">
-                              <div className="flex gap-2 items-center">
-                                <div className="p-1.5 bg-[#071d37]/5 text-[#dfa047] rounded-xl">
-                                  <Tag className="h-4 w-4" />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-[11px] font-black text-[#071d37] truncate">{rew.title}</p>
-                                  <p className="text-[9px] text-slate-400 truncate">{rew.desc}</p>
-                                </div>
-                              </div>
-
-                              <button
-                                onClick={() => {
-                                  if (rew.redeemed) return;
-                                  const updatedRewards = custState.unlockedRewards.map((r: any) => 
-                                    r.id === rew.id ? { ...r, redeemed: true } : r
-                                  );
-                                  updateCustState({ ...custState, unlockedRewards: updatedRewards });
-                                  alert(`Successfully redeemed! Use promo code "${rew.code}" at checkout or enjoy automatically in your next sub delivery.`);
-                                }}
-                                className={`text-[9px] font-black uppercase py-1.5 px-3 rounded-lg border cursor-pointer transition-colors ${
-                                  rew.redeemed 
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-150 cursor-not-allowed' 
-                                    : 'bg-[#071d37] text-white hover:bg-[#dfa047] border-slate-200'
-                                }`}
-                              >
-                                {rew.redeemed ? 'Redeemed' : 'Redeem'}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
                       {/* Invite Friends Referral Card */}
                       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
                         <div className="space-y-1">
@@ -2909,6 +2894,31 @@ export default function CustomerAccount({
                     </div>
                   ) : (
                     <>
+                      {activeAccountSubscriptions.length > 1 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {activeAccountSubscriptions.map((subscription: any) => {
+                            const planName = subscription.planName || subscription.name || 'Subscription Box';
+                            const planSlug = getPlanSlug(planName);
+                            const planTier = ACCOUNT_SUB_PLANS.find(tier => tier.id === planSlug);
+                            const amount = Number(subscription.amount ?? subscription.subPrice ?? planTier?.price ?? 0);
+                            return (
+                              <div key={subscription.id || planName} className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs flex items-center gap-4">
+                                <img
+                                  src={getPlanImage(planName)}
+                                  className="w-20 h-20 object-contain rounded-xl bg-slate-50"
+                                  alt={`${planName} subscription plan`}
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Active subscription</p>
+                                  <h3 className="text-sm font-black text-[#071d37] uppercase truncate">{planName}</h3>
+                                  <p className="text-xs text-slate-500">{planTier?.cans || subscription.cansCount || 6} items • £{amount.toFixed(2)} per delivery</p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       {/* Subscription Feedback Toast */}
                       {subActionToast && (
                         <div className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold ${
@@ -2925,7 +2935,7 @@ export default function CustomerAccount({
                       )}
 
                       {/* Cancelled Banner if subscription is cancelled */}
-                      {custState.subStatus === 'Cancelled' && (
+                      {(custState.subStatus === 'Cancelled' || hasCancelledSubscription) && (
                         <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                           <div className="flex items-start gap-3.5">
                             <div className="p-2.5 bg-rose-100 border border-rose-300 rounded-2xl text-rose-700 shrink-0 mt-0.5">
