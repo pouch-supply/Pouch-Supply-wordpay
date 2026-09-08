@@ -16,7 +16,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   onUpdateOrder,
   onAddTimelineComment
 }) => {
-  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'TPN');
+  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'TPNN');
   const [weightGrams, setWeightGrams] = useState<number>(350);
   const [creating, setCreating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -328,10 +328,14 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                 onChange={(e) => setServiceCode(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 shadow-2xs"
               >
-                <option value="TPN">Royal Mail Tracked 24® (TPN)</option>
-                <option value="TPS">Royal Mail Tracked 48® (TPS)</option>
-                <option value="TRN">Royal Mail Tracked 24® Letterboxable (TRN)</option>
-                <option value="TRS">Royal Mail Tracked 48® Letterboxable (TRS)</option>
+                <option value="TPNN">Tracked 24® no signature (TPNN)</option>
+                <option value="TPNS">Tracked 24® with signature (TPNS)</option>
+                <option value="TPSN">Tracked 48® no signature (TPSN)</option>
+                <option value="TPSS">Tracked 48® with signature (TPSS)</option>
+                <option value="CRL1">Royal Mail 24® (CRL1)</option>
+                <option value="CRL2">Royal Mail 48® (CRL2)</option>
+                <option value="BPL1">Royal Mail 1st Class (BPL1)</option>
+                <option value="BPL2">Royal Mail 2nd Class (BPL2)</option>
                 <option value="SD1">Special Delivery Guaranteed by 1pm® (SD1)</option>
               </select>
             </div>

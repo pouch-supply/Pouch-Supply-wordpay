@@ -406,7 +406,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           const hasKey = Boolean(rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY);
           if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
             createRoyalMailShipment(newOrderId, {
-              serviceCode: rmSettings.defaultServiceCode || 'TPN',
+              serviceCode: rmSettings.defaultServiceCode,
               weightGrams: rmSettings.defaultWeightGrams || 350
             }).catch(err => {
               console.warn(

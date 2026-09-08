@@ -279,7 +279,7 @@ router.post("/test-service-code", async (req: Request, res: Response) => {
 
     const results = [];
     for (const code of codes.slice(0, 10)) {
-      results.push(await testServiceCode(String(code)));
+      results.push(await testServiceCode(String(code), req.body?.tradingName));
     }
 
     return res.json({ success: true, results, accepted: results.filter(r => r.accepted).map(r => r.serviceCode) });

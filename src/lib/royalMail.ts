@@ -188,9 +188,12 @@ export interface RoyalMailPackage {
 }
 
 export interface RoyalMailPostageDetails {
-  sendNotificationsTo?: "sender" | "recipient" | "none";
+  sendNotificationsTo?: "Sender" | "Recipient" | "Billing";
 
-  serviceCode: string;
+  // Optional. Click & Drop accepts an order with no service, leaving postage to
+  // be applied in the portal — the only route for an account whose contract holds
+  // none of the codes it would otherwise need.
+  serviceCode?: string;
   serviceRegisterCode?: string;
 
   consequentialLoss?: number;
@@ -473,9 +476,22 @@ export async function getOrderByReference(reference: string, apiKey: string) {
   return getRoyalMailOrder(reference, apiKey);
 }
 
-export async function cancelOrder(reference: string, apiKey: string) {
-  const encoded = `"${encodeURIComponent(reference)}"`;
-  return royalMailRequest(`/orders/${encoded}`, { method: "DELETE" }, apiKey);
+/**
+ * Deletes one or more Click & Drop orders.
+ *
+ * The endpoint distinguishes numeric order identifiers from order references:
+ * identifiers go through bare, references must be wrapped in double quotes.
+ * Multiple values are separated by a SEMICOLON — a comma is rejected. Quoting a
+ * numeric identifier makes Click & Drop look for a reference of that name and
+ * report the order as non-existent.
+ */
+export async function cancelOrder(reference: string | string[], apiKey: string) {
+  const values = (Array.isArray(reference) ? reference : [reference])
+    .map(v => String(v).trim())
+    .filter(Boolean)
+    .map(v => (/^\d+$/.test(v) ? v : `"${encodeURIComponent(v)}"`));
+
+  return royalMailRequest(`/orders/${values.join(";")}`, { method: "DELETE" }, apiKey);
 }
 
 export async function getApiVersion(apiKey: string) {

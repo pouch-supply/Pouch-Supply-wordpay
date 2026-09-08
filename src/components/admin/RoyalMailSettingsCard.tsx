@@ -30,7 +30,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
     integrationName: 'Pouch-Supply',
     enabled: true,
     autoCreateShipmentOnPayment: false,
-    defaultServiceCode: 'TPN',
+    defaultServiceCode: '',
     defaultPackageType: 'Parcel',
     defaultWeightGrams: 350,
     senderAddress: {
@@ -340,20 +340,29 @@ export const RoyalMailSettingsCard: React.FC = () => {
                   list="royalmail-service-codes"
                   value={settings.defaultServiceCode}
                   onChange={(e) => setSettings({ ...settings, defaultServiceCode: e.target.value.trim().toUpperCase() })}
-                  placeholder="e.g. TPN"
+                  placeholder="Leave blank to set postage in Click &amp; Drop"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
                 />
                 <datalist id="royalmail-service-codes">
-                  <option value="TPN">Royal Mail Tracked 24®</option>
-                  <option value="TPS">Royal Mail Tracked 48®</option>
-                  <option value="TRN">Royal Mail Tracked 24® Letterboxable</option>
-                  <option value="TRS">Royal Mail Tracked 48® Letterboxable</option>
+                  <option value="TPNN">Tracked 24® no signature</option>
+                  <option value="TPNS">Tracked 24® with signature</option>
+                  <option value="TPSN">Tracked 48® no signature</option>
+                  <option value="TPSS">Tracked 48® with signature</option>
+                  <option value="TRNN">Tracked 24® letterboxable</option>
+                  <option value="TRSN">Tracked 48® letterboxable</option>
+                  <option value="CRL1">Royal Mail 24®</option>
+                  <option value="CRL2">Royal Mail 48®</option>
+                  <option value="BPL1">Royal Mail 1st Class</option>
+                  <option value="BPL2">Royal Mail 2nd Class</option>
+                  <option value="BPR1">Royal Mail Signed 1st Class</option>
+                  <option value="BPR2">Royal Mail Signed 2nd Class</option>
                   <option value="SD1">Special Delivery Guaranteed by 1pm®</option>
                 </datalist>
                 <p className="text-[10px] text-slate-500 font-medium mt-1 leading-snug">
-                  Must be a service on your Royal Mail contract. Click &amp; Drop rejects
-                  anything else with &quot;service code could not be found&quot;. Check
-                  Click &amp; Drop &rarr; Settings &rarr; Shipping services for your list.
+                  Leave blank unless your Royal Mail contract actually includes the
+                  service. Click &amp; Drop accepts orders with no service code and lets
+                  you apply postage in the portal; a code your account does not hold
+                  makes every shipment fail with &quot;service code could not be found&quot;.
                 </p>
               </div>
 

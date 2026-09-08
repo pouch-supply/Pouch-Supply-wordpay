@@ -6684,232 +6684,6 @@
   ],
   "customers": [
     {
-      "id": "cust-1787119234840-2vqjv",
-      "name": "Ritesh Dhiman",
-      "email": "info@gtlofficial.com",
-      "subPlan": "pro",
-      "location": "United Kingdom",
-      "subItems": [
-        {
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785238344/storefront_media/file_ylgvvn.jpg",
-          "price": 4.99,
-          "title": "ZYN 13.5 mg",
-          "quantity": 5,
-          "productId": "zyn-135-mg"
-        },
-        {
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785236308/storefront_media/file_cpdbpp.jpg",
-          "price": 4.99,
-          "title": "77 20 mg",
-          "quantity": 4,
-          "productId": "77-20-mg"
-        },
-        {
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785237412/storefront_media/file_py8pnx.jpg",
-          "price": 4.99,
-          "title": "ZYN 1.5 mg",
-          "quantity": 1,
-          "productId": "zyn-15-mg"
-        }
-      ],
-      "subPrice": 36.89,
-      "wishlist": [],
-      "addresses": [
-        "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom",
-        "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
-        "Customer Address on File",
-        "United Kingdom"
-      ],
-      "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-      "subStatus": "active",
-      "ageCheckId": null,
-      "ageChecked": false,
-      "savedCards": [
-        {
-          "id": "card_1",
-          "exp": "12/28",
-          "brand": "Visa",
-          "last4": "4242",
-          "default": true
-        }
-      ],
-      "ageVerified": false,
-      "amountSpent": 78.1,
-      "nextPayment": "2026-09-09",
-      "ordersCount": 2,
-      "storeCredit": 0,
-      "nextDelivery": "24 June 2026",
-      "referralCode": "REF-PS-RITESH-CBZK",
-      "subCansCount": 10,
-      "subFrequency": "Next Day (Test)",
-      "ageVerifiedAt": null,
-      "emailVerified": true,
-      "referralsList": [],
-      "referredCount": 0,
-      "referralCredit": 0,
-      "referredByCode": null,
-      "emailVerifiedAt": "2026-08-14T06:23:41.284Z",
-      "unlockedRewards": [
-        {
-          "id": "reward_1",
-          "code": "FREESHIP",
-          "desc": "Complimentary shipping upgrade",
-          "title": "Free Express Delivery",
-          "redeemed": false
-        },
-        {
-          "id": "reward_2",
-          "code": "POUCH5OFF",
-          "desc": "Direct cash discount voucher",
-          "title": "£5.00 Off Order",
-          "redeemed": false
-        },
-        {
-          "id": "reward_3",
-          "code": "FREECAN",
-          "desc": "Unlock a free sample in next box",
-          "title": "Free Extra Can",
-          "redeemed": false
-        }
-      ],
-      "subscriptionStatus": "Active Subscriber"
-    },
-    {
-      "id": "cust-1787119234840-fpxtr",
-      "data": {
-        "subPlan": "lite",
-        "subItems": [
-          {
-            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-            "price": 4.99,
-            "title": "77 5.2 mg",
-            "quantity": 4,
-            "productId": "77-52-mg"
-          },
-          {
-            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-            "price": 4.99,
-            "title": "77 20 mg",
-            "quantity": 2,
-            "productId": "77-20-mg"
-          }
-        ],
-        "subPrice": 27.99,
-        "subCansCount": 6,
-        "subFrequency": "Next Day (Test)",
-        "subPlanManuallyConfigured": true
-      },
-      "name": "neha",
-      "email": "nehabhardwaz.gtl@gmail.com",
-      "subPlan": "lite",
-      "googleId": "100258769752533638588",
-      "location": "United Kingdom",
-      "subItems": [
-        {
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
-          "price": 4.99,
-          "title": "77 5.2 mg",
-          "quantity": 4,
-          "productId": "77-52-mg"
-        },
-        {
-          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
-          "price": 4.99,
-          "title": "77 20 mg",
-          "quantity": 2,
-          "productId": "77-20-mg"
-        }
-      ],
-      "subPrice": 27.99,
-      "wishlist": [
-        "PCH-563404-RASPBERRY-ICE",
-        "PCH-563404-WATERMELON-ICE"
-      ],
-      "addresses": [
-        "Daari, London, EC1A 1BB, United Kingdom",
-        "Sidhpur, Rana Motor Care, London, EC1A 1BB, United Kingdom",
-        "Daari, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
-        "United Kingdom"
-      ],
-      "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-      "resetCode": "253759",
-      "subStatus": "active",
-      "resetToken": "74594e4858863c74359916a86bdc3878c84fec80dc8495bd",
-      "savedCards": [],
-      "amountSpent": 55.98,
-      "nextPayment": "2026-09-09",
-      "ordersCount": 2,
-      "storeCredit": 0,
-      "nextDelivery": "9 Sept 2026",
-      "referralCode": "REF-PS-NEHA-OZCP",
-      "subCansCount": 6,
-      "subFrequency": "Next Day (Test)",
-      "emailVerified": true,
-      "referralsList": [],
-      "referredCount": 0,
-      "referralCredit": 0,
-      "referredByCode": null,
-      "emailVerifiedAt": "2026-08-11T07:28:38.659Z",
-      "unlockedRewards": [
-        {
-          "id": "reward_1",
-          "code": "FREESHIP",
-          "desc": "Complimentary Royal Mail shipping upgrade",
-          "title": "Free Royal Mail Tracked Delivery",
-          "redeemed": false
-        },
-        {
-          "id": "reward_2",
-          "code": "POUCH5OFF",
-          "desc": "Direct cash discount voucher",
-          "title": "£5.00 Off Order",
-          "redeemed": false
-        },
-        {
-          "id": "reward_3",
-          "code": "FREECAN",
-          "desc": "Unlock a free sample in next box",
-          "title": "Free Extra Can",
-          "redeemed": false
-        }
-      ],
-      "resetTokenExpires": 1787033213461,
-      "subscriptionStatus": "Active Subscriber",
-      "subPlanManuallyConfigured": true
-    },
-    {
-      "id": "cust-1786337661067-0u2i3",
-      "name": "Valued Customer",
-      "email": "customer@pouch-supply.com",
-      "location": "United Kingdom",
-      "wishlist": [],
-      "addresses": [
-        "United Kingdom"
-      ],
-      "amountSpent": 0,
-      "ordersCount": 0,
-      "subscriptionStatus": "Not subscribed"
-    },
-    {
-      "id": "cust-1785323086009-pu9q2",
-      "name": "neha bhardwazz",
-      "email": "nehadice2020@gmail.com",
-      "location": "Daari, London, EC1A 1BB, United Kingdom",
-      "wishlist": [],
-      "addresses": [
-        "Daari, London, EC1A 1BB, United Kingdom",
-        "Rana motor care Gurlu bridge , Sidhpur, London, EC1A 1BB, United Kingdom",
-        "Daari, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom"
-      ],
-      "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-      "amountSpent": 0,
-      "ordersCount": 0,
-      "referralCode": "REF-PS-NEHADICE-9COD",
-      "emailVerified": true,
-      "emailVerifiedAt": "2026-08-14T17:26:42.142Z",
-      "subscriptionStatus": "Not subscribed"
-    },
-    {
       "id": "cust_1786362252630_jzwla",
       "name": "Scottkivlinpouch",
       "email": "scottkivlinpouch@gmail.com",
@@ -6932,79 +6706,6 @@
       "emailVerified": true,
       "referredByCode": null,
       "emailVerifiedAt": "2026-08-10T11:44:12.630Z"
-    },
-    {
-      "id": "cust-1786342687049",
-      "name": "Ritesh Dhiman",
-      "email": "ritesh.dhiman2712@gmail.com",
-      "subPlan": "core",
-      "location": "United Kingdom",
-      "subItems": [],
-      "subPrice": 35.99,
-      "wishlist": [
-        "PCH-151473-WATERMELON",
-        "PCH-151473-TROPICAL-FRUIT",
-        "PCH-151473-RASPBERRY",
-        "PCH-151473-PINEAPPLE",
-        "PCH-151473-PEACH",
-        "PCH-151473-MANGO",
-        "PCH-151473-LOLLIPOP",
-        "PCH-151473-JOGHURT",
-        "PCH-151473-ICE-SPEARMINT",
-        "PCH-151473-GRAPE",
-        "PCH-151473-FOREST-BERRIES",
-        "PCH-151473-DOUBLE-FRESH"
-      ],
-      "addresses": [
-        "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom",
-        "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom"
-      ],
-      "subStatus": "Paused",
-      "savedCards": [
-        {
-          "id": "card_1",
-          "exp": "12/28",
-          "brand": "Visa",
-          "last4": "4242",
-          "default": true
-        }
-      ],
-      "amountSpent": 0,
-      "nextPayment": "19 June 2026",
-      "ordersCount": 0,
-      "storeCredit": 0,
-      "nextDelivery": "24 June 2026",
-      "referralCode": "REF-PS-RITESH-9CTH",
-      "subCansCount": 8,
-      "subFrequency": "Every 4 Weeks",
-      "referralsList": [],
-      "referredCount": 0,
-      "referralCredit": 0,
-      "referredByCode": null,
-      "unlockedRewards": [
-        {
-          "id": "reward_1",
-          "code": "FREESHIP",
-          "desc": "Complimentary Royal Mail shipping upgrade",
-          "title": "Free Royal Mail Tracked Delivery",
-          "redeemed": false
-        },
-        {
-          "id": "reward_2",
-          "code": "POUCH5OFF",
-          "desc": "Direct cash discount voucher",
-          "title": "£5.00 Off Order",
-          "redeemed": false
-        },
-        {
-          "id": "reward_3",
-          "code": "FREECAN",
-          "desc": "Unlock a free sample in next box",
-          "title": "Free Extra Can",
-          "redeemed": false
-        }
-      ],
-      "subscriptionStatus": "Not subscribed"
     },
     {
       "id": "cust-1785410706738-eq2m2",
@@ -7083,50 +6784,30 @@
       "subscriptionStatus": "Active Subscriber"
     },
     {
-      "id": "cust_1786688645201_i4h3e",
-      "name": "Riteshdhimangtl",
-      "email": "riteshdhimangtl@gmail.com",
-      "googleId": "google_1786688645201",
-      "addresses": [],
-      "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-      "signupDate": "2026-08-14",
-      "totalSpent": 0,
-      "ordersCount": 0,
-      "storeCredit": 0,
-      "referralCode": "REF-PS-RITESHDHIMANGTL-LVXK",
-      "rewardPoints": 50,
-      "emailVerified": true,
-      "referredByCode": null,
-      "emailVerifiedAt": "2026-08-14T06:24:05.201Z"
-    },
-    {
-      "id": "cust_1786435045894_a6v4z",
-      "name": "ajay thakur",
-      "email": "mblesscenter@gmail.com",
-      "googleId": "google_1786435045894",
-      "addresses": [],
-      "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-      "signupDate": "2026-08-11",
-      "totalSpent": 0,
-      "ordersCount": 0,
-      "storeCredit": 0,
-      "referralCode": "REF-PS-AJAY-B8UX",
-      "rewardPoints": 50,
-      "emailVerified": true,
-      "referredByCode": null,
-      "emailVerifiedAt": "2026-08-11T07:57:25.894Z"
-    },
-    {
-      "id": "cust-1785323539730-hmhrd",
-      "name": "Agastya Thapa",
-      "email": "agastya0730@gmail.com",
-      "location": "Sidhpur, Rana Motor Care, London, EC1A 1BB, United Kingdom",
+      "id": "cust-1788870238259-tf7ll",
+      "name": "Ritesh Dhiman",
+      "email": "info@gtlofficial.com",
+      "location": "United Kingdom",
       "wishlist": [],
       "addresses": [
-        "Sidhpur, Rana Motor Care, London, EC1A 1BB, United Kingdom"
+        "United Kingdom"
       ],
-      "amountSpent": 0,
-      "ordersCount": 0,
+      "amountSpent": 78.1,
+      "ordersCount": 2,
+      "subscriptionStatus": "Not subscribed"
+    },
+    {
+      "id": "cust-1788870238259-mffde",
+      "name": "neha",
+      "email": "nehabhardwaz.gtl@gmail.com",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [
+        "United Kingdom"
+      ],
+      "amountSpent": 55.98,
+      "ordersCount": 2,
+      "referralCode": "REF-PS-NEHA-GAT6",
       "subscriptionStatus": "Not subscribed"
     }
   ],
@@ -22709,7 +22390,5 @@
       "storeCreditApplied": 0
     }
   ],
-  "recaptcha_settings": [],
-  "royalmail_settings": [],
-  "email_settings": []
+  "royalmail_settings": []
 }

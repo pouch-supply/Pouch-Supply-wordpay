@@ -30,7 +30,11 @@ export interface RoyalMailSettings {
    * packed, not when it is paid for.
    */
   autoCreateShipmentOnPayment: boolean;
-  defaultServiceCode: string; // Royal Mail service code, e.g. 'TPN', 'TPS', 'SD1'
+  defaultServiceCode: string; // Royal Mail service code, e.g. 'TPNN', 'TPSN', 'CRL1'
+  // Two-digit OBA contract identifier ("01", "02", ...). Some accounts hold more
+  // than one rate agreement for the same service and Click & Drop needs to know
+  // which. Left blank when the account has only one.
+  defaultServiceRegisterCode?: string;
   defaultPackageType: string; // 'Parcel', 'LargeLetter', 'Letter'
   defaultWeightGrams: number;
   senderAddress: {
@@ -56,7 +60,9 @@ export const DEFAULT_ROYAL_MAIL_SETTINGS: RoyalMailSettings = {
   enabled: true,
   autoCreateShipmentOnPayment:
     String(process.env.ROYAL_MAIL_AUTO_DISPATCH || '').toLowerCase() === 'true',
-  defaultServiceCode: 'TPN',
+  // Blank on purpose: an account only accepts codes on its own contract, and a
+  // wrong one fails every shipment. Postage is then applied in Click & Drop.
+  defaultServiceCode: '',
   defaultPackageType: 'Parcel',
   defaultWeightGrams: 350,
   senderAddress: {
@@ -243,11 +249,20 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
  * by Royal Mail comes from your account's contracted rates, not from here.
  *
  * The service codes, however, are not ours to choose. They must be real Royal
- * Mail codes AND present on your OBA / Royal Mail Tracked contract, or Click &
- * Drop rejects the shipment with error 31. The domestic Tracked codes are TPN
- * (Tracked 24) and TPS (Tracked 48) — note there is no "TPS24"; that value was
- * invented here and matched nothing. Letterboxable variants are TRN and TRS.
- * Confirm what your own account exposes before adding a code to this list.
+ * Mail codes AND present on your OBA contract, or Click & Drop rejects the
+ * shipment with error 31.
+ *
+ * Tracked codes carry a signature suffix — TPN and TPS name the service family,
+ * not a bookable service:
+ *   TPNN/TPNS  Tracked 24, without / with signature
+ *   TPSN/TPSS  Tracked 48, without / with signature
+ *   TRNN/TRSN  the letterboxable equivalents
+ * Non-Tracked OBA services use their own codes: CRL1 (RM24), CRL2 (RM48),
+ * BPL1/BPL2 (1st/2nd Class), BPR1/BPR2 (Signed 1st/2nd).
+ *
+ * Which of these you may actually use is account-specific and no API lists
+ * them, so confirm against Click & Drop > Settings > Shipping services (or run
+ * POST /api/royalmail/test-service-code) before adding a code here.
  */
 export function getShippingRates(weightGrams: number = 350, countryCode: string = 'GB'): ShippingRateOption[] {
   const isUK = normalizeCountryCode(countryCode) === 'GB';
@@ -255,7 +270,7 @@ export function getShippingRates(weightGrams: number = 350, countryCode: string 
   if (isUK) {
     return [
       {
-        serviceCode: 'TPN',
+        serviceCode: 'TPNN',
         serviceName: 'Royal Mail Tracked 24®',
         estimatedDelivery: 'Next Working Day',
         price: 4.95,
@@ -264,7 +279,7 @@ export function getShippingRates(weightGrams: number = 350, countryCode: string 
         signatureRequired: false
       },
       {
-        serviceCode: 'TPS',
+        serviceCode: 'TPSN',
         serviceName: 'Royal Mail Tracked 48®',
         estimatedDelivery: '2-3 Working Days',
         price: 3.85,
@@ -483,7 +498,12 @@ function resolveRecipientFromOrder(order: any): { valid: boolean; errors: string
  * Nothing is ever labelled, manifested or dispatched, so no postage is bought.
  * A code that is rejected creates nothing in the first place.
  */
-export async function testServiceCode(serviceCode: string): Promise<{
+export async function testServiceCode(
+  serviceCode: string,
+  // Lets the test run before the sender address has been saved — useful when
+  // checking codes from a deployment other than the live storefront.
+  tradingNameOverride?: string
+): Promise<{
   serviceCode: string;
   accepted: boolean;
   message: string;
@@ -496,7 +516,11 @@ export async function testServiceCode(serviceCode: string): Promise<{
 
   const settings = await getRoyalMailSettings();
   const apiKey = await requireApiKey(settings);
-  const sender = requireSender(settings);
+
+  const overrideName = String(tradingNameOverride || '').trim();
+  const sender = overrideName
+    ? { ...(settings.senderAddress || ({} as any)), companyName: overrideName }
+    : requireSender(settings);
 
   const reference = `SVC-TEST-${Date.now().toString().slice(-8)}`;
   const payload: CreateRoyalMailOrderRequest = {
@@ -524,7 +548,7 @@ export async function testServiceCode(serviceCode: string): Promise<{
         contents: [{ name: 'Service code test', quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
       }
     ],
-    postageDetails: { serviceCode: code, sendNotificationsTo: 'none' }
+    postageDetails: { serviceCode: code, sendNotificationsTo: 'Sender' }
   };
 
   let result: any;
@@ -588,6 +612,7 @@ export interface CreateShipmentResult {
  */
 export async function createRoyalMailShipment(orderId: string, options: {
   serviceCode?: string;
+  serviceRegisterCode?: string;
   packageType?: string;
   weightGrams?: number;
 } = {}): Promise<CreateShipmentResult> {
@@ -618,10 +643,14 @@ export async function createRoyalMailShipment(orderId: string, options: {
     );
   }
 
-  const serviceCode = options.serviceCode || settings.defaultServiceCode || 'TPN';
+  // Empty means "no service": a deliberate, working choice, not a missing value.
+  const serviceCode = String(options.serviceCode ?? settings.defaultServiceCode ?? '').trim();
+  const registerCode = String(options.serviceRegisterCode || settings.defaultServiceRegisterCode || '').trim();
   const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
   const selectedRate = rates.find(r => r.serviceCode === serviceCode);
-  const serviceName = selectedRate?.serviceName || `Royal Mail (${serviceCode})`;
+  const serviceName =
+    selectedRate?.serviceName ||
+    (serviceCode ? `Royal Mail (${serviceCode})` : 'Royal Mail (postage set in Click & Drop)');
 
   console.log(`[RoyalMailService] Creating live Click & Drop order for #${orderId} via ${serviceCode}`);
 
@@ -681,8 +710,15 @@ export async function createRoyalMailShipment(orderId: string, options: {
       }
     ],
     postageDetails: {
-      serviceCode,
-      sendNotificationsTo: recipientObj.emailAddress ? 'recipient' : 'none',
+      // Sent only when the store has one. Click & Drop accepts an order with no
+      // service at all and lets postage be applied in the portal, which is the only
+      // way an account with no services on its contract can ship anything: any code
+      // it does not hold is rejected outright.
+      ...(serviceCode ? { serviceCode } : {}),
+      ...(serviceCode && registerCode ? { serviceRegisterCode: registerCode } : {}),
+      // Royal Mail rejects anything outside Sender/Recipient/Billing, and it
+      // rejects the whole order, not just this field.
+      sendNotificationsTo: recipientObj.emailAddress ? 'Recipient' : 'Sender',
       receiveEmailNotification: Boolean(recipientObj.emailAddress),
       receiveSmsNotification: Boolean(recipientObj.phoneNumber)
     }
@@ -710,10 +746,12 @@ export async function createRoyalMailShipment(orderId: string, options: {
     if (unknownServiceCode) {
       detail +=
         ` — "${serviceCode}" is not a service Royal Mail will accept for this account. ` +
-        'The domestic Tracked codes are TPN (Tracked 24) and TPS (Tracked 48); ' +
-        'TRN and TRS are the letterboxable variants. Check which services are on ' +
-        'your contract under Click & Drop > Settings > Shipping services, then set ' +
-        'the code in Admin > Settings > Royal Mail.';
+        'Tracked codes need a signature suffix: TPNN/TPNS (Tracked 24) and ' +
+        'TPSN/TPSS (Tracked 48). Non-Tracked OBA services use CRL1 (RM24), ' +
+        'CRL2 (RM48), BPL1/BPL2 (1st/2nd Class). Which of these your account may ' +
+        'use is contract-specific — check Click & Drop > Settings > Shipping ' +
+        'services, or POST /api/royalmail/test-service-code to have Royal Mail ' +
+        'tell you directly, then set it in Admin > Settings > Royal Mail.';
     }
 
     throw new Error(`Royal Mail rejected the shipment for order #${orderId}: ${detail}`);
