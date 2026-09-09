@@ -11,8 +11,8 @@ export interface RecaptchaSettingsData {
 
 export function RecaptchaSettingsCard() {
   const [settings, setSettings] = useState<RecaptchaSettingsData>({
-    enabled: true,
-    siteKey: '6LefWfspAAAAADsJ-68J39yGfE08JzW_0000000',
+    enabled: false,
+    siteKey: '',
     secretKey: '',
     minScore: 0.5
   });
@@ -37,8 +37,8 @@ export function RecaptchaSettingsCard() {
       .then((data) => {
         if (data) {
           setSettings({
-            enabled: typeof data.enabled === 'boolean' ? data.enabled : true,
-            siteKey: data.siteKey || '6LefWfspAAAAADsJ-68J39yGfE08JzW_0000000',
+            enabled: typeof data.enabled === 'boolean' ? data.enabled : false,
+            siteKey: data.siteKey || '',
             secretKey: data.secretKey || '',
             minScore: typeof data.minScore === 'number' ? data.minScore : 0.5,
             hasSecretKey: data.hasSecretKey
@@ -70,29 +70,33 @@ export function RecaptchaSettingsCard() {
     }
   };
 
+  // Reports whether reCAPTCHA is actually configured. It used to submit a
+  // fabricated contact form to the live endpoint, which sent a real email and
+  // filed a real contact message on every press, and it passed only because
+  // the server accepted a hardcoded fake token.
   const handleTestVerification = async () => {
     setTestResult({ status: 'testing' });
     try {
-      const res = await fetch('/api/email/contact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'reCAPTCHA Test Bot',
-          email: 'test@recaptcha-verify.com',
-          message: 'Testing reCAPTCHA score verification',
-          recaptchaToken: 'SIMULATED_RECAPTCHA_TOKEN_TEST'
-        })
-      });
+      const res = await fetch('/api/email/recaptcha-settings');
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (!res.ok) {
+        setTestResult({ status: 'error', message: 'Could not read reCAPTCHA settings from the server.' });
+      } else if (!data.enabled) {
         setTestResult({
-          status: 'success',
-          message: 'reCAPTCHA protection layer verified and active! High-confidence submissions allowed.'
+          status: 'error',
+          message: 'reCAPTCHA is switched off. Forms are accepted without a bot check.'
+        });
+      } else if (!data.siteKey || !data.hasSecretKey) {
+        setTestResult({
+          status: 'error',
+          message: !data.siteKey
+            ? 'reCAPTCHA is on but no site key is saved, so the widget cannot load. Submissions will be refused.'
+            : 'reCAPTCHA is on but no secret key is saved, so the server cannot verify tokens. Submissions will be refused.'
         });
       } else {
         setTestResult({
-          status: 'error',
-          message: data.error || 'reCAPTCHA test check failed.'
+          status: 'success',
+          message: `reCAPTCHA is active. Site key and secret key are saved; submissions scoring below ${data.minScore} are refused.`
         });
       }
     } catch (err: any) {

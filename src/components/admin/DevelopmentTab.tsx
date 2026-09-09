@@ -2,11 +2,11 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Code, Terminal, Sparkles, Check, Copy, RotateCcw, Save, Search, 
   Maximize2, Minimize2, CheckCircle2, AlertTriangle, Play, FileCode, 
-  Layers, Shield, Cpu, RefreshCw, Eye, Sliders, Server, Globe, Download, 
+  Layers, Shield, Cpu, RefreshCw, Eye, Sliders, Globe, Download, 
   Upload, Trash2, Plus, Edit3, Lock, Zap, ToggleLeft, ToggleRight,
   BarChart2, Tag, Activity, HelpCircle, ExternalLink, X
 } from 'lucide-react';
-import { DevSettings, CustomHtmlSnippet, ThirdPartyIntegrations, EnvironmentApiSettings } from '../../types';
+import { DevSettings, CustomHtmlSnippet, ThirdPartyIntegrations } from '../../types';
 import { DEFAULT_DEV_SETTINGS } from '../../data/initialDevSettings';
 import { applyDevSettingsToDOM } from '../../utils/devModeInjector';
 
@@ -15,7 +15,7 @@ interface DevelopmentTabProps {
   onUpdateSettings?: (newSettings: DevSettings) => void;
 }
 
-type DevSubTab = 'css' | 'js' | 'head' | 'body' | 'snippets' | 'integrations' | 'env';
+type DevSubTab = 'css' | 'js' | 'head' | 'body' | 'snippets' | 'integrations';
 
 export default function DevelopmentTab({ settings: initialSettings, onUpdateSettings }: DevelopmentTabProps) {
   // Local state for DevSettings
@@ -385,8 +385,7 @@ export default function DevelopmentTab({ settings: initialSettings, onUpdateSett
           { id: 'head', label: 'Custom Head Code', icon: Tag, badge: devSettings.customHeadEnabled ? 'ON' : 'OFF' },
           { id: 'body', label: 'Custom Body Code', icon: Layers, badge: devSettings.customBodyEnabled ? 'ON' : 'OFF' },
           { id: 'snippets', label: 'HTML Snippets', icon: Sparkles, count: devSettings.snippets.length },
-          { id: 'integrations', label: 'Third-Party Integrations', icon: BarChart2 },
-          { id: 'env', label: 'Environment & API', icon: Server }
+          { id: 'integrations', label: 'Third-Party Integrations', icon: BarChart2 }
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeSubTab === tab.id;
@@ -1068,190 +1067,6 @@ export default function DevelopmentTab({ settings: initialSettings, onUpdateSett
       )}
 
       {/* 4. ENVIRONMENT & API SETTINGS TAB */}
-      {activeSubTab === 'env' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs">
-            <h2 className="text-base font-extrabold text-slate-900">Environment & Application API Configuration</h2>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Safely update backend service endpoints, feature flags, API headers, timeouts and rate limits directly from the dashboard.
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-2xs space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* API Base URL */}
-              <div>
-                <label className="block text-xs font-extrabold text-slate-800 mb-1">API Base Endpoint URL</label>
-                <input
-                  type="text"
-                  value={devSettings.envSettings.apiBaseUrl}
-                  onChange={(e) => {
-                    const updated = {
-                      ...devSettings,
-                      envSettings: { ...devSettings.envSettings, apiBaseUrl: e.target.value }
-                    };
-                    setDevSettings(updated);
-                    handleSaveDevSettings(updated);
-                  }}
-                  className="w-full text-xs font-mono p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-amber-400"
-                />
-              </div>
-
-              {/* Environment Mode */}
-              <div>
-                <label className="block text-xs font-extrabold text-slate-800 mb-1">Environment Mode</label>
-                <select
-                  value={devSettings.envSettings.environmentName}
-                  onChange={(e) => {
-                    const updated = {
-                      ...devSettings,
-                      envSettings: { ...devSettings.envSettings, environmentName: e.target.value as any }
-                    };
-                    setDevSettings(updated);
-                    handleSaveDevSettings(updated);
-                  }}
-                  className="w-full text-xs font-extrabold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-amber-400"
-                >
-                  <option value="production">Production (Live Storefront)</option>
-                  <option value="staging">Staging Environment</option>
-                  <option value="development">Local Development Sandbox</option>
-                </select>
-              </div>
-
-              {/* Timeout MS */}
-              <div>
-                <label className="block text-xs font-extrabold text-slate-800 mb-1">API Request Timeout (ms)</label>
-                <input
-                  type="number"
-                  value={devSettings.envSettings.apiTimeoutMs}
-                  onChange={(e) => {
-                    const updated = {
-                      ...devSettings,
-                      envSettings: { ...devSettings.envSettings, apiTimeoutMs: Number(e.target.value) || 15000 }
-                    };
-                    setDevSettings(updated);
-                    handleSaveDevSettings(updated);
-                  }}
-                  className="w-full text-xs font-mono p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-amber-400"
-                />
-              </div>
-
-              {/* Rate Limit */}
-              <div>
-                <label className="block text-xs font-extrabold text-slate-800 mb-1">Rate Limit (Requests / Min)</label>
-                <input
-                  type="number"
-                  value={devSettings.envSettings.rateLimitRequestsPerMin}
-                  onChange={(e) => {
-                    const updated = {
-                      ...devSettings,
-                      envSettings: { ...devSettings.envSettings, rateLimitRequestsPerMin: Number(e.target.value) || 120 }
-                    };
-                    setDevSettings(updated);
-                    handleSaveDevSettings(updated);
-                  }}
-                  className="w-full text-xs font-mono p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-amber-400"
-                />
-              </div>
-            </div>
-
-            {/* Feature Flags Toggles */}
-            <div className="border-t border-slate-100 pt-6">
-              <h3 className="text-xs font-extrabold uppercase text-slate-400 tracking-wider mb-4">Application Feature Flags</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-center justify-between">
-                  <div>
-                    <span className="block text-xs font-extrabold text-slate-900">Debug Logging Mode</span>
-                    <span className="text-[10px] text-slate-500">Outputs verbose logs to console</span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={devSettings.envSettings.debugMode}
-                      onChange={(e) => {
-                        const updated = {
-                          ...devSettings,
-                          envSettings: { ...devSettings.envSettings, debugMode: e.target.checked }
-                        };
-                        setDevSettings(updated);
-                        handleSaveDevSettings(updated);
-                      }}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
-                  </label>
-                </div>
-
-                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-center justify-between">
-                  <div>
-                    <span className="block text-xs font-extrabold text-slate-900">Maintenance Mode</span>
-                    <span className="text-[10px] text-slate-500">Displays lock screen on store</span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={devSettings.envSettings.maintenanceMode}
-                      onChange={(e) => {
-                        const updated = {
-                          ...devSettings,
-                          envSettings: { ...devSettings.envSettings, maintenanceMode: e.target.checked }
-                        };
-                        setDevSettings(updated);
-                        handleSaveDevSettings(updated);
-                      }}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-rose-500"></div>
-                  </label>
-                </div>
-
-                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-center justify-between">
-                  <div>
-                    <span className="block text-xs font-extrabold text-slate-900">Experimental Features</span>
-                    <span className="text-[10px] text-slate-500">Unlocks beta features</span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={devSettings.envSettings.enableExperimentalFeatures}
-                      onChange={(e) => {
-                        const updated = {
-                          ...devSettings,
-                          envSettings: { ...devSettings.envSettings, enableExperimentalFeatures: e.target.checked }
-                        };
-                        setDevSettings(updated);
-                        handleSaveDevSettings(updated);
-                      }}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* Custom HTTP Headers JSON */}
-            <div className="border-t border-slate-100 pt-6">
-              <label className="block text-xs font-extrabold text-slate-800 mb-1">Custom HTTP Request Headers (JSON)</label>
-              <textarea
-                rows={4}
-                value={devSettings.envSettings.customHeadersJson}
-                onChange={(e) => {
-                  const updated = {
-                    ...devSettings,
-                    envSettings: { ...devSettings.envSettings, customHeadersJson: e.target.value }
-                  };
-                  setDevSettings(updated);
-                  handleSaveDevSettings(updated);
-                }}
-                className="w-full text-xs font-mono p-3 bg-slate-950 text-amber-200/90 rounded-xl outline-none focus:border-amber-400"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* CREATE / EDIT SNIPPET MODAL */}
       {showNewSnippetModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">

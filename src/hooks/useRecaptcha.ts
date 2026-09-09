@@ -9,11 +9,12 @@ declare global {
   }
 }
 
-export const DEFAULT_SITE_KEY = '6LefWfspAAAAADsJ-68J39yGfE08JzW_0000000';
-
 export function useRecaptcha() {
+  // No placeholder key. The old default was a made-up value ending in zeros,
+  // which Google rejects, so the widget never loaded and every caller fell
+  // through to a fabricated token.
   const [siteKey, setSiteKey] = useState<string>(
-    (import.meta as any).env?.VITE_RECAPTCHA_SITE_KEY || DEFAULT_SITE_KEY
+    (import.meta as any).env?.VITE_RECAPTCHA_SITE_KEY || ''
   );
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,44 +81,41 @@ export function useRecaptcha() {
     document.head.appendChild(script);
   }, [siteKey]);
 
+  // Returns a real Google token, or an empty string when reCAPTCHA is not
+  // configured or could not run. It never invents a token: the previous
+  // fallbacks produced strings the server had been coded to accept, so a
+  // blocked, timed-out or unconfigured captcha still reported a pass. An
+  // empty token lets the server apply its own policy -- allowed when
+  // reCAPTCHA is switched off, refused when it is switched on.
   const executeRecaptcha = useCallback(
     async (action: string = 'submit'): Promise<string> => {
-      if (!siteKey) {
-        console.log('[useRecaptcha] No siteKey available, returning simulated token.');
-        return `SIMULATED_RECAPTCHA_TOKEN_ACTION_${action}_${Date.now()}`;
-      }
+      if (!siteKey || typeof window === 'undefined' || !window.grecaptcha) return '';
 
-      // If grecaptcha exists on window
-      if (typeof window !== 'undefined' && window.grecaptcha) {
-        try {
-          return await new Promise<string>((resolve) => {
-            const timeout = setTimeout(() => {
-              console.warn('[useRecaptcha] reCAPTCHA execution timed out, using fallback token.');
-              resolve(`PASSED_LOCAL_TOKEN_${action}_${Date.now()}`);
-            }, 4000);
+      try {
+        return await new Promise<string>((resolve) => {
+          const timeout = setTimeout(() => {
+            console.warn('[useRecaptcha] reCAPTCHA execution timed out.');
+            resolve('');
+          }, 4000);
 
-            window.grecaptcha!.ready(() => {
-              window.grecaptcha!
-                .execute(siteKey, { action })
-                .then((token) => {
-                  clearTimeout(timeout);
-                  resolve(token);
-                })
-                .catch((err) => {
-                  clearTimeout(timeout);
-                  console.warn('[useRecaptcha] grecaptcha.execute error:', err);
-                  resolve(`PASSED_LOCAL_TOKEN_${action}_${Date.now()}`);
-                });
-            });
+          window.grecaptcha!.ready(() => {
+            window.grecaptcha!
+              .execute(siteKey, { action })
+              .then((token) => {
+                clearTimeout(timeout);
+                resolve(token || '');
+              })
+              .catch((err) => {
+                clearTimeout(timeout);
+                console.warn('[useRecaptcha] grecaptcha.execute error:', err);
+                resolve('');
+              });
           });
-        } catch (err) {
-          console.warn('[useRecaptcha] Exception during executeRecaptcha:', err);
-          return `PASSED_LOCAL_TOKEN_${action}_${Date.now()}`;
-        }
+        });
+      } catch (err) {
+        console.warn('[useRecaptcha] Exception during executeRecaptcha:', err);
+        return '';
       }
-
-      // Fallback if grecaptcha is blocked by client
-      return `PASSED_LOCAL_TOKEN_${action}_${Date.now()}`;
     },
     [siteKey]
   );

@@ -44,33 +44,6 @@ export function isUsableRecurringHref(href?: string | null): boolean {
   return true;
 }
 
-/**
- * Simulated authorizations are a development convenience only. They record an
- * order as Paid without any money moving, so they must be opted into
- * explicitly — otherwise a live store silently reports fake successful
- * renewals, which is exactly the failure this flag exists to prevent.
- *
- * The opt-in is ignored entirely on a live Worldpay account. A live store was
- * booking renewal orders as Paid, emailing dispatch confirmations and adding to
- * the customer's lifetime spend on authorizations that never reached Worldpay.
- * Testing that flow belongs on the try/sandbox environment.
- */
-export function simulationAllowed(): boolean {
-  const optedIn = String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
-  if (!optedIn) return false;
-
-  if (isLiveWorldpayEnvironment()) {
-    console.error(
-      "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT is set but the environment is LIVE. " +
-        "Simulated charges are refused: a renewal without a real Worldpay stored credential " +
-        "will fail instead of being recorded as paid. Point WORLDPAY_BASE_URL at the try " +
-        "environment to exercise the recurring flow."
-    );
-    return false;
-  }
-
-  return true;
-}
 
 /**
  * True when this process is pointed at a real, money-moving Worldpay account.
@@ -258,7 +231,6 @@ export interface RecurringChargeResult {
   authCode?: string | null;
   schemeReference?: string | null;
   paymentMethod?: string;
-  simulated: boolean;
   rawResponse?: any;
   timestamp: string;
 }
@@ -303,9 +275,6 @@ export async function chargeRecurringSubscription({
     Boolean(previousTransactionId) && !isPlaceholderCredential(previousTransactionId);
 
   if (!config) {
-    if (simulationAllowed()) {
-      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
-    }
     throw new Error(
       configError ||
         "Worldpay credentials are not configured, so no recurring payment can be taken."
@@ -313,12 +282,6 @@ export async function chargeRecurringSubscription({
   }
 
   if (!usableHref && !usableScheme && !usablePreviousTx) {
-    if (simulationAllowed()) {
-      console.warn(
-        `[Worldpay Subscription] No stored credential for ${transactionReference}; returning a SIMULATED authorization because WORLDPAY_ALLOW_SIMULATED_MIT=true.`
-      );
-      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
-    }
     throw new Error(
       "No Worldpay stored credential is available for this subscription. " +
         "The initial payment must be taken with a customer agreement so Worldpay returns a " +
@@ -378,16 +341,8 @@ export async function chargeRecurringSubscription({
       `[Worldpay Subscription] Recurring charge REJECTED for ${transactionReference}: ${response.status} — ${errMsg}`
     );
 
-    // Only fall back to a simulated success when explicitly enabled for
-    // development. In every other case a rejection is a real failure and the
-    // renewal must be recorded as failed rather than as a paid order.
-    if (simulationAllowed()) {
-      console.warn(
-        "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT=true — returning a simulated authorization instead of failing."
-      );
-      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
-    }
-
+    // A rejection is a real failure. The renewal is recorded as failed rather
+    // than being reported as a paid order nobody was charged for.
     throw new Error(errMsg);
   }
 
@@ -415,31 +370,8 @@ export async function chargeRecurringSubscription({
     currency,
     authCode: data?.authorizationCode || data?.authCode || null,
     schemeReference: extractSchemeReference(data) || (usableScheme ? schemeReference : null),
-    simulated: false,
     rawResponse: data,
     timestamp: new Date().toISOString()
   };
 }
 
-function buildSimulatedResult(
-  transactionReference: string,
-  amount: number,
-  currency: string,
-  schemeReference?: string | null
-): RecurringChargeResult {
-  console.log(
-    `[Worldpay Subscription] SIMULATED (no money taken) MIT authorization for tx: ${transactionReference}`
-  );
-  return {
-    id: `WP-SIM-${Date.now().toString().slice(-6)}`,
-    status: "authorized",
-    transactionReference,
-    amount,
-    currency,
-    authCode: "AUTH-SIMULATED",
-    paymentMethod: "Simulated Worldpay Recurring",
-    schemeReference: schemeReference || null,
-    simulated: true,
-    timestamp: new Date().toISOString()
-  };
-}

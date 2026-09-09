@@ -3,8 +3,7 @@ import { fetchResource, saveResource, getDb } from '../../serverDb';
 import {
   chargeRecurringSubscription,
   isUsableRecurringHref,
-  isPlaceholderCredential,
-  simulationAllowed
+  isPlaceholderCredential
 } from './worldpaySubscription';
 import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from './subscriptionBox';
 
@@ -276,16 +275,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         isUsableRecurringHref(recurringHref) ||
         (Boolean(schemeReference) && !isPlaceholderCredential(schemeReference));
 
-      // In simulation mode the charge is deliberately faked, so a missing
-      // credential must not block the run — this is how the 1-day test schedule
-      // can be exercised end to end without live Worldpay stored credentials.
-      //
-      // This asks the charger rather than reading the flag directly, so a live
-      // account is treated as unsimulatable in both places. Reading the env var
-      // here would let the worker proceed into a charge the charger refuses.
-      const allowSimulated = simulationAllowed();
-
-      if (!hasUsableCredential && !allowSimulated) {
+      if (!hasUsableCredential) {
         console.warn(
           `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential ` +
             `(href=${recurringHref || 'none'}, scheme=${schemeReference || 'none'}). ` +
@@ -379,7 +369,6 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
             schemeReference: chargeResult?.schemeReference || schemeReference,
             paymentMethod: 'Worldpay Access MIT',
             recurringRenewal: true,
-            simulatedPayment: Boolean(chargeResult?.simulated),
             shippingCost: shippingAmount,
             subtotal: itemSubtotal
           },
@@ -451,8 +440,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           status: 'succeeded',
           orderId: newOrderId,
           nextBillingDate: claimedNextBilling.toISOString(),
-          transactionReference,
-          simulated: Boolean(chargeResult?.simulated)
+          transactionReference
         });
       } catch (chargeErr: any) {
         console.error(`[Subscription Worker] Charge FAILED for sub ${subId}:`, chargeErr.message);

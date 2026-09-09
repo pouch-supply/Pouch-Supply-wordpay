@@ -111,16 +111,5 @@ export const DEFAULT_DEV_SETTINGS: DevSettings = {
     customWebhookEnabled: false
   },
 
-  envSettings: {
-    apiBaseUrl: 'https://api.pouchsupply.co.uk/v1',
-    environmentName: 'production',
-    debugMode: false,
-    maintenanceMode: false,
-    enableExperimentalFeatures: true,
-    apiTimeoutMs: 15000,
-    customHeadersJson: `{\n  "X-Pouch-Client": "web-storefront",\n  "X-Api-Version": "2026-07"\n}`,
-    rateLimitRequestsPerMin: 120
-  },
-
   updatedAt: new Date().toISOString()
 };

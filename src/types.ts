@@ -444,17 +444,6 @@ export interface ThirdPartyIntegrations {
   customWebhookEnabled: boolean;
 }
 
-export interface EnvironmentApiSettings {
-  apiBaseUrl: string;
-  environmentName: 'production' | 'staging' | 'development';
-  debugMode: boolean;
-  maintenanceMode: boolean;
-  enableExperimentalFeatures: boolean;
-  apiTimeoutMs: number;
-  customHeadersJson: string;
-  rateLimitRequestsPerMin: number;
-}
-
 export interface DevSettings {
   customCss: string;
   customCssEnabled: boolean;
@@ -466,7 +455,6 @@ export interface DevSettings {
   customBodyEnabled: boolean;
   snippets: CustomHtmlSnippet[];
   integrations: ThirdPartyIntegrations;
-  envSettings: EnvironmentApiSettings;
   updatedAt?: string;
 }
 

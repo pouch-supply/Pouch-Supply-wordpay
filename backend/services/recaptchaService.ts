@@ -8,9 +8,14 @@ export interface RecaptchaSettings {
   minScore: number; // 0.0 to 1.0, standard default is 0.5
 }
 
+// reCAPTCHA is off until real Google credentials are supplied. It used to
+// default to on with a placeholder site key and no secret, which meant every
+// token was waved through -- protection that looked enabled but verified
+// nothing. Enabling it without a secret key now refuses requests instead, so
+// the default has to be honest about whether it is actually configured.
 export const DEFAULT_RECAPTCHA_SETTINGS: RecaptchaSettings = {
-  enabled: true,
-  siteKey: process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SITE_KEY || '6LefWfspAAAAADsJ-68J39yGfE08JzW_0000000',
+  enabled: Boolean(process.env.RECAPTCHA_SECRET_KEY),
+  siteKey: process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SITE_KEY || '',
   secretKey: process.env.RECAPTCHA_SECRET_KEY || '',
   minScore: 0.5
 };
@@ -63,17 +68,22 @@ export async function verifyRecaptchaToken(
     };
   }
 
-  // Simulated or local testing tokens
-  if (token.startsWith('SIMULATED_RECAPTCHA_TOKEN') || token.startsWith('PASSED_LOCAL_TOKEN')) {
-    console.log('[RecaptchaService] Simulated reCAPTCHA token received and approved (Score: 0.9)');
-    return { success: true, score: 0.9, action: expectedAction };
-  }
-
   const secretKey = settings.secretKey || process.env.RECAPTCHA_SECRET_KEY;
 
   if (!secretKey || secretKey.trim().length === 0) {
-    console.warn('[RecaptchaService] No RECAPTCHA_SECRET_KEY configured. Granting pass-through verification for live token.');
-    return { success: true, score: 0.95, action: expectedAction };
+    // Switching reCAPTCHA on is a deliberate request for protection. Approving
+    // every token because the key is missing turns that switch into decoration,
+    // so the misconfiguration is reported rather than silently waved through.
+    console.error(
+      '[RecaptchaService] reCAPTCHA is ENABLED but no secret key is configured. ' +
+        'Set RECAPTCHA_SECRET_KEY, or add the secret key in the admin reCAPTCHA settings, ' +
+        'or turn reCAPTCHA off. Refusing to verify.'
+    );
+    return {
+      success: false,
+      score: 0.0,
+      error: 'reCAPTCHA is enabled but not configured on the server. Please contact support.'
+    };
   }
 
   try {
