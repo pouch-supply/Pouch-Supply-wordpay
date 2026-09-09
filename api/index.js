@@ -5566,9 +5566,31 @@ async function createRoyalMailShipment(orderId, options = {}) {
   const senderObj = { tradingName: sender.companyName.trim() };
   if (sender.contactPhone?.trim()) senderObj.phoneNumber = sender.contactPhone.trim();
   if (sender.contactEmail?.trim()) senderObj.emailAddress = sender.contactEmail.trim();
+  const money = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : NaN;
+  };
+  const round2 = (n) => Math.round(n * 100) / 100;
   const totalVal = Number(order.total) || 0;
-  const shippingVal = Number(order.shippingCost ?? order.deliveryCost ?? 0);
-  const subtotalVal = Number(order.subtotal) || Math.max(0, totalVal - shippingVal);
+  const itemsTotal = Array.isArray(order.items) ? round2(
+    order.items.reduce(
+      (sum, it) => sum + (Number(it?.price) || 0) * (Number(it?.quantity) || 1),
+      0
+    )
+  ) : 0;
+  let shippingVal = [
+    order.shippingCost,
+    order.deliveryCost,
+    order.data?.shippingCost,
+    order.data?.deliveryCost
+  ].map(money).find((n) => Number.isFinite(n));
+  if (!Number.isFinite(shippingVal)) {
+    shippingVal = itemsTotal > 0 && totalVal > itemsTotal ? round2(totalVal - itemsTotal) : 0;
+  }
+  let subtotalVal = [order.subtotal, order.data?.subtotal].map(money).find((n) => Number.isFinite(n));
+  if (!Number.isFinite(subtotalVal)) {
+    subtotalVal = itemsTotal > 0 ? itemsTotal : Math.max(0, round2(totalVal - shippingVal));
+  }
   const payload = {
     orderReference: String(order.id),
     isRecipientABusiness: Boolean(recipient.companyName?.trim()),

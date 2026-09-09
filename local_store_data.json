@@ -6204,15 +6204,15 @@
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "subscriptionCancelled": true,
-      "subscriptionCancelledAt": "2026-09-09T11:56:13.751Z",
-      "subscriptionCancellationReason": "Test subscription removed during setup",
       "subscriptionDetails": {
         "status": "Cancelled",
-        "isCancelled": true,
         "cancelledAt": "2026-09-09T11:56:13.751Z",
+        "isCancelled": true,
         "cancellationReason": "Test subscription removed during setup"
-      }
+      },
+      "subscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:56:13.751Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     },
     {
       "id": "PS46141",
@@ -6616,7 +6616,6 @@
       "id": "cust-1785410706738-eq2m2",
       "name": "Scott Kivlin",
       "email": "scott@pouch-supply.com",
-      "subPlan": "core",
       "location": "39 Tonks Drive, London, EC1A 1BB, United Kingdom",
       "subItems": [
         {
@@ -6634,14 +6633,12 @@
           "productId": "77-20-mg"
         }
       ],
-      "subPrice": 35.99,
       "wishlist": [],
       "addresses": [
         "39 Tonks Drive, London, EC1A 1BB, United Kingdom",
         "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
         "United Kingdom"
       ],
-      "subStatus": "Cancelled",
       "savedCards": [
         {
           "id": "card_1",
@@ -6652,7 +6649,6 @@
         }
       ],
       "amountSpent": 25.19,
-      "nextPayment": "2026-09-09",
       "ordersCount": 1,
       "storeCredit": 0,
       "nextDelivery": "24 June 2026",
@@ -6686,7 +6682,6 @@
           "redeemed": false
         }
       ],
-      "subscriptionStatus": "Cancelled",
       "isSubscriptionCancelled": true,
       "subscriptionCancelledAt": "2026-09-09T11:54:09.885Z",
       "subscriptionCancellationReason": "Test subscription removed during setup"
@@ -6700,10 +6695,8 @@
       "addresses": [
         "United Kingdom"
       ],
-      "subStatus": "Cancelled",
       "amountSpent": 78.1,
       "ordersCount": 2,
-      "subscriptionStatus": "Cancelled",
       "isSubscriptionCancelled": true,
       "subscriptionCancelledAt": "2026-09-09T11:55:30.517Z",
       "subscriptionCancellationReason": "Test subscription removed during setup"
@@ -6717,11 +6710,9 @@
       "addresses": [
         "United Kingdom"
       ],
-      "subStatus": "Cancelled",
       "amountSpent": 55.98,
       "ordersCount": 2,
       "referralCode": "REF-PS-NEHA-GAT6",
-      "subscriptionStatus": "Cancelled",
       "isSubscriptionCancelled": true,
       "subscriptionCancelledAt": "2026-09-09T11:56:13.751Z",
       "subscriptionCancellationReason": "Test subscription removed during setup"
@@ -18125,6 +18116,5 @@
         }
       }
     }
-  ],
-  "contactMessages": []
+  ]
 }

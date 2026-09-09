@@ -905,9 +905,51 @@ export async function createRoyalMailShipment(orderId: string, options: {
   if (sender.contactPhone?.trim()) senderObj.phoneNumber = sender.contactPhone.trim();
   if (sender.contactEmail?.trim()) senderObj.emailAddress = sender.contactEmail.trim();
 
+  // Click & Drop shows these as the order's own breakdown, so sending zero
+  // shipping made every label read "Retail shipping cost 0.00" with the
+  // postage folded into the sub-total.
+  //
+  // Orders do not reliably carry subtotal/shippingCost -- they are optional
+  // columns that default to 0, and `Number(undefined ?? 0)` is 0, which read
+  // as a genuine free-delivery order rather than a missing figure. The line
+  // items are the one part always present, so the split is derived from them
+  // when it was not recorded.
+  const money = (v: any): number => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : NaN;
+  };
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
   const totalVal = Number(order.total) || 0;
-  const shippingVal = Number(order.shippingCost ?? order.deliveryCost ?? 0);
-  const subtotalVal = Number(order.subtotal) || Math.max(0, totalVal - shippingVal);
+
+  const itemsTotal = Array.isArray(order.items)
+    ? round2(
+        order.items.reduce(
+          (sum: number, it: any) => sum + (Number(it?.price) || 0) * (Number(it?.quantity) || 1),
+          0
+        )
+      )
+    : 0;
+
+  let shippingVal = [
+    order.shippingCost,
+    order.deliveryCost,
+    order.data?.shippingCost,
+    order.data?.deliveryCost
+  ].map(money).find(n => Number.isFinite(n)) as number;
+
+  if (!Number.isFinite(shippingVal)) {
+    // Whatever the customer paid above the line items is the delivery charge.
+    shippingVal = itemsTotal > 0 && totalVal > itemsTotal ? round2(totalVal - itemsTotal) : 0;
+  }
+
+  let subtotalVal = [order.subtotal, order.data?.subtotal]
+    .map(money)
+    .find(n => Number.isFinite(n)) as number;
+
+  if (!Number.isFinite(subtotalVal)) {
+    subtotalVal = itemsTotal > 0 ? itemsTotal : Math.max(0, round2(totalVal - shippingVal));
+  }
 
   const payload: CreateRoyalMailOrderRequest = {
     orderReference: String(order.id),
