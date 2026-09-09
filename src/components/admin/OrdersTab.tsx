@@ -684,6 +684,28 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                 </div>
               )}
 
+              {/*
+                RESUMED SUBSCRIPTION NOTICE. Without it, a customer resuming a
+                plan only removes the cancellation banner, and the dashboard
+                gives no sign that the subscription is billing again.
+              */}
+              {!isSubscriptionCancelled(selectedOrder) && selectedOrder.subscriptionResumedAt && (
+                <div className="bg-emerald-50 border-2 border-emerald-500/70 p-4 rounded-2xl space-y-1 text-left shadow-md animate-fadeIn">
+                  <div className="flex items-center gap-2 text-emerald-800">
+                    <RefreshCw className="h-5 w-5 text-emerald-600 shrink-0" />
+                    <span className="font-black text-sm uppercase tracking-wide">Subscription Resumed by Customer</span>
+                    <span className="ml-auto text-[10px] bg-emerald-600 text-white font-black px-2 py-0.5 rounded uppercase">Active</span>
+                  </div>
+                  <p className="text-xs text-emerald-900 leading-relaxed font-medium">
+                    The customer restarted this cancelled plan from their account portal on{' '}
+                    <span className="font-bold">
+                      {new Date(selectedOrder.subscriptionResumedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    . Recurring renewals have started again from the next billing date.
+                  </p>
+                </div>
+              )}
+
               {/* SUBSCRIPTION CUSTOMER ORDER DETAILS PANEL */}
               {isSubOrder(selectedOrder) && (() => {
                 const subDetails = getSubscriptionDetails(selectedOrder);

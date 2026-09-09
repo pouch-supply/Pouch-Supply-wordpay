@@ -73,6 +73,13 @@ export interface Order {
   subscriptionCancelled?: boolean;
   subscriptionCancelledAt?: string;
   subscriptionCancellationReason?: string;
+  // Set when a customer resumes a cancelled plan, so the admin dashboard shows
+  // that the subscription is running again rather than only losing its
+  // cancellation banner.
+  subscriptionResumedAt?: string;
+  // Which subscription this order belongs to. Lets one plan be cancelled or
+  // resumed without touching another plan's orders.
+  subscriptionId?: string;
   subscriptionDetails?: {
     planName: string;
     frequency: string;

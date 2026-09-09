@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Customer, Product, Order, Discount } from '../types';
 import { getWishlistProductTitle } from '../utils/mediaUtils';
 import { parseOrderTime, calculateDiscountAmount } from '../utils';
@@ -186,6 +186,10 @@ export default function CustomerAccount({
     }
   };
   const [accountSubscriptions, setAccountSubscriptions] = useState<any[]>([]);
+  // Which single subscription a per-plan Resume / Remove button is working on,
+  // so one card's spinner does not disable every other card's buttons.
+  const [subActionBusyId, setSubActionBusyId] = useState<string | null>(null);
+  const [pendingDeleteSubId, setPendingDeleteSubId] = useState<string | null>(null);
 
   // Track order in customer portal
   const [trackerInput, setTrackerInput] = useState('');
@@ -280,6 +284,32 @@ export default function CustomerAccount({
     ))
   );
 
+  /**
+   * Loads this customer's own subscriptions.
+   *
+   * Deliberately the per-customer endpoint, not /status: that one returns every
+   * subscription in the store — names, emails and amounts — and left the
+   * filtering to the browser, so any signed-in customer could read the whole
+   * subscriber list.
+   */
+  const loadAccountSubscriptions = useCallback(async (): Promise<any[]> => {
+    const email = loggedInCustomer?.email?.trim();
+    if (!email) {
+      setAccountSubscriptions([]);
+      return [];
+    }
+    try {
+      const res = await fetch(`/api/subscriptions/customer/${encodeURIComponent(email.toLowerCase())}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const subs = Array.isArray(data?.subscriptions) ? data.subscriptions : [];
+      setAccountSubscriptions(subs);
+      return subs;
+    } catch {
+      return [];
+    }
+  }, [loggedInCustomer?.email]);
+
   useEffect(() => {
     let cancelled = false;
     const email = loggedInCustomer?.email?.trim();
@@ -288,16 +318,11 @@ export default function CustomerAccount({
       return () => { cancelled = true; };
     }
 
-    fetch('/api/subscriptions/status')
+    fetch(`/api/subscriptions/customer/${encodeURIComponent(email.toLowerCase())}`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (cancelled) return;
-        const customerSubscriptions = Array.isArray(data?.subscriptions)
-          ? data.subscriptions.filter((subscription: any) =>
-              String(subscription.customerEmail || '').toLowerCase().trim() === email.toLowerCase()
-            )
-          : [];
-        setAccountSubscriptions(customerSubscriptions);
+        setAccountSubscriptions(Array.isArray(data?.subscriptions) ? data.subscriptions : []);
       })
       .catch(() => {
         if (!cancelled) setAccountSubscriptions([]);
@@ -306,6 +331,11 @@ export default function CustomerAccount({
     return () => { cancelled = true; };
   }, [loggedInCustomer?.email]);
 
+  // Plans the customer removed from their account are kept server-side for
+  // order history but must not appear in their list.
+  const visibleAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
+    String(subscription.status || '').toLowerCase() !== 'deleted'
+  );
   const activeAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
     ['active', 'subscribed', 'paused'].includes(String(subscription.status || '').toLowerCase())
   );
@@ -1170,9 +1200,10 @@ export default function CustomerAccount({
           );
           if (!isCustomerOrder || !isSubscriptionOrder) return;
 
+          const resumedAt = new Date().toISOString();
           const tags = (order.tags || []).filter(tag => tag.toLowerCase() !== 'subscription cancelled');
           const subscriptionDetails: any = order.subscriptionDetails
-            ? { ...order.subscriptionDetails, status: 'Active', isCancelled: false }
+            ? { ...order.subscriptionDetails, status: 'Active', isCancelled: false, resumedAt }
             : undefined;
           if (subscriptionDetails) {
             delete subscriptionDetails.cancelledAt;
@@ -1184,14 +1215,23 @@ export default function CustomerAccount({
             subscriptionCancelled: false,
             subscriptionCancelledAt: undefined,
             subscriptionCancellationReason: undefined,
+            subscriptionResumedAt: resumedAt,
             subscriptionDetails
           });
         });
       }
 
+      // The optimistic update above marks everything active; re-reading gives
+      // the real schedule the server just re-anchored, so the cards show the
+      // actual next delivery date rather than the stale cancelled one.
+      loadAccountSubscriptions();
+
+      const resumedDate = data?.nextBillingDate ? new Date(data.nextBillingDate) : null;
       setSubActionToast({
         type: 'success',
-        message: 'Subscription plan reactivated! Your automatic deliveries and benefits are resumed.'
+        message: resumedDate && !isNaN(resumedDate.getTime())
+          ? `Subscription reactivated! Your next delivery is scheduled for ${resumedDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} — you have not been charged today.`
+          : 'Subscription plan reactivated! Your automatic deliveries and benefits are resumed.'
       });
     } catch (err: any) {
       updateCustState({
@@ -1205,6 +1245,155 @@ export default function CustomerAccount({
       });
     } finally {
       setIsReactivatingSub(false);
+    }
+  };
+
+  /**
+   * Marks this customer's orders for one subscription as running again, so the
+   * admin dashboard stops showing "Subscription Cancelled" the moment the
+   * customer resumes. The server does the same to the stored orders; this keeps
+   * the copy already in memory in step.
+   */
+  const clearCancellationOnOrders = (subscriptionId: string) => {
+    if (!onUpdateOrder || !Array.isArray(orders) || !loggedInCustomer?.email) return;
+    const emailLower = loggedInCustomer.email.toLowerCase().trim();
+
+    orders.forEach(order => {
+      const isCustomerOrder = order.customerEmail?.toLowerCase().trim() === emailLower;
+      const belongsToPlan =
+        String((order as any).subscriptionId || '') === String(subscriptionId) ||
+        String((order as any).subscriptionDetails?.subscriptionId || '') === String(subscriptionId);
+      if (!isCustomerOrder || !belongsToPlan) return;
+
+      const resumedAt = new Date().toISOString();
+      const tags = (order.tags || []).filter(tag => tag.toLowerCase() !== 'subscription cancelled');
+      const subscriptionDetails: any = order.subscriptionDetails
+        ? { ...order.subscriptionDetails, status: 'Active', isCancelled: false, resumedAt }
+        : undefined;
+      if (subscriptionDetails) {
+        delete subscriptionDetails.cancelledAt;
+        delete subscriptionDetails.cancellationReason;
+      }
+      onUpdateOrder({
+        ...order,
+        tags,
+        subscriptionCancelled: false,
+        subscriptionCancelledAt: undefined,
+        subscriptionCancellationReason: undefined,
+        subscriptionResumedAt: resumedAt,
+        subscriptionDetails
+      });
+    });
+  };
+
+  /**
+   * Resumes one cancelled plan by id.
+   *
+   * The banner button above resumes everything at once, which is wrong as soon
+   * as a customer holds more than one plan — resuming last year's Core box
+   * should not restart a Pro box they cancelled yesterday.
+   */
+  const handleResumeSubscription = async (subscriptionId: string) => {
+    if (!subscriptionId || !loggedInCustomer?.email) return;
+    setSubActionBusyId(subscriptionId);
+    setSubActionToast(null);
+
+    try {
+      const res = await fetch('/api/subscriptions/reactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId, customerEmail: loggedInCustomer.email })
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || 'Could not resume this subscription.');
+      }
+
+      const refreshed = await loadAccountSubscriptions();
+      const stillCancelled = refreshed.some((s: any) =>
+        ['cancelled', 'canceled', 'inactive'].includes(String(s.status || '').toLowerCase())
+      );
+      const hasLive = refreshed.some((s: any) =>
+        ['active', 'subscribed', 'paused'].includes(String(s.status || '').toLowerCase())
+      );
+
+      if (hasLive) {
+        updateCustState({ ...custState, subStatus: 'Active', isSubscriptionCancelled: false });
+        if (onUpdateProfile) {
+          onUpdateProfile({
+            ...loggedInCustomer,
+            subStatus: 'Active',
+            subscriptionStatus: 'Subscribed' as any,
+            isSubscriptionCancelled: false
+          } as any);
+        }
+      }
+
+      clearCancellationOnOrders(subscriptionId);
+
+      const nextDate = data?.nextBillingDate ? new Date(data.nextBillingDate) : null;
+      setSubActionToast({
+        type: 'success',
+        message: nextDate && !isNaN(nextDate.getTime())
+          ? `Subscription resumed. Your next delivery is scheduled for ${nextDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} — you have not been charged today.`
+          : 'Subscription resumed. Your automatic deliveries are running again.'
+      });
+
+      if (stillCancelled && !hasLive) {
+        setSubActionToast({
+          type: 'info',
+          message: 'Subscription resumed, but the plan could not be confirmed as active. Please refresh the page.'
+        });
+      }
+    } catch (err: any) {
+      setSubActionToast({
+        type: 'error',
+        message: err?.message || 'Could not resume this subscription. Please try again.'
+      });
+    } finally {
+      setSubActionBusyId(null);
+    }
+  };
+
+  /**
+   * Removes a finished plan from the account list.
+   *
+   * The server keeps the record for order history and refunds — this only takes
+   * it off the customer's list — and refuses outright if the plan is still
+   * live, so a customer cannot sidestep cancellation and leave a card mandate
+   * running.
+   */
+  const handleDeleteSubscription = async (subscriptionId: string) => {
+    if (!subscriptionId || !loggedInCustomer?.email) return;
+    setSubActionBusyId(subscriptionId);
+    setSubActionToast(null);
+
+    try {
+      const res = await fetch('/api/subscriptions/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId, customerEmail: loggedInCustomer.email })
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || 'Could not remove this subscription.');
+      }
+
+      setPendingDeleteSubId(null);
+      await loadAccountSubscriptions();
+      setSubActionToast({
+        type: 'success',
+        message: 'Subscription removed from your account. Your past orders and invoices are unaffected.'
+      });
+    } catch (err: any) {
+      setSubActionToast({
+        type: 'error',
+        message: err?.message || 'Could not remove this subscription. Please try again.'
+      });
+    } finally {
+      setSubActionBusyId(null);
     }
   };
 
@@ -2956,38 +3145,17 @@ export default function CustomerAccount({
                     </div>
                   ) : (
                     <>
-                      {activeAccountSubscriptions.length > 1 && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {activeAccountSubscriptions.map((subscription: any) => {
-                            const planName = subscription.planName || subscription.name || 'Subscription Box';
-                            const planSlug = getPlanSlug(planName);
-                            const planTier = ACCOUNT_SUB_PLANS.find(tier => tier.id === planSlug);
-                            const amount = Number(subscription.amount ?? subscription.subPrice ?? planTier?.price ?? 0);
-                            return (
-                              <div key={subscription.id || planName} className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs flex items-center gap-4">
-                                <img
-                                  src={getPlanImage(planName)}
-                                  className="w-20 h-20 object-contain rounded-xl bg-slate-50"
-                                  alt={`${planName} subscription plan`}
-                                />
-                                <div className="min-w-0">
-                                  <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Active subscription</p>
-                                  <h3 className="text-sm font-black text-[#071d37] uppercase truncate">{planName}</h3>
-                                  <p className="text-xs text-slate-500">{planTier?.cans || subscription.cansCount || 6} items • £{amount.toFixed(2)} per delivery</p>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
                       {/* Subscription Feedback Toast */}
                       {subActionToast && (
                         <div className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold ${
-                          subActionToast.type === 'success' ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-rose-50 text-rose-900 border border-rose-200'
+                          subActionToast.type === 'success'
+                            ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                            : subActionToast.type === 'info'
+                            ? 'bg-slate-50 text-slate-900 border border-slate-200'
+                            : 'bg-rose-50 text-rose-900 border border-rose-200'
                         }`}>
                           <div className="flex items-center gap-2">
-                            {subActionToast.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />}
+                            {subActionToast.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertTriangle className={`w-4 h-4 shrink-0 ${subActionToast.type === 'info' ? 'text-slate-500' : 'text-rose-600'}`} />}
                             <span>{subActionToast.message}</span>
                           </div>
                           <button onClick={() => setSubActionToast(null)} className="text-slate-400 hover:text-slate-600">
@@ -3039,6 +3207,159 @@ export default function CustomerAccount({
                               </>
                             )}
                           </button>
+                        </div>
+                      )}
+
+                      {/*
+                        Every plan this customer has ever held, each managed on
+                        its own. A cancelled plan can be resumed or removed from
+                        the list here; the buttons above act on the whole
+                        account, which is wrong once there is more than one plan.
+                      */}
+                      {visibleAccountSubscriptions.length > 0 && (
+                        <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-4">
+                          <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                            <div>
+                              <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">Your Subscription Plans</h3>
+                              <p className="text-slate-400 text-[11px] mt-0.5">Resume a cancelled plan, or remove one you no longer need from this list.</p>
+                            </div>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                              {visibleAccountSubscriptions.length} {visibleAccountSubscriptions.length === 1 ? 'Plan' : 'Plans'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {visibleAccountSubscriptions.map((subscription: any) => {
+                              const planName = subscription.planName || subscription.name || 'Subscription Box';
+                              const planSlug = getPlanSlug(planName);
+                              const planTier = ACCOUNT_SUB_PLANS.find(tier => tier.id === planSlug);
+                              const amount = Number(subscription.amount ?? subscription.subPrice ?? planTier?.price ?? 0);
+                              const status = String(subscription.status || '').toLowerCase();
+                              const isCancelledPlan = ['cancelled', 'canceled', 'inactive'].includes(status);
+                              const isPausedPlan = status === 'paused';
+                              const busy = subActionBusyId === String(subscription.id);
+                              const confirmingDelete = pendingDeleteSubId === String(subscription.id);
+                              const nextDate = subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null;
+                              const cancelledDate = subscription.cancelledAt ? new Date(subscription.cancelledAt) : null;
+                              const formatDate = (d: Date | null) =>
+                                d && !isNaN(d.getTime())
+                                  ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                                  : null;
+
+                              return (
+                                <div
+                                  key={subscription.id || planName}
+                                  className={`border rounded-2xl p-4 space-y-3 transition-all ${
+                                    isCancelledPlan ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-slate-200 shadow-xs'
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-4">
+                                    <img
+                                      src={getPlanImage(planName)}
+                                      className={`w-16 h-16 object-contain rounded-xl bg-slate-50 shrink-0 ${isCancelledPlan ? 'opacity-60 grayscale' : ''}`}
+                                      alt={`${planName} subscription plan`}
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                                          isCancelledPlan
+                                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                            : isPausedPlan
+                                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        }`}>
+                                          {isCancelledPlan ? 'Cancelled' : isPausedPlan ? 'Paused' : 'Active'}
+                                        </span>
+                                        {subscription.billingInterval && !isCancelledPlan && (
+                                          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                            Every {subscription.billingInterval}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <h4 className="text-sm font-black text-[#071d37] uppercase truncate mt-1">{planName}</h4>
+                                      <p className="text-xs text-slate-500 font-medium">
+                                        {planTier?.cans || subscription.cansCount || 6} items • £{amount.toFixed(2)} per delivery
+                                      </p>
+                                      {!isCancelledPlan && formatDate(nextDate) && (
+                                        <p className="text-[11px] text-slate-500 font-semibold mt-1 flex items-center gap-1.5">
+                                          <Calendar className="w-3 h-3 text-[#dfa047]" />
+                                          Next delivery {formatDate(nextDate)}
+                                        </p>
+                                      )}
+                                      {isCancelledPlan && formatDate(cancelledDate) && (
+                                        <p className="text-[11px] text-slate-500 font-semibold mt-1">
+                                          Cancelled {formatDate(cancelledDate)}
+                                          {subscription.cancellationReason ? ` • ${subscription.cancellationReason}` : ''}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/*
+                                    A plan with no stored-card mandate cannot take a
+                                    recurring payment, so resuming it would look fine
+                                    and then quietly never deliver.
+                                  */}
+                                  {subscription.canChargeRecurring === false && (
+                                    <p className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
+                                      <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-px" />
+                                      <span>{subscription.credentialIssue || 'This plan has no saved card mandate and cannot renew automatically.'}</span>
+                                    </p>
+                                  )}
+
+                                  {isCancelledPlan && (
+                                    confirmingDelete ? (
+                                      <div className="bg-white border border-rose-200 rounded-xl p-3 space-y-2">
+                                        <p className="text-[11px] font-bold text-rose-900">
+                                          Remove this plan from your account? Your past orders and invoices are not affected.
+                                        </p>
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => handleDeleteSubscription(String(subscription.id))}
+                                            className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                                          >
+                                            {busy ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                                            {busy ? 'Removing...' : 'Yes, remove'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => setPendingDeleteSubId(null)}
+                                            className="flex-1 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                                          >
+                                            Keep it
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          disabled={busy}
+                                          onClick={() => handleResumeSubscription(String(subscription.id))}
+                                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl shadow-2xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                                        >
+                                          <RefreshCw className={`w-3 h-3 ${busy ? 'animate-spin' : ''}`} />
+                                          {busy ? 'Resuming...' : 'Resume Plan'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={busy}
+                                          onClick={() => setPendingDeleteSubId(String(subscription.id))}
+                                          className="bg-white border border-slate-200 hover:border-rose-300 hover:text-rose-700 disabled:opacity-50 text-slate-600 text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                          Remove
+                                        </button>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
 

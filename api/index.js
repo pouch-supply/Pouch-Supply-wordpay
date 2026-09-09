@@ -8501,6 +8501,84 @@ function canChargeRecurring(sub) {
   const scheme = sub.worldpaySchemeReference;
   return isUsableRecurringHref(href) || Boolean(scheme) && !isPlaceholderCredential(scheme);
 }
+var LIVE_SUB_STATUSES = ["active", "subscribed", "paused", "trialing"];
+var DELETED_SUB_STATUS = "deleted";
+function isLiveStatus(status) {
+  return LIVE_SUB_STATUSES.includes(String(status || "").toLowerCase());
+}
+function isDeletedStatus(status) {
+  return String(status || "").toLowerCase() === DELETED_SUB_STATUS;
+}
+function orderBelongsToSubscription(order, subscription, allowUnlinked) {
+  if (!subscription) return false;
+  const subId = String(subscription.id || "");
+  if (!subId) return false;
+  const orderSubId = String(
+    order?.subscriptionId || order?.subscriptionDetails?.subscriptionId || order?.data?.subscriptionId || ""
+  );
+  if (orderSubId) return orderSubId === subId;
+  if (String(subscription.sourceOrderId || "") === String(order?.id || "")) return true;
+  return allowUnlinked;
+}
+function isSubscriptionOrder(order) {
+  return Boolean(
+    order?.isSubscription || Array.isArray(order?.tags) && order.tags.some((t) => t && t.toLowerCase().includes("subscription")) || Array.isArray(order?.items) && order.items.some((i) => i?.isSubscription || i?.productTitle && i.productTitle.toLowerCase().includes("subscription"))
+  );
+}
+async function loadCustomerSubscriptions(email) {
+  const clean = String(email || "").toLowerCase().trim();
+  if (!clean) return [];
+  const byId = /* @__PURE__ */ new Map();
+  try {
+    const rows = await prisma.subscription.findMany({ where: { customerEmail: clean } });
+    for (const row of rows || []) byId.set(String(row.id), row);
+  } catch (_e) {
+  }
+  try {
+    const stored = await fetchResource("subscriptions") || [];
+    for (const s of stored) {
+      if (String(s?.customerEmail || "").toLowerCase().trim() !== clean) continue;
+      const id = String(s.id || "");
+      byId.set(id, { ...byId.get(id) || {}, ...s });
+    }
+  } catch (_e) {
+  }
+  return Array.from(byId.values());
+}
+async function customerHasOtherLiveSubscription(email, excludeId) {
+  const subs = await loadCustomerSubscriptions(email);
+  return subs.some((s) => (excludeId ? String(s.id) !== String(excludeId) : true) && isLiveStatus(s.status));
+}
+function toCustomerSubscription(s, now = /* @__PURE__ */ new Date()) {
+  return {
+    id: s.id,
+    planId: s.planId,
+    planName: s.planName,
+    customerEmail: s.customerEmail,
+    customerName: s.customerName,
+    amount: s.amount,
+    currency: s.currency || "GBP",
+    status: s.status,
+    billingInterval: s.billingInterval,
+    nextBillingDate: s.nextBillingDate,
+    isDue: Boolean(s.nextBillingDate && new Date(s.nextBillingDate) <= now),
+    cansCount: s.cansCount,
+    items: s.items,
+    itemPrice: s.itemPrice,
+    shippingCost: s.shippingCost,
+    deliveryMethod: s.deliveryMethod,
+    lastPaymentStatus: s.lastPaymentStatus,
+    lastPaymentAt: s.lastPaymentAt,
+    cancelledAt: s.cancelledAt,
+    cancellationReason: s.cancellationReason,
+    reactivatedAt: s.reactivatedAt,
+    createdAt: s.createdAt,
+    canChargeRecurring: canChargeRecurring(s),
+    // Resuming a plan whose mandate was never issued would look successful and
+    // then fail silently at the next renewal, so the account page says so up front.
+    credentialIssue: canChargeRecurring(s) ? null : "This plan has no stored-card mandate with Worldpay, so it cannot take a recurring payment. Subscribe again to set one up."
+  };
+}
 router11.get("/status", async (_req, res) => {
   try {
     let subscriptions = [];
@@ -9175,7 +9253,8 @@ router11.post(
       } catch (_e) {
       }
       let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);
-      if (matchedEmail) {
+      const stillSubscribed = matchedEmail ? await customerHasOtherLiveSubscription(matchedEmail, subscriptionId || subscription?.id) : false;
+      if (matchedEmail && !stillSubscribed) {
         try {
           const customers = await fetchResource("customers") || [];
           let custModified = false;
@@ -9199,15 +9278,17 @@ router11.post(
         } catch (custErr) {
           console.warn("[Subscription Cancel] Failed to update customer:", custErr);
         }
+      }
+      if (matchedEmail) {
+        const singlePlanCustomer = (await loadCustomerSubscriptions(matchedEmail)).length <= 1;
         try {
           const orders = await fetchResource("orders") || [];
           let ordersModified = false;
           const updatedOrders = orders.map((o) => {
             const isCustOrder = String(o.customerEmail || "").toLowerCase().trim() === matchedEmail;
-            const isSub = Boolean(
-              o.isSubscription || Array.isArray(o.tags) && o.tags.some((t) => t && t.toLowerCase().includes("subscription")) || Array.isArray(o.items) && o.items.some((i) => i.isSubscription || i.productTitle && i.productTitle.toLowerCase().includes("subscription"))
-            );
-            if (isCustOrder && isSub) {
+            const isSub = isSubscriptionOrder(o);
+            const inScope = subscriptionId ? orderBelongsToSubscription(o, subscription || { id: subscriptionId }, singlePlanCustomer) : true;
+            if (isCustOrder && isSub && inScope) {
               ordersModified = true;
               const tags = Array.isArray(o.tags) ? [...o.tags] : ["Storefront", "Online Order"];
               if (!tags.includes("Subscription Cancelled")) {
@@ -9240,6 +9321,7 @@ router11.post(
       return res.json({
         success: true,
         message: "Subscription successfully cancelled.",
+        accountStillSubscribed: stillSubscribed,
         subscription: subscription || { status: "cancelled", cancelledAt: cancellationTime, cancellationReason: cancelReason }
       });
     } catch (error) {
@@ -9263,23 +9345,58 @@ router11.post(
         });
       }
       const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+      const now = /* @__PURE__ */ new Date();
       let subscription = null;
+      const resumeBillingDate = (sub) => {
+        const raw = sub?.nextBillingDate ? new Date(sub.nextBillingDate) : null;
+        if (raw && !isNaN(raw.getTime()) && raw > now) return raw;
+        return calculateNextBillingDate(normalizeBillingInterval(sub?.billingInterval), now);
+      };
+      const resumableFromStore = async () => {
+        try {
+          const stored = await fetchResource("subscriptions") || [];
+          return stored.filter((s) => {
+            const matchId = subscriptionId && String(s.id) === String(subscriptionId);
+            const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+            if (!matchId && !matchEmail) return false;
+            return matchId ? true : !isDeletedStatus(s.status);
+          });
+        } catch (_e) {
+          return [];
+        }
+      };
       if (subscriptionId) {
         try {
+          const existing = await prisma.subscription.findUnique({ where: { id: subscriptionId } });
           subscription = await prisma.subscription.update({
             where: { id: subscriptionId },
-            data: { status: "active" }
+            data: {
+              status: "active",
+              nextBillingDate: resumeBillingDate(existing || (await resumableFromStore())[0]),
+              cancelledAt: null,
+              cancellationReason: null
+            }
           });
         } catch (_e) {
         }
       } else if (emailClean) {
         try {
-          await prisma.subscription.updateMany({
-            where: { customerEmail: emailClean },
-            data: { status: "active" }
+          const existing = await prisma.subscription.findMany({
+            where: { customerEmail: emailClean, status: { not: DELETED_SUB_STATUS } }
           });
+          for (const row of existing || []) {
+            await prisma.subscription.update({
+              where: { id: row.id },
+              data: {
+                status: "active",
+                nextBillingDate: resumeBillingDate(row),
+                cancelledAt: null,
+                cancellationReason: null
+              }
+            });
+          }
           subscription = await prisma.subscription.findFirst({
-            where: { customerEmail: emailClean },
+            where: { customerEmail: emailClean, status: { not: DELETED_SUB_STATUS } },
             orderBy: { createdAt: "desc" }
           });
         } catch (_e) {
@@ -9291,12 +9408,14 @@ router11.post(
         const updatedList = stored.map((s) => {
           const matchId = subscriptionId && String(s.id) === String(subscriptionId);
           const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
-          if (matchId || matchEmail) {
+          if (matchId || matchEmail && !isDeletedStatus(s.status)) {
             modified = true;
+            const { cancelledAt, cancellationReason, deletedAt, ...rest } = s;
             return {
-              ...s,
+              ...rest,
               status: "active",
-              reactivatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              nextBillingDate: resumeBillingDate(s).toISOString(),
+              reactivatedAt: now.toISOString()
             };
           }
           return s;
@@ -9310,6 +9429,7 @@ router11.post(
       } catch (_e) {
       }
       let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);
+      const singlePlanCustomer = matchedEmail ? (await loadCustomerSubscriptions(matchedEmail)).length <= 1 : false;
       if (matchedEmail) {
         try {
           const customers = await fetchResource("customers") || [];
@@ -9332,15 +9452,15 @@ router11.post(
           let ordersModified = false;
           const updatedOrders = orders.map((o) => {
             const isCustOrder = String(o.customerEmail || "").toLowerCase().trim() === matchedEmail;
-            const isSub = Boolean(
-              o.isSubscription || Array.isArray(o.tags) && o.tags.some((t) => t && t.toLowerCase().includes("subscription")) || Array.isArray(o.items) && o.items.some((i) => i.isSubscription || i.productTitle && i.productTitle.toLowerCase().includes("subscription"))
-            );
-            if (!isCustOrder || !isSub) return o;
+            const isSub = isSubscriptionOrder(o);
+            const inScope = subscriptionId ? orderBelongsToSubscription(o, subscription || { id: subscriptionId }, singlePlanCustomer) : true;
+            if (!isCustOrder || !isSub || !inScope) return o;
             ordersModified = true;
             const tags = (Array.isArray(o.tags) ? o.tags : []).filter((tag) => tag.toLowerCase() !== "subscription cancelled");
             const subDetails = o.subscriptionDetails ? { ...o.subscriptionDetails } : {};
             subDetails.status = "Active";
             subDetails.isCancelled = false;
+            subDetails.resumedAt = now.toISOString();
             delete subDetails.cancelledAt;
             delete subDetails.cancellationReason;
             return {
@@ -9349,6 +9469,9 @@ router11.post(
               subscriptionCancelled: false,
               subscriptionCancelledAt: null,
               subscriptionCancellationReason: null,
+              // Recorded so the admin dashboard can say the plan was resumed
+              // instead of the cancellation simply vanishing from the order.
+              subscriptionResumedAt: now.toISOString(),
               subscriptionDetails: subDetails
             };
           });
@@ -9360,10 +9483,14 @@ router11.post(
           console.warn("[Subscription Reactivate] Failed to update orders:", orderErr);
         }
       }
+      const resumedSubscription = subscription || { status: "active" };
       return res.json({
         success: true,
         message: "Subscription plan reactivated successfully.",
-        subscription: subscription || { status: "active" }
+        // The account page shows this so the customer can see when the next box
+        // is coming, rather than wondering whether resuming charged them today.
+        nextBillingDate: resumedSubscription.nextBillingDate || null,
+        subscription: resumedSubscription
       });
     } catch (error) {
       return res.status(500).json({
@@ -9373,31 +9500,86 @@ router11.post(
     }
   }
 );
+router11.post(
+  "/delete",
+  async (req, res) => {
+    try {
+      const { subscriptionId, customerEmail } = req.body;
+      if (!subscriptionId) {
+        return res.status(400).json({ success: false, message: "subscriptionId is required" });
+      }
+      const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
+      const deletedAt = (/* @__PURE__ */ new Date()).toISOString();
+      let stored = [];
+      try {
+        stored = await fetchResource("subscriptions") || [];
+      } catch (_e) {
+      }
+      let existing = stored.find((s) => String(s.id) === String(subscriptionId)) || null;
+      if (!existing) {
+        try {
+          existing = await prisma.subscription.findUnique({ where: { id: String(subscriptionId) } });
+        } catch (_e) {
+        }
+      }
+      if (!existing) {
+        return res.status(404).json({ success: false, message: "Subscription not found." });
+      }
+      if (emailClean && String(existing.customerEmail || "").toLowerCase().trim() !== emailClean) {
+        return res.status(403).json({
+          success: false,
+          message: "This subscription belongs to a different account."
+        });
+      }
+      if (isLiveStatus(existing.status)) {
+        return res.status(409).json({
+          success: false,
+          message: "This subscription is still active. Cancel it first \u2014 that stops the recurring payment \u2014 and then it can be removed."
+        });
+      }
+      if (isDeletedStatus(existing.status)) {
+        return res.json({ success: true, message: "Subscription already removed.", subscriptionId });
+      }
+      try {
+        await prisma.subscription.update({
+          where: { id: String(subscriptionId) },
+          data: { status: DELETED_SUB_STATUS }
+        });
+      } catch (_e) {
+      }
+      try {
+        const updatedList = stored.map(
+          (s) => String(s.id) === String(subscriptionId) ? { ...s, status: DELETED_SUB_STATUS, deletedAt, previousStatus: s.status } : s
+        );
+        await saveResource("subscriptions", updatedList);
+      } catch (storeErr) {
+        console.warn("[Subscription Delete] Failed to update store:", storeErr);
+      }
+      return res.json({
+        success: true,
+        message: "Subscription removed from your account.",
+        subscriptionId,
+        deletedAt
+      });
+    } catch (error) {
+      console.error("[Subscription Delete Error]", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to remove subscription"
+      });
+    }
+  }
+);
 router11.get(
   "/customer/:email",
   async (req, res) => {
     try {
       const email = String(req.params.email).toLowerCase().trim();
-      let subscriptions = [];
-      try {
-        subscriptions = await prisma.subscription.findMany({
-          where: { customerEmail: email },
-          orderBy: { createdAt: "desc" }
-        });
-      } catch (_e) {
-      }
-      if (!subscriptions || subscriptions.length === 0) {
-        try {
-          const stored = await fetchResource("subscriptions") || [];
-          subscriptions = stored.filter(
-            (s) => String(s.customerEmail).toLowerCase().trim() === email
-          );
-        } catch (_e) {
-        }
-      }
+      const now = /* @__PURE__ */ new Date();
+      const subscriptions = (await loadCustomerSubscriptions(email)).filter((s) => !isDeletedStatus(s.status)).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       return res.json({
         success: true,
-        subscriptions: subscriptions || []
+        subscriptions: subscriptions.map((s) => toCustomerSubscription(s, now))
       });
     } catch (error) {
       return res.status(500).json({
