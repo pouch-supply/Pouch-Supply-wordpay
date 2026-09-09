@@ -284,6 +284,66 @@ const LEGACY_SERVICE_CODE_MAP: Record<string, string> = {
 };
 
 /**
+ * Click & Drop's own email/SMS despatch notifications are a feature of the
+ * Tracked services. The Online Postage (OLP) range this account posts with does
+ * not carry them, and sending the flags anyway fails the whole order with
+ * "Email notification is not available for the service 'OLP1'" — no label, no
+ * shipment.
+ *
+ * Nothing is lost by leaving them off: the store sends its own dispatch email
+ * (emailService) and its own Klaviyo event. This only suppresses the duplicate
+ * Royal Mail would have sent.
+ */
+export function serviceSupportsNotifications(code?: string): boolean {
+  const raw = String(code ?? '').trim().toUpperCase();
+  // No service code means postage is applied in Click & Drop, where the
+  // notification setting belongs to whatever service is picked there.
+  if (!raw) return false;
+  return !raw.startsWith('OLP');
+}
+
+/**
+ * Royal Mail's wording when a service cannot carry despatch notifications. The
+ * error arrives as a normal rejection, so it is matched on text: an account that
+ * later adds a service we have not classified should not lose the shipment over
+ * an optional flag.
+ */
+const NOTIFICATION_UNAVAILABLE_RE = /notification is not available|notifications are not available/i;
+
+/**
+ * Posts an order to Click & Drop, turning a 5xx into an explanation an operator
+ * can act on. Royal Mail answers these with nothing but "Internal server error.
+ * CorrelationId:…", which reads like a bug in the store. It is not retried
+ * automatically: the API may have created the order before failing, and a blind
+ * retry would put two labels on one parcel.
+ */
+async function postOrder(payload: CreateRoyalMailOrderRequest, apiKey: string, orderId: string) {
+  try {
+    return await createRoyalMailOrders([payload], apiKey);
+  } catch (err: any) {
+    if (err instanceof RoyalMailError && err.status >= 500) {
+      throw new Error(
+        `Royal Mail's API failed while creating the shipment for order #${orderId}: ${err.message} ` +
+          'This is an error on Royal Mail\'s side, not a problem with the order. Check Click & Drop ' +
+          `for an order with reference ${payload.orderReference} before trying again — if one is ` +
+          'there, the shipment was created and only the response was lost. Quote the CorrelationId ' +
+          'to Royal Mail support if it keeps happening.'
+      );
+    }
+    throw err;
+  }
+}
+
+/** Flattens the per-order error arrays of a Click & Drop response into plain strings. */
+function collectFailureMessages(result: any): string[] {
+  const failed = Array.isArray(result?.failedOrders) ? result.failedOrders : [];
+  return failed.flatMap((f: any) => {
+    const errors = Array.isArray(f?.errors) ? f.errors : f?.errors ? [f.errors] : [];
+    return errors.map((e: any) => String(e?.errorMessage || e?.message || e?.code || ''));
+  });
+}
+
+/**
  * Maps a service code onto one this account can actually post with. Unknown
  * codes are passed through untouched — an operator may legitimately add a new
  * service in Click & Drop before this list catches up, and Royal Mail is the
@@ -611,7 +671,12 @@ export async function testServiceCode(
         contents: [{ name: 'Service code test', quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
       }
     ],
-    postageDetails: { serviceCode: code, sendNotificationsTo: 'Sender' }
+    postageDetails: {
+      serviceCode: code,
+      // Same rule as a real shipment: a service without despatch notifications
+      // rejects the flag, which would make a perfectly valid code look invalid.
+      ...(serviceSupportsNotifications(code) ? { sendNotificationsTo: 'Sender' as const } : {})
+    }
   };
 
   let result: any;
@@ -782,16 +847,40 @@ export async function createRoyalMailShipment(orderId: string, options: {
       // it does not hold is rejected outright.
       ...(serviceCode ? { serviceCode } : {}),
       ...(serviceCode && registerCode ? { serviceRegisterCode: registerCode } : {}),
-      // Royal Mail rejects anything outside Sender/Recipient/Billing, and it
+      // Only for services that carry them. The OLP range does not, and the flags
+      // fail the whole order rather than being ignored. Royal Mail rejects
+      // anything outside Sender/Recipient/Billing for sendNotificationsTo, and it
       // rejects the whole order, not just this field.
-      sendNotificationsTo: recipientObj.emailAddress ? 'Recipient' : 'Sender',
-      receiveEmailNotification: Boolean(recipientObj.emailAddress),
-      receiveSmsNotification: Boolean(recipientObj.phoneNumber)
+      ...(serviceSupportsNotifications(serviceCode)
+        ? {
+            sendNotificationsTo: recipientObj.emailAddress ? 'Recipient' : 'Sender',
+            receiveEmailNotification: Boolean(recipientObj.emailAddress),
+            receiveSmsNotification: Boolean(recipientObj.phoneNumber)
+          }
+        : {})
     }
   };
 
   // Any failure here propagates. There is no simulated fallback.
-  const result = await createRoyalMailOrders([payload], apiKey);
+  let result = await postOrder(payload, apiKey, orderId);
+
+  // A service we classified as notification-capable turning out not to be is a
+  // recoverable mistake, so strip the flags and post the order again rather than
+  // failing a shipment over a duplicate email the store already sends itself.
+  if (
+    collectFailureMessages(result).some(m => NOTIFICATION_UNAVAILABLE_RE.test(m)) &&
+    payload.postageDetails &&
+    'receiveEmailNotification' in payload.postageDetails
+  ) {
+    console.warn(
+      `[RoyalMailService] Service ${serviceCode || '(none)'} does not support Click & Drop despatch ` +
+        'notifications; retrying without them. The store sends its own dispatch email.'
+    );
+    delete (payload.postageDetails as any).sendNotificationsTo;
+    delete (payload.postageDetails as any).receiveEmailNotification;
+    delete (payload.postageDetails as any).receiveSmsNotification;
+    result = await postOrder(payload, apiKey, orderId);
+  }
 
   if (result?.failedOrders && result.failedOrders.length > 0) {
     const errMsgs: string[] = [];

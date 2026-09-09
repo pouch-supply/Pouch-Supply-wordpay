@@ -5056,6 +5056,7 @@ __export(royalMailService_exports, {
   requireApiKey: () => requireApiKey,
   resolveServiceCode: () => resolveServiceCode,
   saveRoyalMailSettings: () => saveRoyalMailSettings,
+  serviceSupportsNotifications: () => serviceSupportsNotifications,
   syncRoyalMailOrderStatus: () => syncRoyalMailOrderStatus,
   testServiceCode: () => testServiceCode,
   validateAddress: () => validateAddress
@@ -5174,6 +5175,30 @@ function validateAddress(address) {
     errors,
     parsed
   };
+}
+function serviceSupportsNotifications(code) {
+  const raw = String(code ?? "").trim().toUpperCase();
+  if (!raw) return false;
+  return !raw.startsWith("OLP");
+}
+async function postOrder(payload, apiKey, orderId) {
+  try {
+    return await createRoyalMailOrders([payload], apiKey);
+  } catch (err) {
+    if (err instanceof RoyalMailError && err.status >= 500) {
+      throw new Error(
+        `Royal Mail's API failed while creating the shipment for order #${orderId}: ${err.message} This is an error on Royal Mail's side, not a problem with the order. Check Click & Drop for an order with reference ${payload.orderReference} before trying again \u2014 if one is there, the shipment was created and only the response was lost. Quote the CorrelationId to Royal Mail support if it keeps happening.`
+      );
+    }
+    throw err;
+  }
+}
+function collectFailureMessages(result) {
+  const failed = Array.isArray(result?.failedOrders) ? result.failedOrders : [];
+  return failed.flatMap((f) => {
+    const errors = Array.isArray(f?.errors) ? f.errors : f?.errors ? [f.errors] : [];
+    return errors.map((e) => String(e?.errorMessage || e?.message || e?.code || ""));
+  });
 }
 function resolveServiceCode(code) {
   const raw = String(code ?? "").trim().toUpperCase();
@@ -5372,7 +5397,12 @@ async function testServiceCode(serviceCode, tradingNameOverride) {
         contents: [{ name: "Service code test", quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
       }
     ],
-    postageDetails: { serviceCode: code, sendNotificationsTo: "Sender" }
+    postageDetails: {
+      serviceCode: code,
+      // Same rule as a real shipment: a service without despatch notifications
+      // rejects the flag, which would make a perfectly valid code look invalid.
+      ...serviceSupportsNotifications(code) ? { sendNotificationsTo: "Sender" } : {}
+    }
   };
   let result;
   try {
@@ -5490,14 +5520,27 @@ async function createRoyalMailShipment(orderId, options = {}) {
       // it does not hold is rejected outright.
       ...serviceCode ? { serviceCode } : {},
       ...serviceCode && registerCode ? { serviceRegisterCode: registerCode } : {},
-      // Royal Mail rejects anything outside Sender/Recipient/Billing, and it
+      // Only for services that carry them. The OLP range does not, and the flags
+      // fail the whole order rather than being ignored. Royal Mail rejects
+      // anything outside Sender/Recipient/Billing for sendNotificationsTo, and it
       // rejects the whole order, not just this field.
-      sendNotificationsTo: recipientObj.emailAddress ? "Recipient" : "Sender",
-      receiveEmailNotification: Boolean(recipientObj.emailAddress),
-      receiveSmsNotification: Boolean(recipientObj.phoneNumber)
+      ...serviceSupportsNotifications(serviceCode) ? {
+        sendNotificationsTo: recipientObj.emailAddress ? "Recipient" : "Sender",
+        receiveEmailNotification: Boolean(recipientObj.emailAddress),
+        receiveSmsNotification: Boolean(recipientObj.phoneNumber)
+      } : {}
     }
   };
-  const result = await createRoyalMailOrders([payload], apiKey);
+  let result = await postOrder(payload, apiKey, orderId);
+  if (collectFailureMessages(result).some((m) => NOTIFICATION_UNAVAILABLE_RE.test(m)) && payload.postageDetails && "receiveEmailNotification" in payload.postageDetails) {
+    console.warn(
+      `[RoyalMailService] Service ${serviceCode || "(none)"} does not support Click & Drop despatch notifications; retrying without them. The store sends its own dispatch email.`
+    );
+    delete payload.postageDetails.sendNotificationsTo;
+    delete payload.postageDetails.receiveEmailNotification;
+    delete payload.postageDetails.receiveSmsNotification;
+    result = await postOrder(payload, apiKey, orderId);
+  }
   if (result?.failedOrders && result.failedOrders.length > 0) {
     const errMsgs = [];
     let unknownServiceCode = false;
@@ -5811,7 +5854,7 @@ async function createRoyalMailReturnLabel(orderId) {
     message: `Royal Mail pre-paid returns label retrieved for order #${orderId}.`
   };
 }
-var DEFAULT_ROYAL_MAIL_SETTINGS, UK_SERVICE_CODES, LEGACY_SERVICE_CODE_MAP, UK_POSTCODE_RE, COUNTRY_TOKENS;
+var DEFAULT_ROYAL_MAIL_SETTINGS, UK_SERVICE_CODES, LEGACY_SERVICE_CODE_MAP, NOTIFICATION_UNAVAILABLE_RE, UK_POSTCODE_RE, COUNTRY_TOKENS;
 var init_royalMailService = __esm({
   "backend/services/royalMailService.ts"() {
     init_serverDb();
@@ -5859,6 +5902,7 @@ var init_royalMailService = __esm({
       SD1: "OLP1SF",
       SD2: "OLP1SF"
     };
+    NOTIFICATION_UNAVAILABLE_RE = /notification is not available|notifications are not available/i;
     UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
     COUNTRY_TOKENS = {
       "united kingdom": "GB",
