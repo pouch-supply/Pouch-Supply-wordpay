@@ -102,6 +102,16 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   };
 
   const handleCreateShipment = async () => {
+    const label = `${serviceCode} • ${weightGrams}g`;
+    if (!window.confirm(
+      `Buy postage and create the Royal Mail label for order ${order.id}?
+
+${label}
+
+` +
+      `This charges your Royal Mail Click & Drop account and cannot be undone from here.`
+    )) return;
+
     setCreating(true);
     setStatusMessage(null);
     try {
@@ -378,12 +388,12 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
             {creating ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin" />
-                <span>Creating Royal Mail Shipment & Dispatching Notifications...</span>
+                <span>Buying postage &amp; generating label...</span>
               </>
             ) : (
               <>
                 <Truck className="h-4 w-4" />
-                <span>📦 Create Royal Mail Shipment & Mark as Shipped</span>
+                <span>📦 Buy Postage, Print Label &amp; Mark as Shipped</span>
               </>
             )}
           </button>

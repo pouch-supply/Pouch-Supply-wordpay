@@ -903,7 +903,15 @@ export async function createRoyalMailShipment(orderId: string, options: {
             receiveSmsNotification: Boolean(recipientObj.phoneNumber)
           }
         : {})
-    }
+    },
+    // Generating the label is what makes Royal Mail allocate the tracking
+    // number -- creating the order alone never does, on any service. Without
+    // this the shipment came back with tracking null, the order could not
+    // leave Unfulfilled and no dispatch email was ever sent.
+    //
+    // This BUYS THE POSTAGE, so it happens once, here, on the operator's
+    // explicit 'create shipment' action, and never anywhere automatic.
+    label: { includeLabelInResponse: true }
   };
 
   // Any failure here propagates. There is no simulated fallback.
@@ -969,8 +977,21 @@ export async function createRoyalMailShipment(orderId: string, options: {
   let trackingNumber: string | null =
     createdOrder.trackingNumber || createdOrder.packages?.[0]?.trackingNumber || null;
 
-  // Click & Drop allocates the tracking number when the label is generated, so
-  // it is often absent from the create response. Re-read the order once.
+  // Label generation can fail on its own while the order still succeeds --
+  // most often when the Click & Drop account has no postage credit. That
+  // leaves an order with no tracking, so the reason is reported rather than
+  // being left to look like a missing tracking number.
+  const labelErrors: string[] = Array.isArray((createdOrder as any).labelErrors)
+    ? (createdOrder as any).labelErrors.map((e: any) => e?.message).filter(Boolean)
+    : [];
+  if (labelErrors.length > 0) {
+    console.error(
+      `[RoyalMailService] Royal Mail could not generate the label for #${orderId}: ${labelErrors.join('; ')}`
+    );
+  }
+
+  // The number is allocated during label generation, which can settle a moment
+  // after the create call returns. Re-read the order once.
   if (!trackingNumber) {
     try {
       const detail: any = await getOrderByReference(royalMailOrderId, apiKey);
@@ -1048,9 +1069,12 @@ export async function createRoyalMailShipment(orderId: string, options: {
         : '') +
       (trackingNumber
         ? `Royal Mail shipment created. Tracking ${trackingNumber}.`
-        : `Royal Mail order ${royalMailOrderId} created on ${serviceName}. ` +
-          `No tracking number was issued: it is allocated when the label is generated on a tracked ` +
-          `service, and the Online Postage services (1st/2nd Class, Signed For) never issue one.`),
+        : labelErrors.length > 0
+          ? `Royal Mail order ${royalMailOrderId} was created on ${serviceName}, but the label could ` +
+            `not be generated, so no tracking number was issued: ${labelErrors.join('; ')}. ` +
+            `Check the postage balance on the Click & Drop account, then press Sync.`
+          : `Royal Mail order ${royalMailOrderId} created on ${serviceName}. ` +
+            `No tracking number was issued yet — generate the label in Click & Drop, then press Sync.`),
     order: updatedOrder
   };
 }
