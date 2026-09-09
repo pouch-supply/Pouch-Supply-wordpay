@@ -9,6 +9,7 @@ import SubscriptionIcon from './SubscriptionIcon';
 import { useRecaptcha } from '../hooks/useRecaptcha';
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
 import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
+import SubscriptionBoxManager, { BoxLine } from './account/SubscriptionBoxManager';
 import { 
   User, LogIn, Heart, PlusCircle, Trash2, MapPin, Package, ShoppingBag, 
   Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
@@ -178,17 +179,39 @@ export default function CustomerAccount({
   const accountPathTabs = Object.fromEntries(Object.entries(accountTabPaths).map(([tab, path]) => [path, tab]));
   const initialAccountPath = window.location.pathname.replace(/\/$/, '') || '/pages/account';
   const [activeTab, setActiveTabState] = useState<string>(accountPathTabs[initialAccountPath] || 'dashboard');
-  const setActiveTab = (tab: string) => {
+  const setActiveTab = (tab: string, subscriptionId?: string | null) => {
     setActiveTabState(tab);
     const nextPath = accountTabPaths[tab] || accountTabPaths.dashboard;
-    if (window.location.pathname !== nextPath) {
-      window.history.pushState({ accountTab: tab }, '', nextPath);
+    // The managed plan travels in the URL, so "Manage Plan" opens that plan and
+    // a reload or a shared link opens the same one.
+    const query = tab === 'subscriptions' && subscriptionId ? `?sub=${encodeURIComponent(subscriptionId)}` : '';
+    const nextUrl = `${nextPath}${query}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.pushState({ accountTab: tab, subscriptionId: subscriptionId || null }, '', nextUrl);
     }
+  };
+
+  /** Opens the management screen for one specific subscription. */
+  const openSubscriptionManager = (subscriptionId?: string | null) => {
+    setActiveSubscriptionId(subscriptionId ? String(subscriptionId) : null);
+    setActiveTab('subscriptions', subscriptionId ? String(subscriptionId) : null);
   };
   const [accountSubscriptions, setAccountSubscriptions] = useState<any[]>([]);
   // Which single subscription a per-plan Resume / Remove button is working on,
   // so one card's spinner does not disable every other card's buttons.
   const [subActionBusyId, setSubActionBusyId] = useState<string | null>(null);
+  /**
+   * Which subscription the management screen is editing.
+   *
+   * A customer can hold several plans, and "Manage Plan" has to open the one
+   * they clicked. It lives in the URL so the link can be shared, bookmarked and
+   * survives a reload.
+   */
+  const [activeSubscriptionId, setActiveSubscriptionId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('sub');
+  });
+  const [isSavingBox, setIsSavingBox] = useState(false);
   const [pendingDeleteSubId, setPendingDeleteSubId] = useState<string | null>(null);
 
   // Track order in customer portal
@@ -336,6 +359,31 @@ export default function CustomerAccount({
   const visibleAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
     String(subscription.status || '').toLowerCase() !== 'deleted'
   );
+
+  /**
+   * The plan the management screen is editing.
+   *
+   * Falls back to the first live plan so the screen is never empty, but an
+   * explicit id from "Manage Plan" always wins — that is the whole point of the
+   * button: it must open the plan the customer clicked, not whichever plan
+   * happens to be first.
+   */
+  const activeSubscription =
+    visibleAccountSubscriptions.find((s: any) => String(s.id) === String(activeSubscriptionId)) ||
+    visibleAccountSubscriptions.find((s: any) =>
+      ['active', 'subscribed', 'paused'].includes(String(s.status || '').toLowerCase())
+    ) ||
+    visibleAccountSubscriptions[0] ||
+    null;
+
+  // A plan named in the URL that this customer does not hold is ignored rather
+  // than shown: it is either stale or someone else's.
+  useEffect(() => {
+    if (!activeSubscriptionId) return;
+    if (accountSubscriptions.length === 0) return;
+    const exists = visibleAccountSubscriptions.some((s: any) => String(s.id) === String(activeSubscriptionId));
+    if (!exists) setActiveSubscriptionId(null);
+  }, [activeSubscriptionId, accountSubscriptions]);
   const activeAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
     ['active', 'subscribed', 'paused'].includes(String(subscription.status || '').toLowerCase())
   );
@@ -741,6 +789,10 @@ export default function CustomerAccount({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // Always name the plan being managed. Without it the server matches on
+          // the email and rewrites every plan the customer holds, so editing one
+          // box silently changed the other.
+          ...(activeSubscription?.id ? { subscriptionId: activeSubscription.id } : {}),
           customerEmail: loggedInCustomer.email,
           subPlan: enrichedVal.subPlan,
           planName: enrichedVal.subPlan === 'lite' ? 'LITE (6 Canisters)' : enrichedVal.subPlan === 'core' ? 'CORE (8 Canisters)' : enrichedVal.subPlan === 'pro' ? 'PRO (10 Canisters)' : enrichedVal.subPlan === 'ultimate' ? 'ULTIMATE (12 Canisters)' : (enrichedVal.subPlan || 'CORE (8 Canisters)'),
@@ -994,6 +1046,8 @@ export default function CustomerAccount({
     setPlanSaveFeedback(null);
     try {
       const payload = {
+        // Scoped to the plan on screen, so saving one plan cannot overwrite another.
+        ...(activeSubscription?.id ? { subscriptionId: activeSubscription.id } : {}),
         customerEmail: loggedInCustomer.email,
         subPlan: custState.subPlan,
         planName: getAccountPlanLabel(custState.subPlan),
@@ -1394,6 +1448,87 @@ export default function CustomerAccount({
       });
     } finally {
       setSubActionBusyId(null);
+    }
+  };
+
+  /**
+   * Saves the box for ONE subscription.
+   *
+   * The subscription id is always sent, so editing one plan cannot rewrite
+   * another. Items are written in the shape the rest of the system reads
+   * (subscriptionParser, the renewal worker and the admin order view all expect
+   * productId / variantId / variant / quantity), rather than a shape local to
+   * this screen.
+   */
+  const handleSaveSubscriptionBox = async (lines: BoxLine[]) => {
+    if (!activeSubscription || !loggedInCustomer?.email) return;
+    setIsSavingBox(true);
+    setSubActionToast(null);
+
+    const items = lines.map(line => ({
+      productId: line.productId,
+      variantId: line.variantId || undefined,
+      name: line.title,
+      productTitle: line.title,
+      title: line.title,
+      brand: line.brand,
+      vendor: line.brand,
+      variant: line.variantName,
+      variantName: line.variantName,
+      quantity: line.quantity,
+      price: line.price,
+      image: line.image,
+      formattedLabel: formatSubscriptionItemDisplay({
+        brand: line.brand,
+        name: line.title,
+        variant: line.variantName,
+        quantity: line.quantity
+      })
+    }));
+    const totalCans = lines.reduce((sum, line) => sum + line.quantity, 0);
+
+    try {
+      const res = await fetch('/api/subscriptions/update-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptionId: activeSubscription.id,
+          customerEmail: loggedInCustomer.email,
+          planName: activeSubscription.planName,
+          planId: activeSubscription.planId,
+          amount: activeSubscription.amount,
+          billingInterval: activeSubscription.billingInterval,
+          status: activeSubscription.status,
+          items,
+          subItems: items,
+          cansCount: totalCans,
+          subCansCount: totalCans
+        })
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || `Save failed (${res.status})`);
+      }
+
+      // Reflect the saved box immediately; the list is the source the manager
+      // reloads from when the customer switches between plans.
+      setAccountSubscriptions(previous =>
+        previous.map((s: any) =>
+          String(s.id) === String(activeSubscription.id) ? { ...s, items, cansCount: totalCans } : s
+        )
+      );
+
+      setSubActionToast({
+        type: 'success',
+        message: `Box updated for ${activeSubscription.planName || 'your plan'}: ${totalCans} can${totalCans === 1 ? '' : 's'} saved.`
+      });
+    } catch (err: any) {
+      setSubActionToast({
+        type: 'error',
+        message: err?.message ? `Could not save your box: ${err.message}` : 'Could not save your box. Please try again.'
+      });
+    } finally {
+      setIsSavingBox(false);
     }
   };
 
@@ -1962,104 +2097,6 @@ export default function CustomerAccount({
     { id: 'support', label: 'Help & Support', icon: LifeBuoy }
   ];
 
-  // Subscription item modifiers
-  const handleUpdateSubItemQty = (productId: string, newQty: number) => {
-    if (newQty < 0) return;
-    let updatedItems = [...(custState.subItems || [])];
-    if (newQty === 0) {
-      updatedItems = updatedItems.filter((item: any) => item.productId !== productId);
-    } else {
-      updatedItems = updatedItems.map((item: any) => {
-        if (item.productId === productId) {
-          return { ...item, quantity: newQty };
-        }
-        return item;
-      });
-    }
-    updateCustState({ ...custState, subItems: updatedItems });
-  };
-
-  const handleRemoveSubItem = (productId: string) => {
-    const updatedItems = (custState.subItems || []).filter((item: any) => item.productId !== productId);
-    updateCustState({ ...custState, subItems: updatedItems });
-  };
-
-  const handleAddProductToSub = (product: Product) => {
-    const currentItems = [...(custState.subItems || [])];
-    const totalCansSelected = currentItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0);
-    const capacity = custState.subCansCount || 8;
-    
-    if (totalCansSelected >= capacity) {
-      alert(`Your subscription box is currently full (${totalCansSelected}/${capacity} cans). Please decrease the quantity of an existing flavor first, or use the 'Replace flavor' dropdown to swap!`);
-      return;
-    }
-    
-    const rawBrand = (product.vendor || (product as any).brand || '').trim();
-    // Left empty when the product has no variant, rather than labelled
-    // 'Standard' as though the customer had chosen one.
-    const rawVariant = product.variant || product.concreteVariantName || product.flavour || product.strength || '';
-
-    const existingIndex = currentItems.findIndex((item: any) => item.productId === product.id);
-    if (existingIndex > -1) {
-      currentItems[existingIndex].quantity = (Number(currentItems[existingIndex].quantity) || 1) + 1;
-      currentItems[existingIndex].brand = currentItems[existingIndex].brand || rawBrand;
-      currentItems[existingIndex].variant = currentItems[existingIndex].variant || rawVariant;
-      currentItems[existingIndex].variantName = currentItems[existingIndex].variantName || rawVariant;
-    } else {
-      currentItems.push({
-        productId: product.id,
-        id: product.id,
-        title: product.title,
-        name: product.title,
-        productTitle: product.title,
-        brand: rawBrand,
-        vendor: rawBrand,
-        variant: rawVariant,
-        variantName: rawVariant,
-        quantity: 1,
-        image: product.image,
-        price: product.price,
-        formattedLabel: formatSubscriptionItemDisplay({ brand: rawBrand, name: product.title, variant: rawVariant, quantity: 1 })
-      });
-    }
-    updateCustState({ ...custState, subItems: currentItems });
-  };
-
-  const handleSwapSubItem = (oldProductId: string, newProduct: Product) => {
-    let updatedItems = [...(custState.subItems || [])];
-    const existingIndex = updatedItems.findIndex((item: any) => item.productId === newProduct.id);
-    const oldItemIndex = updatedItems.findIndex((item: any) => item.productId === oldProductId);
-    
-    if (oldItemIndex === -1) return;
-    const oldQty = Number(updatedItems[oldItemIndex].quantity) || 1;
-    const rawBrand = (newProduct.vendor || (newProduct as any).brand || '').trim();
-    const rawVariant = newProduct.variant || newProduct.concreteVariantName || newProduct.flavour || newProduct.strength || '';
-    
-    if (existingIndex > -1) {
-      if (existingIndex === oldItemIndex) return; // same product, no-op
-      updatedItems[existingIndex].quantity = (Number(updatedItems[existingIndex].quantity) || 1) + oldQty;
-      updatedItems[existingIndex].brand = updatedItems[existingIndex].brand || rawBrand;
-      updatedItems[existingIndex].variant = updatedItems[existingIndex].variant || rawVariant;
-      updatedItems = updatedItems.filter((item: any) => item.productId !== oldProductId);
-    } else {
-      updatedItems[oldItemIndex] = {
-        productId: newProduct.id,
-        id: newProduct.id,
-        title: newProduct.title,
-        name: newProduct.title,
-        productTitle: newProduct.title,
-        brand: rawBrand,
-        vendor: rawBrand,
-        variant: rawVariant,
-        variantName: rawVariant,
-        quantity: oldQty,
-        image: newProduct.image,
-        price: newProduct.price,
-        formattedLabel: formatSubscriptionItemDisplay({ brand: rawBrand, name: newProduct.title, variant: rawVariant, quantity: oldQty })
-      };
-    }
-    updateCustState({ ...custState, subItems: updatedItems });
-  };
 
   return (
     <div className="min-h-screen bg-[#f4f6f9] py-4 sm:py-6 px-3 sm:px-6 md:px-8 font-sans">
@@ -2566,7 +2603,7 @@ export default function CustomerAccount({
                                     <p className="text-xs font-bold text-[#dfa047]">£{amount.toFixed(2)} per delivery{subscription.nextBillingDate ? ` • Next charge: ${subscription.nextBillingDate}` : ''}</p>
                                   </div>
                                   <button
-                                    onClick={() => setActiveTab('subscriptions')}
+                                    onClick={() => openSubscriptionManager(subscription.id)}
                                     className="w-full md:w-36 bg-white hover:bg-slate-50 border border-slate-200 text-[#071d37] font-bold text-xs py-2 rounded-xl cursor-pointer text-center"
                                   >
                                     Manage Plan
@@ -3239,6 +3276,7 @@ export default function CustomerAccount({
                               const isPausedPlan = status === 'paused';
                               const busy = subActionBusyId === String(subscription.id);
                               const confirmingDelete = pendingDeleteSubId === String(subscription.id);
+                              const isManaged = String(activeSubscription?.id || '') === String(subscription.id);
                               const nextDate = subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null;
                               const cancelledDate = subscription.cancelledAt ? new Date(subscription.cancelledAt) : null;
                               const formatDate = (d: Date | null) =>
@@ -3250,7 +3288,11 @@ export default function CustomerAccount({
                                 <div
                                   key={subscription.id || planName}
                                   className={`border rounded-2xl p-4 space-y-3 transition-all ${
-                                    isCancelledPlan ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-slate-200 shadow-xs'
+                                    isCancelledPlan
+                                      ? 'bg-slate-50/70 border-slate-200'
+                                      : isManaged
+                                      ? 'bg-white border-[#071d37] ring-1 ring-[#071d37]/20 shadow-xs'
+                                      : 'bg-white border-slate-200 shadow-xs'
                                   }`}
                                 >
                                   <div className="flex items-start gap-4">
@@ -3356,6 +3398,28 @@ export default function CustomerAccount({
                                       </div>
                                     )
                                   )}
+
+                                  {/*
+                                    Picks which plan the editor below is working
+                                    on. Without it a customer with two plans has
+                                    no way to reach the second one's box.
+                                  */}
+                                  {!isCancelledPlan && (
+                                    isManaged ? (
+                                      <p className="flex items-center justify-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl py-2.5">
+                                        <CheckCircle2 className="w-3 h-3" />
+                                        Managing this plan below
+                                      </p>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => openSubscriptionManager(String(subscription.id))}
+                                        className="w-full bg-[#071d37] hover:bg-[#0c2e56] text-white text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                                      >
+                                        Manage This Plan
+                                      </button>
+                                    )
+                                  )}
                                 </div>
                               );
                             })}
@@ -3380,6 +3444,17 @@ export default function CustomerAccount({
                               </span>
                             </div>
                             <p className="text-slate-400 text-[11px] mt-0.5">Switch your plan tier, swap canister flavors, or update delivery frequency anytime.</p>
+                            {/*
+                              Names the plan being edited. With more than one
+                              plan on the account, an unlabelled editor gives no
+                              clue which box the changes will land in.
+                            */}
+                            {activeSubscription && visibleAccountSubscriptions.length > 1 && (
+                              <p className="text-[11px] font-bold text-[#071d37] mt-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 inline-block">
+                                Managing: <span className="text-[#dfa047]">{activeSubscription.planName || 'Subscription Box'}</span>
+                                <span className="text-slate-400 font-semibold"> — pick another plan above to switch.</span>
+                              </p>
+                            )}
                           </div>
 
                           {/* Quick action buttons */}
@@ -3654,193 +3729,40 @@ export default function CustomerAccount({
                         )}
                       </div>
 
-                      {/* Interactive product Swapper & Customizer */}
-                      <div className="space-y-6">
-                        {/* Part 1: Current Box Composition */}
-                        <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-4">
-                          <div>
-                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
-                              <div>
-                                <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">Your Active Box Lineup</h3>
-                                <p className="text-slate-400 text-[11px]">Adjust canister quantities or swap flavors to customize your recurring delivery.</p>
-                              </div>
-                              {(() => {
-                                const subItems = custState.subItems || [];
-                                const totalSelected = subItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0);
-                                const capacity = Number(custState.subCansCount) || 8;
-                                const isExact = totalSelected === capacity;
-                                const isOver = totalSelected > capacity;
-                                
-                                return (
-                                  <div className="shrink-0">
-                                    <span className={`inline-block text-[11px] font-black uppercase tracking-wider px-3 py-1 rounded-full border ${
-                                      isExact ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                                      isOver ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-amber-50 text-amber-700 border-amber-200'
-                                    }`}>
-                                      Box Capacity: {totalSelected} / {capacity} Cans
-                                    </span>
-                                  </div>
-                                );
-                              })()}
-                            </div>
-
-                            {/* Progress Bar Meter */}
-                            {(() => {
-                              const subItems = custState.subItems || [];
-                              const totalSelected = subItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0);
-                              const capacity = Number(custState.subCansCount) || 8;
-                              const pct = Math.min(100, (totalSelected / capacity) * 100);
-                              const isExact = totalSelected === capacity;
-                              const isOver = totalSelected > capacity;
-                              
-                              return (
-                                <div className="mt-3">
-                                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
-                                    <div 
-                                      className={`h-full transition-all duration-300 ${
-                                        isExact ? 'bg-emerald-500' :
-                                        isOver ? 'bg-rose-500 animate-pulse' : 'bg-[#dfa047]'
-                                      }`}
-                                      style={{ width: `${pct}%` }}
-                                    />
-                                  </div>
-
-                                  {/* Alert Warnings */}
-                                  {!isExact && (
-                                    <div className={`mt-2.5 flex items-start gap-2 p-3 rounded-2xl text-[11px] leading-relaxed border ${
-                                      isOver 
-                                        ? 'bg-rose-50 border-rose-100 text-rose-700' 
-                                        : 'bg-amber-50 border-amber-100 text-amber-700'
-                                    }`}>
-                                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                                      <div>
-                                        {isOver ? (
-                                          <p><strong>Capacity exceeded:</strong> You have selected {totalSelected} cans. Your current plan is <strong>{capacity} Cans</strong>. Please reduce quantities to complete your box.</p>
-                                        ) : (
-                                          <p><strong>Add more cans:</strong> You have selected {totalSelected} of <strong>{capacity} Cans</strong>. Add more flavors from the catalog below to complete your box!</p>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })()}
-                          </div>
-
-                          {/* Current Items List */}
-                          {(!custState.subItems || custState.subItems.length === 0) ? (
-                            <div className="py-8 text-center text-slate-400 text-xs">
-                              Your active subscription box is empty. Choose premium flavors below to fill it!
-                            </div>
-                          ) : (
-                            <div className="space-y-3">
-                              {custState.subItems.map((item: any) => (
-                                <div key={item.productId} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl hover:border-slate-300 transition-all">
-                                  <div className="flex items-center gap-3 w-full sm:w-auto min-w-0">
-                                    <img 
-                                      src={item.image} 
-                                      alt={item.title} 
-                                      className="w-12 h-12 object-cover rounded-xl bg-white border border-slate-200 shrink-0 shadow-2xs" 
-                                      referrerPolicy="no-referrer"
-                                    />
-                                    <div className="min-w-0 flex-1">
-                                      <h4 className="text-xs font-black text-[#071d37] truncate">{item.title}</h4>
-                                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">£{item.price ? Number(item.price).toFixed(2) : '4.50'} • Subscription Item</p>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex items-center justify-between sm:justify-end gap-2.5 sm:gap-4 w-full sm:w-auto border-t sm:border-t-0 pt-2 sm:pt-0">
-                                    {/* Swap dropdown list */}
-                                    <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
-                                      <select
-                                        value={item.productId}
-                                        onChange={(e) => {
-                                          const selectedProd = allProducts.find(p => p.id === e.target.value);
-                                          if (selectedProd) {
-                                            handleSwapSubItem(item.productId, selectedProd);
-                                          }
-                                        }}
-                                        className="text-[10.5px] font-bold text-[#071d37] bg-white border border-slate-200 py-1.5 px-2 rounded-xl hover:border-[#dfa047] transition-all cursor-pointer outline-none focus:ring-1 focus:ring-[#071d37] w-full sm:w-auto max-w-[140px] sm:max-w-[180px]"
-                                      >
-                                        <option value={item.productId}>🔄 Swap Flavor...</option>
-                                        {allProducts.filter(p => p.id !== item.productId).map((p, pIdx) => (
-                                          <option key={`ca-swap-${p.id}-${pIdx}`} value={p.id}>{p.title}</option>
-                                        ))}
-                                      </select>
-                                    </div>
-
-                                    {/* Quantity Controller */}
-                                    <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleUpdateSubItemQty(item.productId, item.quantity - 1)}
-                                        className="w-7 h-7 flex items-center justify-center text-xs font-bold text-[#071d37] hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
-                                      >
-                                        -
-                                      </button>
-                                      <span className="text-xs font-black text-[#071d37] min-w-[18px] text-center">{item.quantity}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleUpdateSubItemQty(item.productId, item.quantity + 1)}
-                                        className="w-7 h-7 flex items-center justify-center text-xs font-bold text-[#071d37] hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
-                                      >
-                                        +
-                                      </button>
-                                    </div>
-
-                                    {/* Delete Button */}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemoveSubItem(item.productId)}
-                                      className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all cursor-pointer shrink-0"
-                                      title="Remove from Box"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                      {/*
+                        Box editor for the ONE plan being managed. Everything it
+                        writes is scoped to activeSubscription.id, so a customer
+                        with two plans edits them independently.
+                      */}
+                      {activeSubscription ? (
+                        <SubscriptionBoxManager
+                          key={String(activeSubscription.id)}
+                          subscription={activeSubscription}
+                          allProducts={allProducts}
+                          capacity={
+                            Number(activeSubscription.cansCount) ||
+                            ACCOUNT_SUB_PLANS.find(t => t.id === getPlanSlug(activeSubscription.planName))?.cans ||
+                            Number(custState.subCansCount) ||
+                            6
+                          }
+                          allowOverCapacity={getPlanSlug(activeSubscription.planName) === 'ultimate'}
+                          disabled={['cancelled', 'canceled', 'inactive'].includes(
+                            String(activeSubscription.status || '').toLowerCase()
                           )}
+                          saving={isSavingBox}
+                          onSave={handleSaveSubscriptionBox}
+                        />
+                      ) : (
+                        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs text-center space-y-2">
+                          <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">
+                            No Subscription To Manage
+                          </h3>
+                          <p className="text-xs text-slate-500 max-w-md mx-auto">
+                            Your box contents appear here once a subscription order has been placed. Build a plan to
+                            start choosing flavours.
+                          </p>
                         </div>
-
-                        {/* Part 2: Add other available canisters */}
-                        <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-4">
-                          <div>
-                            <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">Add Premium Flavors to Box</h3>
-                            <p className="text-slate-400 text-[11px]">Select any of these premium nicotine pouch brands to add to your recurring deliveries.</p>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                            {allProducts.filter(prod => !(custState.subItems || []).some((item: any) => item.productId === prod.id)).map((prod, pIdx) => (
-                              <div key={`ca-subadd-${prod.id}-${pIdx}`} className="flex gap-3 bg-[#f4f6f9] border border-slate-100 p-3 rounded-2xl relative hover:shadow-xs transition-all">
-                                <img 
-                                  src={prod.image} 
-                                  alt={prod.title} 
-                                  className="w-13 h-13 object-cover rounded-xl bg-white border border-slate-100 shrink-0" 
-                                  referrerPolicy="no-referrer"
-                                />
-                                <div className="flex-1 min-w-0 flex flex-col justify-between">
-                                  <div>
-                                    <span className="text-[9px] text-[#dfa047] font-bold uppercase tracking-wider">{prod.vendor}</span>
-                                    <h4 className="text-xs font-black text-[#071d37] truncate">{prod.title}</h4>
-                                  </div>
-                                  <div className="flex items-center justify-between mt-2">
-                                    <span className="text-xs font-extrabold text-slate-800">£{(Number(prod.price || 0)).toFixed(2)}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAddProductToSub(prod)}
-                                      className="text-[10px] font-black text-[#071d37] bg-white border border-slate-200 py-1 px-2.5 rounded-lg hover:border-[#dfa047] hover:bg-[#dfa047] hover:text-white transition-all cursor-pointer shadow-2xs"
-                                    >
-                                      + Add to Box
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
+                      )}
                     </>
                   )}
                 </div>

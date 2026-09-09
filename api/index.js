@@ -3762,6 +3762,77 @@ var init_klaviyoService = __esm({
   }
 });
 
+// src/utils/ukValidation.ts
+function isUkCountry(value) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return false;
+  return UK_COUNTRY_TOKENS.has(raw);
+}
+function normalizeUkPostcode(value) {
+  const compact = String(value ?? "").toUpperCase().replace(/\s+/g, "");
+  if (compact.length < 5) return compact;
+  return `${compact.slice(0, compact.length - 3)} ${compact.slice(-3)}`;
+}
+function isValidUkPostcode(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  return UK_POSTCODE_RE.test(raw.replace(/\s+/g, " "));
+}
+function normalizeUkPhone(value) {
+  let digits = String(value ?? "").replace(/[\s().-]/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("+44")) digits = `0${digits.slice(3)}`;
+  else if (digits.startsWith("0044")) digits = `0${digits.slice(4)}`;
+  else if (digits.startsWith("44") && digits.length >= 11) digits = `0${digits.slice(2)}`;
+  if (!/^0\d+$/.test(digits)) return "";
+  if (digits.length < 10 || digits.length > 11) return "";
+  return digits;
+}
+function isValidUkPhone(value) {
+  return normalizeUkPhone(value).length > 0;
+}
+function validateUkDelivery(input) {
+  const errors = [];
+  const country = input.country || input.countryCode || "";
+  if (!isUkCountry(country)) {
+    errors.push(
+      "We currently deliver to United Kingdom addresses only. Please use a UK delivery address to place your order."
+    );
+  }
+  if (!String(input.postcode ?? "").trim()) {
+    errors.push("A UK postcode is required.");
+  } else if (!isValidUkPostcode(input.postcode)) {
+    errors.push("Please enter a valid UK postcode (for example SW1A 1AA).");
+  }
+  if (!String(input.phone ?? "").trim()) {
+    errors.push("A contact phone number is required so we can reach you about your delivery.");
+  } else if (!isValidUkPhone(input.phone)) {
+    errors.push("Please enter a valid UK phone number (for example 07700 900123).");
+  }
+  return { valid: errors.length === 0, errors };
+}
+var UK_COUNTRY_TOKENS, UK_POSTCODE_RE, UK_COUNTRY_CODE, UK_COUNTRY_NAME;
+var init_ukValidation = __esm({
+  "src/utils/ukValidation.ts"() {
+    UK_COUNTRY_TOKENS = /* @__PURE__ */ new Set([
+      "gb",
+      "uk",
+      "gbr",
+      "united kingdom",
+      "united kingdom of great britain and northern ireland",
+      "great britain",
+      "britain",
+      "england",
+      "scotland",
+      "wales",
+      "northern ireland"
+    ]);
+    UK_POSTCODE_RE = /^(GIR ?0AA|[A-PR-UWYZ][A-HK-Y]?[0-9][0-9A-HJKPS-UW]? ?[0-9][ABD-HJLNP-UW-Z]{2})$/i;
+    UK_COUNTRY_CODE = "GB";
+    UK_COUNTRY_NAME = "United Kingdom";
+  }
+});
+
 // backend/services/worldpayRefund.ts
 var worldpayRefund_exports = {};
 __export(worldpayRefund_exports, {
@@ -4212,6 +4283,7 @@ var init_orders = __esm({
     init_serverDb();
     init_emailService();
     init_klaviyoService();
+    init_ukValidation();
     router3 = Router2();
     FULFILLMENT_NOTIFICATION = {
       Processing: "order_processing",
@@ -4256,6 +4328,18 @@ var init_orders = __esm({
         const orderData = req.body;
         if (!orderData || typeof orderData !== "object") {
           return res.status(400).json({ error: "Order data object is required" });
+        }
+        const isCustomerCheckout = !orderData.isRenewal && !orderData.createdByAdmin;
+        if (isCustomerCheckout) {
+          const address = orderData.shippingAddress && typeof orderData.shippingAddress === "object" ? orderData.shippingAddress : {};
+          const check = validateUkDelivery({
+            phone: orderData.customerPhone || address.phone,
+            postcode: address.postcode,
+            country: address.country || address.countryCode || UK_COUNTRY_NAME
+          });
+          if (!check.valid) {
+            return res.status(400).json({ error: check.errors[0], errors: check.errors });
+          }
         }
         const savedOrder = await saveSingleOrder(orderData);
         res.json({ success: true, order: savedOrder });
@@ -5304,7 +5388,7 @@ function parseAddressString(raw, fallbackName = "") {
     }
   }
   for (let i = segments.length - 1; i >= 0; i--) {
-    const match = segments[i].match(UK_POSTCODE_RE);
+    const match = segments[i].match(UK_POSTCODE_RE2);
     if (!match) continue;
     postcode = `${match[1]} ${match[2]}`.toUpperCase();
     const remainder = segments[i].replace(match[0], "").trim().replace(/^[,\s-]+|[,\s-]+$/g, "");
@@ -5854,7 +5938,7 @@ async function createRoyalMailReturnLabel(orderId) {
     message: `Royal Mail pre-paid returns label retrieved for order #${orderId}.`
   };
 }
-var DEFAULT_ROYAL_MAIL_SETTINGS, UK_SERVICE_CODES, LEGACY_SERVICE_CODE_MAP, NOTIFICATION_UNAVAILABLE_RE, UK_POSTCODE_RE, COUNTRY_TOKENS;
+var DEFAULT_ROYAL_MAIL_SETTINGS, UK_SERVICE_CODES, LEGACY_SERVICE_CODE_MAP, NOTIFICATION_UNAVAILABLE_RE, UK_POSTCODE_RE2, COUNTRY_TOKENS;
 var init_royalMailService = __esm({
   "backend/services/royalMailService.ts"() {
     init_serverDb();
@@ -5903,7 +5987,7 @@ var init_royalMailService = __esm({
       SD2: "OLP1SF"
     };
     NOTIFICATION_UNAVAILABLE_RE = /notification is not available|notifications are not available/i;
-    UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
+    UK_POSTCODE_RE2 = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
     COUNTRY_TOKENS = {
       "united kingdom": "GB",
       "great britain": "GB",
@@ -7626,9 +7710,28 @@ init_prisma();
 init_serverDb();
 init_worldpaySubscription();
 init_subscriptionCron();
+init_ukValidation();
 import { Router as Router8 } from "express";
 import crypto3 from "crypto";
 var router10 = Router8();
+function assertDeliverable(body) {
+  const address = body?.shippingAddress && typeof body.shippingAddress === "object" ? body.shippingAddress : {};
+  const destination = String(body?.destination || body?.address || "");
+  const country = address.country || address.countryCode || (destination ? destination.split(",").map((p) => p.trim()).filter(Boolean).pop() || "" : "");
+  const phone = body?.customerPhone || address.phone || "";
+  const postcode = address.postcode || "";
+  const check = validateUkDelivery({
+    phone,
+    postcode,
+    // An order with no country recorded at all predates the UK-only rule rather
+    // than being an overseas order; the postcode check still has to pass.
+    country: country || UK_COUNTRY_NAME
+  });
+  if (!check.valid) {
+    return { ok: false, phone: "", postcode: "", message: check.errors[0] };
+  }
+  return { ok: true, phone: normalizeUkPhone(phone), postcode: normalizeUkPostcode(postcode), message: "" };
+}
 var pendingCheckoutsMap = /* @__PURE__ */ new Map();
 function getEnvironmentConfig() {
   const entity = process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID || "";
@@ -7924,6 +8027,9 @@ async function saveVerifiedOrder(orderId, details) {
     // The separate address fields ride along with the order so Royal Mail can
     // read the town and postcode directly.
     shippingAddress: pending?.shippingAddress || details.shippingAddress || null,
+    // Kept at the top level too: createRoyalMailShipment reads either
+    // shippingAddress.phone or customerPhone when building the label.
+    customerPhone: pending?.customerPhone || details.customerPhone || pending?.shippingAddress?.phone || null,
     items,
     total,
     subtotal: calculatedSubtotal,
@@ -8011,6 +8117,10 @@ async function handleCreateHostedPaymentPage(req, res) {
       storeCreditApplied,
       origin: bodyOrigin
     } = req.body;
+    const deliverable = assertDeliverable(req.body);
+    if (!deliverable.ok) {
+      return res.status(400).json({ success: false, message: deliverable.message });
+    }
     const cfg = getEnvironmentConfig();
     const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
     const host = req.headers["x-forwarded-host"] || req.get("host") || "localhost:3000";
@@ -8034,7 +8144,8 @@ async function handleCreateHostedPaymentPage(req, res) {
       destination: destination || address || "United Kingdom",
       // Kept as separate fields so the shipping label can be produced without
       // having to take the joined string apart again.
-      shippingAddress: shippingAddress && typeof shippingAddress === "object" ? shippingAddress : void 0,
+      shippingAddress: shippingAddress && typeof shippingAddress === "object" ? { ...shippingAddress, phone: deliverable.phone, postcode: deliverable.postcode, country: UK_COUNTRY_NAME, countryCode: UK_COUNTRY_CODE } : void 0,
+      customerPhone: deliverable.phone,
       items: Array.isArray(items) ? items.map((it) => {
         let planName = it.subscriptionPlan || "";
         const rawPlan = (it.subscriptionPlan || "").toLowerCase();
@@ -8716,18 +8827,21 @@ router11.post("/update-plan", async (req, res) => {
     const finalItems = subItems || items || [];
     const finalCans = subCansCount ?? cansCount ?? (Array.isArray(finalItems) ? finalItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0) : 6);
     const finalStatus = (subStatus || status || "active").toLowerCase();
+    const planFields = {
+      planId: finalPlanId,
+      planName: finalPlanName,
+      amount: finalAmount,
+      billingInterval: finalInterval,
+      status: finalStatus,
+      ...Array.isArray(finalItems) ? { items: finalItems } : {},
+      ...Number.isFinite(Number(finalCans)) ? { cansCount: Number(finalCans) } : {},
+      ...nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {}
+    };
     if (subscriptionId) {
       try {
         await prisma.subscription.update({
           where: { id: subscriptionId },
-          data: {
-            planId: finalPlanId,
-            planName: finalPlanName,
-            amount: finalAmount,
-            billingInterval: finalInterval,
-            status: finalStatus,
-            ...nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {}
-          }
+          data: planFields
         });
       } catch (_e) {
       }
@@ -8739,14 +8853,7 @@ router11.post("/update-plan", async (req, res) => {
         if (existingSub) {
           await prisma.subscription.update({
             where: { id: existingSub.id },
-            data: {
-              planId: finalPlanId,
-              planName: finalPlanName,
-              amount: finalAmount,
-              billingInterval: finalInterval,
-              status: finalStatus,
-              ...nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {}
-            }
+            data: planFields
           });
         }
       } catch (_e) {
@@ -8756,7 +8863,7 @@ router11.post("/update-plan", async (req, res) => {
       const storedSubs = await fetchResource("subscriptions") || [];
       let foundSub = false;
       const updatedSubs = storedSubs.map((s) => {
-        const match = subscriptionId && String(s.id) === String(subscriptionId) || emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+        const match = subscriptionId ? String(s.id) === String(subscriptionId) : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean && !isDeletedStatus(s.status));
         if (match) {
           foundSub = true;
           return {

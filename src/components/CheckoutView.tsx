@@ -14,6 +14,14 @@ import { resolveDiscountCode } from '../utils/discountUtils';
 import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed, trackSubscriptionStarted } from '../utils/klaviyo';
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
 import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
+import {
+  UK_COUNTRY_CODE,
+  UK_COUNTRY_NAME,
+  isValidUkPostcode,
+  normalizeUkPhone,
+  normalizeUkPostcode,
+  validateUkDelivery
+} from '../utils/ukValidation';
 
 function hasCurrentAgeApproval(): boolean {
   if (typeof window === 'undefined') return false;
@@ -74,7 +82,13 @@ export default function CheckoutView({
   );
   const [city, setCity] = useState('London');
   const [postcode, setPostcode] = useState('EC1A 1BB');
-  const [country, setCountry] = useState('United Kingdom');
+  // The store ships within the UK only, so the country is fixed rather than
+  // chosen: an address anywhere else cannot be posted on this Royal Mail
+  // contract, and taking the order would only mean cancelling it later.
+  const country = UK_COUNTRY_NAME;
+  // Required. Royal Mail puts it on the label and the courier uses it for
+  // delivery problems, so an order without one cannot be dispatched cleanly.
+  const [phone, setPhone] = useState(loggedInCustomer?.phone || '');
 
   // Payment state
   const [isProcessing, setIsProcessing] = useState(false);
@@ -459,17 +473,31 @@ export default function CheckoutView({
     fullName: fullName.trim(),
     addressLine1: addressLine.trim(),
     city: city.trim(),
-    postcode: postcode.trim().toUpperCase(),
-    countryCode: country.trim().toLowerCase() === 'united kingdom' ? 'GB' : country.trim(),
-    country: country.trim(),
-    email: email.trim()
+    postcode: normalizeUkPostcode(postcode),
+    countryCode: UK_COUNTRY_CODE,
+    country: UK_COUNTRY_NAME,
+    email: email.trim(),
+    // Royal Mail prints this on the label and uses it for delivery problems.
+    phone: normalizeUkPhone(phone) || phone.trim()
   });
+
+  const ukDeliveryCheck = validateUkDelivery({ phone, postcode, country });
+  const isPhoneValid = normalizeUkPhone(phone).length > 0;
+  const isPostcodeValid = isValidUkPostcode(postcode);
 
   // Process live payment with Worldpay HPP
   const executePaymentProcess = async (skipAgeCheck = false) => {
     // Validate shipping info
-    if (!fullName || !email || !addressLine) {
+    if (!fullName || !email || !addressLine || !city.trim()) {
       setPaymentError('Please fill in your shipping and contact information.');
+      return;
+    }
+
+    // UK-only delivery, and a phone number Royal Mail can use. Checked here as
+    // well as on the server so the shopper is told before payment starts rather
+    // than after the gateway has taken the money.
+    if (!ukDeliveryCheck.valid) {
+      setPaymentError(ukDeliveryCheck.errors[0]);
       return;
     }
 
@@ -512,6 +540,7 @@ export default function CheckoutView({
           orderId: generatedOrderId,
           customerName: fullName,
           customerEmail: email,
+          customerPhone: normalizeUkPhone(phone) || phone.trim(),
           address: buildDestinationString(),
           shippingAddress: buildShippingAddress(),
           total: 0,
@@ -618,6 +647,7 @@ export default function CheckoutView({
         deliveryMethod: 'Royal Mail Tracked 24/48',
         customerName: fullName,
         customerEmail: email,
+        customerPhone: normalizeUkPhone(phone) || phone.trim(),
         destination: buildDestinationString(),
         shippingAddress: buildShippingAddress(),
         items: cartItems.map(item => {
@@ -666,6 +696,7 @@ export default function CheckoutView({
           deliveryMethod: 'Royal Mail Tracked 24/48',
           customerName: fullName,
           customerEmail: email,
+          customerPhone: normalizeUkPhone(phone) || phone.trim(),
           destination: buildDestinationString(),
           shippingAddress: buildShippingAddress(),
           items: pendingOrderObj.items,
@@ -965,6 +996,29 @@ export default function CheckoutView({
             </div>
 
             <div className="space-y-1.5">
+              <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                Phone Number <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="tel"
+                required
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="07700 900123"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className={`w-full text-xs p-3 border bg-slate-50/30 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-600 font-semibold ${
+                  phone.trim() && !isPhoneValid ? 'border-red-300' : 'border-slate-250'
+                }`}
+              />
+              <p className={`text-[10px] font-semibold ${phone.trim() && !isPhoneValid ? 'text-red-600' : 'text-slate-400'}`}>
+                {phone.trim() && !isPhoneValid
+                  ? 'Enter a valid UK phone number, for example 07700 900123.'
+                  : 'Required. Used by Royal Mail for delivery updates and any problem with your parcel.'}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
               <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">Street Address</label>
               <input
                 type="text"
@@ -993,26 +1047,42 @@ export default function CheckoutView({
                 <input
                   type="text"
                   required
+                  placeholder="SW1A 1AA"
                   value={postcode}
                   onChange={(e) => setPostcode(e.target.value)}
-                  className="w-full text-xs p-3 border border-slate-250 bg-slate-50/30 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-600 font-semibold uppercase"
+                  className={`w-full text-xs p-3 border bg-slate-50/30 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-600 font-semibold uppercase ${
+                    postcode.trim() && !isPostcodeValid ? 'border-red-300' : 'border-slate-250'
+                  }`}
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">Country</label>
-                <select
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  className="w-full text-xs p-3 border border-slate-250 bg-slate-50/30 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-700 bg-white"
-                >
-                  <option value="United Kingdom">United Kingdom</option>
-                  <option value="Ireland">Ireland</option>
-                  <option value="Sweden">Sweden</option>
-                  <option value="Germany">Germany</option>
-                  <option value="France">France</option>
-                </select>
+                {/*
+                  Fixed, not selectable. The store's Royal Mail contract only
+                  carries UK services, so an overseas address cannot be shipped
+                  at all — offering the choice would only produce orders that
+                  have to be refunded.
+                */}
+                <div className="w-full text-xs p-3 border border-slate-250 bg-slate-100 rounded-xl font-bold text-slate-700 flex items-center justify-between">
+                  <span>{UK_COUNTRY_NAME}</span>
+                  <Lock className="h-3.5 w-3.5 text-slate-400" />
+                </div>
               </div>
+            </div>
+
+            {postcode.trim() && !isPostcodeValid && (
+              <p className="text-[10px] font-bold text-red-600">
+                Please enter a valid UK postcode (for example SW1A 1AA). We deliver to UK addresses only.
+              </p>
+            )}
+
+            <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <Truck className="h-4 w-4 text-slate-500 shrink-0 mt-px" />
+              <p className="text-[10.5px] text-slate-500 font-semibold leading-relaxed">
+                <span className="font-black text-slate-700">UK delivery only.</span> We ship to United Kingdom
+                addresses exclusively and cannot accept international orders.
+              </p>
             </div>
 
             {/* Delivery Info */}

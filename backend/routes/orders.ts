@@ -10,6 +10,7 @@ import {
   sendOrderRefundedEmail
 } from "../services/emailService";
 import { trackPurchaseCompleted, trackOrderRefunded, trackOrderShipped } from "../services/klaviyoService";
+import { UK_COUNTRY_NAME, validateUkDelivery } from "../../src/utils/ukValidation";
 
 const router = Router();
 
@@ -525,6 +526,26 @@ router.post("/create", async (req: Request, res: Response) => {
     const orderData = req.body;
     if (!orderData || typeof orderData !== 'object') {
       return res.status(400).json({ error: "Order data object is required" });
+    }
+
+    // Store-credit checkouts reach the order straight through this endpoint,
+    // bypassing the payment session, so the UK-only and phone rules are applied
+    // here as well. Orders created by staff or by the renewal worker carry a
+    // marker and are left alone — a renewal must never be blocked by a rule the
+    // original order already passed.
+    const isCustomerCheckout = !orderData.isRenewal && !orderData.createdByAdmin;
+    if (isCustomerCheckout) {
+      const address = (orderData.shippingAddress && typeof orderData.shippingAddress === 'object')
+        ? orderData.shippingAddress
+        : {};
+      const check = validateUkDelivery({
+        phone: orderData.customerPhone || address.phone,
+        postcode: address.postcode,
+        country: address.country || address.countryCode || UK_COUNTRY_NAME
+      });
+      if (!check.valid) {
+        return res.status(400).json({ error: check.errors[0], errors: check.errors });
+      }
     }
 
     const savedOrder = await saveSingleOrder(orderData);

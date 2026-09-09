@@ -354,19 +354,26 @@ router.post("/update-plan", async (req: Request, res: Response) => {
     const finalCans = subCansCount ?? cansCount ?? (Array.isArray(finalItems) ? finalItems.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0) : 6);
     const finalStatus = (subStatus || status || "active").toLowerCase();
 
+    // The box contents belong in Postgres too. They were only ever written to
+    // the JSON store, so a renewal reading the subscription from Prisma could
+    // not reproduce the box the customer had just edited.
+    const planFields = {
+      planId: finalPlanId,
+      planName: finalPlanName,
+      amount: finalAmount,
+      billingInterval: finalInterval,
+      status: finalStatus,
+      ...(Array.isArray(finalItems) ? { items: finalItems } : {}),
+      ...(Number.isFinite(Number(finalCans)) ? { cansCount: Number(finalCans) } : {}),
+      ...(nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {})
+    };
+
     // 1. Update Prisma subscription record if exists
     if (subscriptionId) {
       try {
         await prisma.subscription.update({
           where: { id: subscriptionId },
-          data: {
-            planId: finalPlanId,
-            planName: finalPlanName,
-            amount: finalAmount,
-            billingInterval: finalInterval,
-            status: finalStatus,
-            ...(nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {})
-          }
+          data: planFields
         });
       } catch (_e) {}
     } else if (emailClean) {
@@ -377,14 +384,7 @@ router.post("/update-plan", async (req: Request, res: Response) => {
         if (existingSub) {
           await prisma.subscription.update({
             where: { id: existingSub.id },
-            data: {
-              planId: finalPlanId,
-              planName: finalPlanName,
-              amount: finalAmount,
-              billingInterval: finalInterval,
-              status: finalStatus,
-              ...(nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {})
-            }
+            data: planFields
           });
         }
       } catch (_e) {}
@@ -395,8 +395,12 @@ router.post("/update-plan", async (req: Request, res: Response) => {
       const storedSubs: any[] = (await fetchResource("subscriptions")) || [];
       let foundSub = false;
       const updatedSubs = storedSubs.map((s: any) => {
-        const match = (subscriptionId && String(s.id) === String(subscriptionId)) ||
-          (emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean);
+        // A named subscription is the only one touched. Matching on the email as
+        // well meant editing one plan rewrote every plan the customer had — a
+        // customer with two boxes saw both change when they edited either.
+        const match = subscriptionId
+          ? String(s.id) === String(subscriptionId)
+          : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean && !isDeletedStatus(s.status));
         if (match) {
           foundSub = true;
           return {

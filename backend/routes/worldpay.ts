@@ -9,8 +9,51 @@ import {
   isUsableRecurringHref
 } from '../services/worldpaySubscription';
 import { calculateNextBillingDate, normalizeBillingInterval } from '../services/subscriptionCron';
+import {
+  UK_COUNTRY_CODE,
+  UK_COUNTRY_NAME,
+  normalizeUkPhone,
+  normalizeUkPostcode,
+  validateUkDelivery
+} from '../../src/utils/ukValidation';
 
 const router = Router();
+
+/**
+ * The store delivers within the UK only, and Royal Mail needs a contact number
+ * on the label. The checkout form enforces both, but the form is not the gate:
+ * anything can POST to this endpoint, and an order taken here is an order the
+ * shop is committed to. Refusing before the payment session is created is the
+ * only point at which no money has moved yet.
+ */
+function assertDeliverable(body: any): { ok: boolean; phone: string; postcode: string; message: string } {
+  const address = (body?.shippingAddress && typeof body.shippingAddress === 'object' ? body.shippingAddress : {}) as Record<string, string>;
+  const destination = String(body?.destination || body?.address || '');
+
+  // The country may arrive as a field or only inside the joined destination
+  // string, which is what older storefront builds sent.
+  const country =
+    address.country ||
+    address.countryCode ||
+    (destination ? destination.split(',').map(p => p.trim()).filter(Boolean).pop() || '' : '');
+
+  const phone = body?.customerPhone || address.phone || '';
+  const postcode = address.postcode || '';
+
+  const check = validateUkDelivery({
+    phone,
+    postcode,
+    // An order with no country recorded at all predates the UK-only rule rather
+    // than being an overseas order; the postcode check still has to pass.
+    country: country || UK_COUNTRY_NAME
+  });
+
+  if (!check.valid) {
+    return { ok: false, phone: '', postcode: '', message: check.errors[0] };
+  }
+
+  return { ok: true, phone: normalizeUkPhone(phone), postcode: normalizeUkPostcode(postcode), message: '' };
+}
 
 // In-memory store for pending checkout payloads before payment confirmation.
 // Crucial: An order is NEVER created in the database prior to verified payment success!
@@ -22,6 +65,8 @@ interface PendingCheckout {
   // The address as separate fields. The destination string is the joined display
   // form; Royal Mail needs the town and postcode on their own.
   shippingAddress?: Record<string, string>;
+  // Required for dispatch: Royal Mail prints it on the label.
+  customerPhone?: string;
   items: any[];
   total: number;
   subtotal?: number;
@@ -461,6 +506,9 @@ async function saveVerifiedOrder(
     // The separate address fields ride along with the order so Royal Mail can
     // read the town and postcode directly.
     shippingAddress: pending?.shippingAddress || (details as any).shippingAddress || null,
+    // Kept at the top level too: createRoyalMailShipment reads either
+    // shippingAddress.phone or customerPhone when building the label.
+    customerPhone: pending?.customerPhone || (details as any).customerPhone || pending?.shippingAddress?.phone || null,
     items,
     total,
     subtotal: calculatedSubtotal,
@@ -562,6 +610,14 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       origin: bodyOrigin
     } = req.body;
 
+    // UK-only delivery and a usable contact number, checked before a payment
+    // session exists. Once Worldpay has taken the money, refusing the order
+    // means a refund instead of a message.
+    const deliverable = assertDeliverable(req.body);
+    if (!deliverable.ok) {
+      return res.status(400).json({ success: false, message: deliverable.message });
+    }
+
     const cfg = getEnvironmentConfig();
 
     const protocol = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
@@ -593,7 +649,10 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       destination: destination || address || 'United Kingdom',
       // Kept as separate fields so the shipping label can be produced without
       // having to take the joined string apart again.
-      shippingAddress: shippingAddress && typeof shippingAddress === 'object' ? shippingAddress : undefined,
+      shippingAddress: shippingAddress && typeof shippingAddress === 'object'
+        ? { ...shippingAddress, phone: deliverable.phone, postcode: deliverable.postcode, country: UK_COUNTRY_NAME, countryCode: UK_COUNTRY_CODE }
+        : undefined,
+      customerPhone: deliverable.phone,
       items: Array.isArray(items) ? items.map((it: any) => {
         let planName = it.subscriptionPlan || '';
         const rawPlan = (it.subscriptionPlan || '').toLowerCase();
