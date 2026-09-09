@@ -6103,7 +6103,8 @@
       "tags": [
         "Storefront",
         "Subscription Order",
-        "Worldpay Recurring"
+        "Worldpay Recurring",
+        "Subscription Cancelled"
       ],
       "items": [
         {
@@ -6122,6 +6123,8 @@
       "total": 32.39,
       "carrier": "Royal Mail",
       "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-09T07:00:29.565Z",
+      "trackingId": null,
       "destination": "United Kingdom",
       "gatewayTxId": "WP-SIM-803289",
       "customerName": "Ritesh Dhiman",
@@ -6132,12 +6135,19 @@
       "trackingNumber": null,
       "discountApplied": null,
       "gatewayAuthCode": "AUTH-SIMULATED",
+      "trackingHistory": null,
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "trackingId": null,
-      "trackingHistory": null,
-      "createdAt": "2026-09-09T07:00:29.565Z"
+      "subscriptionDetails": {
+        "status": "Cancelled",
+        "cancelledAt": "2026-09-09T11:54:55.586Z",
+        "isCancelled": true,
+        "cancellationReason": "Test subscription removed during setup"
+      },
+      "subscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:54:55.586Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     },
     {
       "id": "PS75082",
@@ -6158,7 +6168,8 @@
       "tags": [
         "Storefront",
         "Subscription Order",
-        "Worldpay Recurring"
+        "Worldpay Recurring",
+        "Subscription Cancelled"
       ],
       "items": [
         {
@@ -6177,6 +6188,8 @@
       "total": 27.99,
       "carrier": "Royal Mail",
       "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-09T07:00:29.650Z",
+      "trackingId": null,
       "destination": "United Kingdom",
       "gatewayTxId": "WP-SIM-825230",
       "customerName": "neha",
@@ -6187,12 +6200,19 @@
       "trackingNumber": null,
       "discountApplied": null,
       "gatewayAuthCode": "AUTH-SIMULATED",
+      "trackingHistory": null,
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "trackingId": null,
-      "trackingHistory": null,
-      "createdAt": "2026-09-09T07:00:29.650Z"
+      "subscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:56:13.751Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup",
+      "subscriptionDetails": {
+        "status": "Cancelled",
+        "isCancelled": true,
+        "cancelledAt": "2026-09-09T11:56:13.751Z",
+        "cancellationReason": "Test subscription removed during setup"
+      }
     },
     {
       "id": "PS46141",
@@ -6213,7 +6233,8 @@
       "tags": [
         "Storefront",
         "Subscription Order",
-        "Worldpay Recurring"
+        "Worldpay Recurring",
+        "Subscription Cancelled"
       ],
       "items": [
         {
@@ -6232,6 +6253,8 @@
       "total": 27.99,
       "carrier": "Royal Mail",
       "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-09T07:00:29.696Z",
+      "trackingId": null,
       "destination": "United Kingdom",
       "gatewayTxId": "WP-SIM-874247",
       "customerName": "neha",
@@ -6242,12 +6265,19 @@
       "trackingNumber": null,
       "discountApplied": null,
       "gatewayAuthCode": "AUTH-SIMULATED",
+      "trackingHistory": null,
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "trackingId": null,
-      "trackingHistory": null,
-      "createdAt": "2026-09-09T07:00:29.696Z"
+      "subscriptionDetails": {
+        "status": "Cancelled",
+        "cancelledAt": "2026-09-09T11:55:08.737Z",
+        "isCancelled": true,
+        "cancellationReason": "Test subscription removed during setup"
+      },
+      "subscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:55:08.737Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     },
     {
       "id": "PS58451",
@@ -6268,7 +6298,8 @@
       "tags": [
         "Storefront",
         "Subscription Order",
-        "Worldpay Recurring"
+        "Worldpay Recurring",
+        "Subscription Cancelled"
       ],
       "items": [
         {
@@ -6287,6 +6318,8 @@
       "total": 25.19,
       "carrier": "Royal Mail",
       "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-09T07:00:29.539Z",
+      "trackingId": null,
       "destination": "United Kingdom",
       "gatewayTxId": "WP-SIM-983194",
       "customerName": "Scott Kivlin",
@@ -6297,12 +6330,19 @@
       "trackingNumber": null,
       "discountApplied": null,
       "gatewayAuthCode": "AUTH-SIMULATED",
+      "trackingHistory": null,
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "trackingId": null,
-      "trackingHistory": null,
-      "createdAt": "2026-09-09T07:00:29.539Z"
+      "subscriptionDetails": {
+        "status": "Cancelled",
+        "cancelledAt": "2026-09-09T11:54:09.885Z",
+        "isCancelled": true,
+        "cancellationReason": "Test subscription removed during setup"
+      },
+      "subscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:54:09.885Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     },
     {
       "id": "PS16610",
@@ -6323,7 +6363,8 @@
       "tags": [
         "Storefront",
         "Subscription Order",
-        "Worldpay Recurring"
+        "Worldpay Recurring",
+        "Subscription Cancelled"
       ],
       "items": [
         {
@@ -6342,6 +6383,8 @@
       "total": 45.71,
       "carrier": "Royal Mail",
       "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-09T07:00:29.616Z",
+      "trackingId": null,
       "destination": "United Kingdom",
       "gatewayTxId": "WP-SIM-023832",
       "customerName": "Ritesh Dhiman",
@@ -6352,12 +6395,19 @@
       "trackingNumber": null,
       "discountApplied": null,
       "gatewayAuthCode": "AUTH-SIMULATED",
+      "trackingHistory": null,
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "trackingId": null,
-      "trackingHistory": null,
-      "createdAt": "2026-09-09T07:00:29.616Z"
+      "subscriptionDetails": {
+        "status": "Cancelled",
+        "cancelledAt": "2026-09-09T11:54:40.361Z",
+        "isCancelled": true,
+        "cancellationReason": "Test subscription removed during setup"
+      },
+      "subscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:54:40.361Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     }
   ],
   "files": [
@@ -6591,7 +6641,7 @@
         "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
         "United Kingdom"
       ],
-      "subStatus": "active",
+      "subStatus": "Cancelled",
       "savedCards": [
         {
           "id": "card_1",
@@ -6636,7 +6686,10 @@
           "redeemed": false
         }
       ],
-      "subscriptionStatus": "Active Subscriber"
+      "subscriptionStatus": "Cancelled",
+      "isSubscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:54:09.885Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     },
     {
       "id": "cust-1788870238259-tf7ll",
@@ -6647,9 +6700,13 @@
       "addresses": [
         "United Kingdom"
       ],
+      "subStatus": "Cancelled",
       "amountSpent": 78.1,
       "ordersCount": 2,
-      "subscriptionStatus": "Not subscribed"
+      "subscriptionStatus": "Cancelled",
+      "isSubscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:55:30.517Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     },
     {
       "id": "cust-1788870238259-mffde",
@@ -6660,10 +6717,14 @@
       "addresses": [
         "United Kingdom"
       ],
+      "subStatus": "Cancelled",
       "amountSpent": 55.98,
       "ordersCount": 2,
       "referralCode": "REF-PS-NEHA-GAT6",
-      "subscriptionStatus": "Not subscribed"
+      "subscriptionStatus": "Cancelled",
+      "isSubscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-09T11:56:13.751Z",
+      "subscriptionCancellationReason": "Test subscription removed during setup"
     }
   ],
   "discounts": [
@@ -9256,35 +9317,6 @@
       "timestamp": "2026-09-05T22:14:45.131Z"
     },
     {
-      "id": "log_1788646513177_9z8j0",
-      "type": "admin_new_order",
-      "status": "sent",
-      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
-      "metadata": {
-        "data": {
-          "items": [
-            {
-              "price": 22.2,
-              "total": 22.2,
-              "quantity": 1,
-              "productId": "sub-pack-1786948467439",
-              "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (15 mg Spearmint (Qty:1), 11 mg Spearmint (Qty:2), 4 mg Zingy Ginger (Qty:2), 8 mg Zingy Ginge (Qty:1)) (Recurring Renewal)",
-              "isSubscription": true
-            }
-          ],
-          "total": 25.19,
-          "orderId": "PS68188",
-          "destination": "United Kingdom",
-          "customerName": "neha",
-          "customerEmail": "nehabhardwaz.gtl@gmail.com"
-        }
-      },
-      "provider": "gmail",
-      "messageId": "<a6bcadfc-ef4c-bb29-2abf-f84f944aff51@gmail.com>",
-      "recipient": "scottkivlinpouch@gmail.com",
-      "timestamp": "2026-09-05T22:15:13.177Z"
-    },
-    {
       "id": "log_1788646512308_t9q7o",
       "type": "admin_new_order",
       "status": "sent",
@@ -9314,6 +9346,35 @@
       "messageId": "<3457b5c7-fb1c-e301-75cd-e9b500a29ac2@gmail.com>",
       "recipient": "scottkivlinpouch@gmail.com",
       "timestamp": "2026-09-05T22:15:12.308Z"
+    },
+    {
+      "id": "log_1788646513177_9z8j0",
+      "type": "admin_new_order",
+      "status": "sent",
+      "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 22.2,
+              "total": 22.2,
+              "quantity": 1,
+              "productId": "sub-pack-1786948467439",
+              "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (15 mg Spearmint (Qty:1), 11 mg Spearmint (Qty:2), 4 mg Zingy Ginger (Qty:2), 8 mg Zingy Ginge (Qty:1)) (Recurring Renewal)",
+              "isSubscription": true
+            }
+          ],
+          "total": 25.19,
+          "orderId": "PS68188",
+          "destination": "United Kingdom",
+          "customerName": "neha",
+          "customerEmail": "nehabhardwaz.gtl@gmail.com"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<a6bcadfc-ef4c-bb29-2abf-f84f944aff51@gmail.com>",
+      "recipient": "scottkivlinpouch@gmail.com",
+      "timestamp": "2026-09-05T22:15:13.177Z"
     },
     {
       "id": "log_1788646581762_r2f96",
@@ -9378,37 +9439,6 @@
       "timestamp": "2026-09-05T22:17:05.496Z"
     },
     {
-      "id": "log_1788646627106_6sgvu",
-      "type": "order_shipped",
-      "status": "sent",
-      "subject": "Order Dispatched & Tracking Info - Pouch Supply Co.",
-      "metadata": {
-        "data": {
-          "items": [
-            {
-              "price": 29.4,
-              "total": 29.4,
-              "quantity": 1,
-              "productId": "sub-pack-1786955324998",
-              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
-              "isSubscription": true
-            }
-          ],
-          "total": 32.39,
-          "carrier": "Royal Mail Tracked 24®",
-          "orderId": "PS20017",
-          "destination": "United Kingdom",
-          "customerName": "Ritesh Dhiman",
-          "customerEmail": "info@gtlofficial.com",
-          "trackingNumber": "RM876434737GB"
-        }
-      },
-      "provider": "gmail",
-      "messageId": "<a9684be3-80af-f7a9-59f9-598d81405917@gmail.com>",
-      "recipient": "info@gtlofficial.com",
-      "timestamp": "2026-09-05T22:17:07.106Z"
-    },
-    {
       "id": "log_1788646631230_xb1vb",
       "type": "admin_new_order",
       "status": "sent",
@@ -9438,6 +9468,37 @@
       "messageId": "<b8b60bcf-803f-f4e1-1312-ef294d66dc93@gmail.com>",
       "recipient": "scottkivlinpouch@gmail.com",
       "timestamp": "2026-09-05T22:17:11.230Z"
+    },
+    {
+      "id": "log_1788646627106_6sgvu",
+      "type": "order_shipped",
+      "status": "sent",
+      "subject": "Order Dispatched & Tracking Info - Pouch Supply Co.",
+      "metadata": {
+        "data": {
+          "items": [
+            {
+              "price": 29.4,
+              "total": 29.4,
+              "quantity": 1,
+              "productId": "sub-pack-1786955324998",
+              "productTitle": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4)) (Recurring Renewal)",
+              "isSubscription": true
+            }
+          ],
+          "total": 32.39,
+          "carrier": "Royal Mail Tracked 24®",
+          "orderId": "PS20017",
+          "destination": "United Kingdom",
+          "customerName": "Ritesh Dhiman",
+          "customerEmail": "info@gtlofficial.com",
+          "trackingNumber": "RM876434737GB"
+        }
+      },
+      "provider": "gmail",
+      "messageId": "<a9684be3-80af-f7a9-59f9-598d81405917@gmail.com>",
+      "recipient": "info@gtlofficial.com",
+      "timestamp": "2026-09-05T22:17:07.106Z"
     },
     {
       "id": "log_1788646629724_z7ddj",
@@ -10881,20 +10942,24 @@
       ],
       "amount": 27.99,
       "planId": "lite",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.696Z",
-      "updatedAt": "2026-09-09T08:05:10.211Z",
+      "deletedAt": "2026-09-09T11:56:11.099Z",
+      "updatedAt": "2026-09-09T11:56:25.959Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
+      "cancelledAt": "2026-09-09T11:56:03.755Z",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-08-11T08:09:30.915Z",
       "lastPaymentId": "WP-TEST-TXN-656948",
+      "previousStatus": "cancelled",
       "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-11T08:09:30.915Z",
       "lastPaymentStatus": "authorized",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-656948",
       "worldpayTransactionId": "WP-TEST-TXN-656948",
@@ -10920,20 +10985,24 @@
       ],
       "amount": 27.99,
       "planId": "lite",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.699Z",
-      "updatedAt": "2026-09-09T08:05:10.234Z",
+      "deletedAt": "2026-09-09T11:55:51.551Z",
+      "updatedAt": "2026-09-09T11:56:25.663Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
+      "cancelledAt": "2026-09-09T11:55:43.567Z",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-08-13T10:31:44.208Z",
       "lastPaymentId": "WP-TEST-TXN-566805",
+      "previousStatus": "cancelled",
       "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-13T10:31:44.208Z",
       "lastPaymentStatus": "authorized",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-566805",
       "worldpayTransactionId": "WP-TEST-TXN-566805",
@@ -10959,20 +11028,24 @@
       ],
       "amount": 27.99,
       "planId": "lite",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.698Z",
-      "updatedAt": "2026-09-09T08:05:08.485Z",
+      "deletedAt": "2026-09-09T11:56:01.119Z",
+      "updatedAt": "2026-09-09T11:56:25.928Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
+      "cancelledAt": "2026-09-09T11:55:54.550Z",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-08-13T10:45:21.514Z",
       "lastPaymentId": "WP-TEST-TXN-656083",
+      "previousStatus": "cancelled",
       "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-13T10:45:21.514Z",
       "lastPaymentStatus": "authorized",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-656083",
       "worldpayTransactionId": "WP-TEST-TXN-656083",
@@ -10982,19 +11055,23 @@
       "id": "sub_1786621302453_zkqrzq",
       "amount": 32.39,
       "planId": "sub-pack-1786621285137",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "CORE Plan [Bi-Weekly - 10% OFF] - (5.2 mg Watermelon ice (Qty:5), 20 mg Ghost Cola Ice (Qty:3))",
       "createdAt": "2026-08-17T07:17:44.700Z",
-      "updatedAt": "2026-09-09T08:05:07.930Z",
+      "deletedAt": "2026-09-09T11:55:40.699Z",
+      "updatedAt": "2026-09-09T11:56:25.925Z",
       "customerId": "info@gtlofficial.com",
+      "cancelledAt": "2026-09-09T11:55:30.517Z",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
       "lastPaymentAt": "2026-08-13T11:41:42.453Z",
       "lastPaymentId": "WP-TEST-TXN-191145",
+      "previousStatus": "cancelled",
       "billingInterval": "month",
       "nextBillingDate": "2026-09-13T11:41:42.453Z",
       "lastPaymentStatus": "authorized",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-191145",
       "worldpayTransactionId": "WP-TEST-TXN-191145",
@@ -11004,19 +11081,23 @@
       "id": "sub_1786621356640_bh4jyf",
       "amount": 36.89,
       "planId": "sub-pack-1786621347505",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "PRO Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:5), 20 mg Ghost Cola Ice (Qty:5))",
       "createdAt": "2026-08-17T07:17:44.702Z",
-      "updatedAt": "2026-09-09T08:05:10.310Z",
+      "deletedAt": "2026-09-09T11:55:27.877Z",
+      "updatedAt": "2026-09-09T11:56:25.666Z",
       "customerId": "info@gtlofficial.com",
+      "cancelledAt": "2026-09-09T11:55:20.746Z",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
       "lastPaymentAt": "2026-08-13T11:42:36.640Z",
       "lastPaymentId": "WP-TEST-TXN-802448",
+      "previousStatus": "cancelled",
       "billingInterval": "month",
       "nextBillingDate": "2026-09-13T11:42:36.640Z",
       "lastPaymentStatus": "authorized",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-802448",
       "worldpayTransactionId": "WP-TEST-TXN-802448",
@@ -11042,20 +11123,24 @@
       ],
       "amount": 27.99,
       "planId": "lite",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T07:17:44.555Z",
-      "updatedAt": "2026-09-09T08:05:10.132Z",
+      "deletedAt": "2026-09-09T11:56:23.663Z",
+      "updatedAt": "2026-09-09T11:56:25.657Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
+      "cancelledAt": "2026-09-09T11:56:13.751Z",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-09-08T12:00:52.971Z",
       "lastPaymentId": "WP-SIM-825230",
+      "previousStatus": "cancelled",
       "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-10T05:34:14.201Z",
       "lastPaymentStatus": "missing_credential",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-381705",
       "worldpayTransactionId": "WP-SIM-825230",
@@ -11081,20 +11166,24 @@
       ],
       "amount": 27.99,
       "planId": "lite",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "lite",
       "cansCount": 6,
       "createdAt": "2026-08-17T08:27:06.575Z",
-      "updatedAt": "2026-09-09T08:05:10.175Z",
+      "deletedAt": "2026-09-09T11:55:17.295Z",
+      "updatedAt": "2026-09-09T11:56:25.655Z",
       "customerId": "nehabhardwaz.gtl@gmail.com",
+      "cancelledAt": "2026-09-09T11:55:08.737Z",
       "customerName": "neha",
       "customerEmail": "nehabhardwaz.gtl@gmail.com",
       "lastPaymentAt": "2026-09-08T12:01:29.165Z",
       "lastPaymentId": "WP-SIM-874247",
+      "previousStatus": "cancelled",
       "billingInterval": "Next Day (Test)",
       "nextBillingDate": "2026-09-10T08:02:01.671Z",
       "lastPaymentStatus": "missing_credential",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-226573",
       "worldpayTransactionId": "WP-SIM-874247",
@@ -11104,19 +11193,23 @@
       "id": "sub_1786955415163_8pehk7",
       "amount": 32.39,
       "planId": "sub-pack-1786955324998",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "CORE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:4), 20 mg Ghost Cola Ice (Qty:4))",
       "createdAt": "2026-08-17T08:30:15.173Z",
-      "updatedAt": "2026-09-09T08:05:10.174Z",
+      "deletedAt": "2026-09-09T11:55:05.611Z",
+      "updatedAt": "2026-09-09T11:56:25.656Z",
       "customerId": "info@gtlofficial.com",
+      "cancelledAt": "2026-09-09T11:54:55.586Z",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
       "lastPaymentAt": "2026-09-08T12:00:07.788Z",
       "lastPaymentId": "WP-SIM-803289",
+      "previousStatus": "cancelled",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-10T08:00:23.424Z",
       "lastPaymentStatus": "missing_credential",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-415160",
       "worldpayTransactionId": "WP-SIM-803289",
@@ -11126,19 +11219,23 @@
       "id": "sub_1786955794956_cl9l2f",
       "amount": 45.71,
       "planId": "sub-pack-1786955725878",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "ULTIMATE Plan (+1 Extra) [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:1), 20 mg Ghost Cola Ice (Qty:4), 10.4 mg Watermelon Ice (Qty:5), 5.6 mg Zesty Pear Regular (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:2))",
       "createdAt": "2026-08-17T08:36:34.958Z",
-      "updatedAt": "2026-09-09T08:05:10.174Z",
+      "deletedAt": "2026-09-09T11:54:50.534Z",
+      "updatedAt": "2026-09-09T11:56:25.677Z",
       "customerId": "info@gtlofficial.com",
+      "cancelledAt": "2026-09-09T11:54:40.361Z",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
       "lastPaymentAt": "2026-09-08T12:03:54.385Z",
       "lastPaymentId": "WP-SIM-023832",
+      "previousStatus": "cancelled",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-10T07:57:01.323Z",
       "lastPaymentStatus": "missing_credential",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-794956",
       "worldpayTransactionId": "WP-SIM-023832",
@@ -11148,19 +11245,23 @@
       "id": "sub_1786955952984_df1p1o",
       "amount": 36.89,
       "planId": "sub-pack-1786955823894",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "PRO Plan [Next Day (Test) - 10% OFF] - (20 mg Ghost Cola Ice (Qty:3), 5.2 mg Watermelon ice (Qty:2), 5.6 mg Zesty Pear Regular (Qty:1), 8 mg Mint Dry (Qty:2), 17 mg Frosty Mint Max (Qty:1), 5.5 mg Watermelon Dry Regular (Qty:1))",
       "createdAt": "2026-08-17T08:39:12.986Z",
-      "updatedAt": "2026-09-09T08:05:10.202Z",
+      "deletedAt": "2026-09-09T11:54:37.195Z",
+      "updatedAt": "2026-09-09T11:56:25.959Z",
       "customerId": "info@gtlofficial.com",
+      "cancelledAt": "2026-09-09T11:54:28.778Z",
       "customerName": "Ritesh Dhiman",
       "customerEmail": "info@gtlofficial.com",
       "lastPaymentAt": "2026-09-08T12:02:19.583Z",
       "lastPaymentId": "WP-SIM-921486",
+      "previousStatus": "cancelled",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-10T07:58:40.960Z",
       "lastPaymentStatus": "missing_credential",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-TEST-TXN-312556",
       "worldpayTransactionId": "WP-SIM-921486",
@@ -11170,19 +11271,23 @@
       "id": "sub_1787134213848_7vtxnf",
       "amount": 25.19,
       "planId": "sub-pack-1787133835286",
-      "status": "active",
+      "status": "deleted",
       "currency": "GBP",
       "planName": "LITE Plan [Next Day (Test) - 10% OFF] - (5.2 mg Watermelon ice (Qty:3), 20 mg Ghost Cola Ice (Qty:3))",
       "createdAt": "2026-08-19T10:10:13.852Z",
-      "updatedAt": "2026-09-09T08:05:08.208Z",
+      "deletedAt": "2026-09-09T11:54:25.519Z",
+      "updatedAt": "2026-09-09T11:56:25.952Z",
       "customerId": "scott@pouch-supply.com",
+      "cancelledAt": "2026-09-09T11:54:09.885Z",
       "customerName": "Scott Kivlin",
       "customerEmail": "scott@pouch-supply.com",
       "lastPaymentAt": "2026-09-08T12:03:11.604Z",
       "lastPaymentId": "WP-SIM-983194",
+      "previousStatus": "cancelled",
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-10T05:32:14.941Z",
       "lastPaymentStatus": "missing_credential",
+      "cancellationReason": "Test subscription removed during setup",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": "https://access.worldpay.com/payments/recurring/wp-WP-CB-213847",
       "worldpayTransactionId": "WP-SIM-983194",
@@ -17935,7 +18040,7 @@
   ],
   "royalmail_settings": [
     {
-      "apiKey": "b0c7133f-8409-418b-a203-a498f58cb853",
+      "apiKey": "",
       "integrationName": "Pouch-Supply",
       "enabled": true,
       "autoCreateShipmentOnPayment": false,
@@ -17953,5 +18058,73 @@
         "contactPhone": ""
       }
     }
-  ]
+  ],
+  "email_settings": [
+    {
+      "enabled": true,
+      "provider": "gmail",
+      "gmailUser": "scottkivlinpouch@gmail.com",
+      "gmailAppPassword": "",
+      "smtpHost": "smtp.gmail.com",
+      "smtpPort": 465,
+      "smtpSecure": true,
+      "smtpUser": "scottkivlinpouch@gmail.com",
+      "smtpPassword": "",
+      "resendApiKey": "",
+      "fromName": "Pouch Supply Co.",
+      "fromEmail": "support@pouch-supply.com",
+      "adminNotificationEmail": "scottkivlinpouch@gmail.com",
+      "templates": {
+        "order_confirmation": {
+          "enabled": true,
+          "subject": "Order Confirmation - Pouch Supply Co."
+        },
+        "order_processing": {
+          "enabled": true,
+          "subject": "Order Processing - Pouch Supply Co."
+        },
+        "order_shipped": {
+          "enabled": true,
+          "subject": "Order Dispatched & Tracking Info - Pouch Supply Co."
+        },
+        "out_for_delivery": {
+          "enabled": true,
+          "subject": "Out for Delivery Today - Pouch Supply Co."
+        },
+        "order_delivered": {
+          "enabled": true,
+          "subject": "Order Delivered - Pouch Supply Co."
+        },
+        "order_cancelled": {
+          "enabled": true,
+          "subject": "Order Cancellation Notice - Pouch Supply Co."
+        },
+        "order_refunded": {
+          "enabled": true,
+          "subject": "Refund Confirmation - Pouch Supply Co."
+        },
+        "order_exchanged": {
+          "enabled": true,
+          "subject": "Product Exchange Confirmation - Pouch Supply Co."
+        },
+        "password_reset": {
+          "enabled": true,
+          "subject": "Reset Your Password - Pouch Supply Co."
+        },
+        "email_verification": {
+          "enabled": true,
+          "subject": "Verify Your Email Address - Pouch Supply Co."
+        },
+        "welcome_email": {
+          "enabled": true,
+          "subject": "Welcome to Pouch Supply Co. - 10% Off Inside!"
+        },
+        "admin_new_order": {
+          "enabled": true,
+          "subject": "🚨 [NEW ORDER] Order Received - Pouch Supply Co."
+        }
+      }
+    }
+  ],
+  "contactMessages": []
 }
