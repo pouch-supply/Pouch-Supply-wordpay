@@ -3,7 +3,7 @@ import {
   Mail, Send, CheckCircle2, AlertCircle, Eye, Settings, RefreshCw, 
   Trash2, ShieldCheck, Zap, Lock, Filter, Smartphone, Monitor, Code, 
   ExternalLink, Layers, Sparkles, Check, Play, User, ShoppingBag, DollarSign, RotateCcw,
-  HelpCircle, Globe, Server, CheckCheck, Info
+  HelpCircle, Globe, Server, CheckCheck, Info, Activity, AlertTriangle
 } from 'lucide-react';
 
 export type EmailProvider = 'gmail' | 'smtp' | 'resend' | 'auto';
@@ -113,6 +113,17 @@ export function EmailSettingsTab() {
   const [testKlaviyoResult, setTestKlaviyoResult] = useState<any>(null);
   const [verifyingKlaviyoKey, setVerifyingKlaviyoKey] = useState(false);
   const [klaviyoVerifyResult, setKlaviyoVerifyResult] = useState<{ success: boolean; message?: string; error?: string; hasEventsWrite?: boolean } | null>(null);
+  // Whether Klaviyo will actually deliver. A valid key only proves events are
+  // accepted; a flow left in draft swallows every one of them silently.
+  const [klaviyoHealth, setKlaviyoHealth] = useState<{
+    healthy?: boolean;
+    connected?: boolean;
+    listConfigured?: boolean;
+    flows?: { name: string; status: string }[];
+    issues?: string[];
+    error?: string;
+  } | null>(null);
+  const [checkingKlaviyoHealth, setCheckingKlaviyoHealth] = useState(false);
   const [klaviyoLists, setKlaviyoLists] = useState<{ id: string; name: string }[]>([]);
   const [fetchingLists, setFetchingLists] = useState(false);
   const [showAppPasswordGuide, setShowAppPasswordGuide] = useState(false);
@@ -238,6 +249,18 @@ export function EmailSettingsTab() {
     }
   };
 
+  const handleCheckKlaviyoHealth = async () => {
+    setCheckingKlaviyoHealth(true);
+    try {
+      const res = await fetch('/api/klaviyo/health');
+      setKlaviyoHealth(await res.json());
+    } catch (err: any) {
+      setKlaviyoHealth({ error: err.message || 'Failed to read Klaviyo delivery status' });
+    } finally {
+      setCheckingKlaviyoHealth(false);
+    }
+  };
+
   const handleVerifyKlaviyoKey = async () => {
     if (!klaviyoSettings?.apiKey) return;
     setVerifyingKlaviyoKey(true);
@@ -252,6 +275,7 @@ export function EmailSettingsTab() {
       setKlaviyoVerifyResult(data);
       if (data.success) {
         handleFetchKlaviyoLists();
+        handleCheckKlaviyoHealth();
       }
     } catch (err: any) {
       setKlaviyoVerifyResult({ success: false, error: err.message || 'Failed to verify Klaviyo API key' });
@@ -1359,6 +1383,59 @@ export function EmailSettingsTab() {
           </div>
 
           {/* Verification Status */}
+          {klaviyoHealth && (
+            <div className="rounded-xl border p-4 text-xs space-y-3 border-neutral-200 bg-neutral-50">
+              <div className="flex items-center gap-2 font-bold text-neutral-900">
+                {klaviyoHealth.healthy ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                )}
+                <span>
+                  {klaviyoHealth.error
+                    ? 'Could not read Klaviyo delivery status'
+                    : klaviyoHealth.healthy
+                      ? 'Klaviyo is set up to send'
+                      : 'Klaviyo accepts events but will not send email'}
+                </span>
+              </div>
+
+              {klaviyoHealth.error && <p className="text-neutral-600">{klaviyoHealth.error}</p>}
+
+              {Array.isArray(klaviyoHealth.flows) && klaviyoHealth.flows.length > 0 && (
+                <div className="space-y-1">
+                  <p className="font-bold text-neutral-500 uppercase tracking-wider text-[10px]">Flows in your Klaviyo account</p>
+                  {klaviyoHealth.flows.map((f, i) => (
+                    <div key={i} className="flex items-center justify-between gap-3 py-0.5">
+                      <span className="text-neutral-700 truncate">{f.name}</span>
+                      <span
+                        className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          f.status === 'live'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
+                        {f.status}
+                      </span>
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-neutral-500 pt-1">
+                    A flow that is not live receives the event and sends nothing. Set it live in
+                    Klaviyo &gt; Flows to start delivering.
+                  </p>
+                </div>
+              )}
+
+              {Array.isArray(klaviyoHealth.issues) && klaviyoHealth.issues.length > 0 && (
+                <ul className="list-disc pl-4 space-y-1 text-neutral-700">
+                  {klaviyoHealth.issues.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {klaviyoVerifyResult && (
             <div
               className={`p-4 rounded-xl border text-xs ${
@@ -1397,6 +1474,26 @@ export function EmailSettingsTab() {
                 <>
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
                   Verify Klaviyo Key
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              id="btn-check-klaviyo-health"
+              onClick={handleCheckKlaviyoHealth}
+              disabled={checkingKlaviyoHealth}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-colors border border-neutral-200 disabled:opacity-50"
+            >
+              {checkingKlaviyoHealth ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                  Checking flows...
+                </>
+              ) : (
+                <>
+                  <Activity className="w-3.5 h-3.5 text-indigo-600" />
+                  Check Email Delivery
                 </>
               )}
             </button>

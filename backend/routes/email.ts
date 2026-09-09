@@ -154,10 +154,51 @@ router.get('/logs', async (_req: Request, res: Response) => {
 });
 
 // POST /api/email/logs/clear
-router.post('/logs/clear', async (_req: Request, res: Response) => {
+// Clears the whole log by default, or only part of it:
+//   { status: 'failed' }   - drop only entries with that status
+//   { before: <ISO date> } - drop only entries older than that instant
+// The two combine, so { status: 'failed', before: '...' } removes stale
+// failures while leaving the delivery history that still means something.
+router.post('/logs/clear', async (req: Request, res: Response) => {
   try {
-    await saveResource('email_logs', []);
-    res.json({ success: true, message: 'Email logs cleared successfully' });
+    const status = typeof req.body?.status === 'string' ? req.body.status.trim() : '';
+    const beforeRaw = req.body?.before;
+    const before = beforeRaw ? Date.parse(String(beforeRaw)) : NaN;
+
+    if (beforeRaw && Number.isNaN(before)) {
+      return res.status(400).json({ error: `Invalid 'before' date: ${beforeRaw}` });
+    }
+
+    if (!status && !beforeRaw) {
+      await saveResource('email_logs', []);
+      return res.json({ success: true, removed: 'all', remaining: 0, message: 'Email logs cleared successfully' });
+    }
+
+    const logs = await getEmailLogs();
+    // Entry ids carry the creation time as `<prefix>_<epoch ms>_<rand>`, which
+    // is the only timestamp older records are guaranteed to have.
+    const timeOf = (l: any): number => {
+      if (l?.timestamp) {
+        const t = Date.parse(l.timestamp);
+        if (!Number.isNaN(t)) return t;
+      }
+      const m = String(l?.id || '').match(/_(d{13})_/);
+      return m ? Number(m[1]) : 0;
+    };
+
+    const kept = logs.filter((l: any) => {
+      const statusMatches = !status || String(l?.status) === status;
+      const ageMatches = Number.isNaN(before) || timeOf(l) < before;
+      return !(statusMatches && ageMatches);
+    });
+
+    await saveResource('email_logs', kept);
+    res.json({
+      success: true,
+      removed: logs.length - kept.length,
+      remaining: kept.length,
+      message: `Removed ${logs.length - kept.length} log entr${logs.length - kept.length === 1 ? 'y' : 'ies'}, kept ${kept.length}.`
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to clear email logs' });
   }

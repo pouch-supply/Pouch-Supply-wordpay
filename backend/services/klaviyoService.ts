@@ -186,7 +186,26 @@ export async function getKlaviyoLists(apiKeyOverride?: string): Promise<{ id: st
   return [];
 }
 
-// Auto-sync profile and subscribe to email marketing consent so Klaviyo flows trigger emails
+/**
+ * Creates or updates the Klaviyo profile for a shopper and, when a list is
+ * configured, records their email marketing consent.
+ *
+ * Two things used to stop this working, and both were silent:
+ *
+ *  1. POST /api/profiles/ answers 409 when the profile already exists. The old
+ *     code counted that as success, so a returning customer's profile was never
+ *     actually updated. The duplicate id comes back in the error body, so the
+ *     conflict is now resolved with a PATCH.
+ *
+ *  2. Klaviyo does not accept marketing consent through the profile endpoint.
+ *     Consent is only set by a subscription job, and that job needs a list id.
+ *     With no list configured the whole step was skipped, which is why every
+ *     profile on this account reports no consent and marketing-type flows skip
+ *     them. That case is now reported instead of passing quietly.
+ *
+ * Order confirmations do not depend on consent: a Klaviyo flow marked
+ * transactional sends regardless. Consent governs marketing sends.
+ */
 export async function syncKlaviyoProfileWithConsent(
   email: string,
   firstName?: string,
@@ -203,42 +222,72 @@ export async function syncKlaviyoProfileWithConsent(
 
   if (!apiKey || !cleanEmail) return false;
 
+  const headers = {
+    'Authorization': `Klaviyo-API-Key ${apiKey}`,
+    'Content-Type': 'application/json',
+    'accept': 'application/json',
+    'revision': '2024-10-15'
+  };
+
   try {
-    // 1. Create/Update Profile with explicit subscription consent
-    const profilePayload = {
-      data: {
-        type: 'profile',
-        attributes: {
-          email: cleanEmail,
-          first_name: firstName || undefined,
-          last_name: lastName || undefined,
-          subscriptions: {
-            email: {
-              marketing: {
-                can_receive_email_marketing: true,
-                consent: 'SUBSCRIBED',
-                consented_at: new Date().toISOString()
-              }
-            }
-          }
-        }
-      }
-    };
+    // 1. Create the profile, or patch it when Klaviyo reports a duplicate.
+    const profileAttributes: Record<string, unknown> = { email: cleanEmail };
+    if (firstName) profileAttributes.first_name = firstName;
+    if (lastName) profileAttributes.last_name = lastName;
 
     const profRes = await fetch('https://a.klaviyo.com/api/profiles/', {
       method: 'POST',
-      headers: {
-        'Authorization': `Klaviyo-API-Key ${apiKey}`,
-        'Content-Type': 'application/json',
-        'accept': 'application/json',
-        'revision': '2024-02-15'
-      },
-      body: JSON.stringify(profilePayload)
+      headers,
+      body: JSON.stringify({ data: { type: 'profile', attributes: profileAttributes } })
     });
 
-    // 2. If listId is configured, subscribe profile to the list so list-triggered flows send
-    if (listId) {
-      const subPayload = {
+    let profileOk = profRes.ok;
+
+    if (profRes.status === 409) {
+      const conflict: any = await profRes.json().catch(() => null);
+      const existingId = conflict?.errors?.[0]?.meta?.duplicate_profile_id;
+      if (existingId) {
+        const patchRes = await fetch(`https://a.klaviyo.com/api/profiles/${existingId}/`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            data: { type: 'profile', id: existingId, attributes: profileAttributes }
+          })
+        });
+        profileOk = patchRes.ok;
+        if (!patchRes.ok) {
+          const detail = await patchRes.text().catch(() => '');
+          console.warn(
+            `[Klaviyo Profile Sync] Could not update existing profile for ${cleanEmail}: HTTP ${patchRes.status} ${detail.slice(0, 200)}`
+          );
+        }
+      } else {
+        console.warn(
+          `[Klaviyo Profile Sync] Profile for ${cleanEmail} already exists but Klaviyo did not return its id; profile left unchanged.`
+        );
+      }
+    } else if (!profRes.ok) {
+      const detail = await profRes.text().catch(() => '');
+      console.warn(
+        `[Klaviyo Profile Sync] Could not create profile for ${cleanEmail}: HTTP ${profRes.status} ${detail.slice(0, 200)}`
+      );
+    }
+
+    // 2. Consent. Only a subscription job can grant it, and it needs a list.
+    if (!listId) {
+      console.warn(
+        '[Klaviyo Profile Sync] No Klaviyo list is configured, so email marketing consent ' +
+          'cannot be recorded. Marketing flows will skip these profiles. Choose a list in ' +
+          'Admin -> Email & Marketing -> Klaviyo. (Flows marked transactional, such as order ' +
+          'confirmations, still send without consent.)'
+      );
+      return profileOk;
+    }
+
+    const subRes = await fetch('https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
         data: {
           type: 'profile-subscription-bulk-create-job',
           attributes: {
@@ -250,48 +299,33 @@ export async function syncKlaviyoProfileWithConsent(
                   attributes: {
                     email: cleanEmail,
                     subscriptions: {
-                      email: {
-                        marketing: {
-                          can_receive_email_marketing: true,
-                          consent: 'SUBSCRIBED',
-                          consented_at: new Date().toISOString()
-                        }
-                      }
+                      email: { marketing: { consent: 'SUBSCRIBED' } }
                     }
                   }
                 }
               ]
             }
           },
-          relationships: {
-            list: {
-              data: {
-                type: 'list',
-                id: listId
-              }
-            }
-          }
+          relationships: { list: { data: { type: 'list', id: listId } } }
         }
-      };
+      })
+    });
 
-      await fetch('https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Klaviyo-API-Key ${apiKey}`,
-          'Content-Type': 'application/json',
-          'accept': 'application/json',
-          'revision': '2024-02-15'
-        },
-        body: JSON.stringify(subPayload)
-      }).catch(() => {});
+    if (!subRes.ok) {
+      const detail = await subRes.text().catch(() => '');
+      console.warn(
+        `[Klaviyo Profile Sync] Consent job rejected for ${cleanEmail}: HTTP ${subRes.status} ${detail.slice(0, 300)}`
+      );
+      return profileOk;
     }
 
-    return profRes.ok || profRes.status === 202 || profRes.status === 409;
+    return true;
   } catch (err) {
     console.warn('[Klaviyo Profile Sync Error]:', err);
     return false;
   }
 }
+
 
 // Master Track Klaviyo Event Function
 export async function trackKlaviyoEvent(
