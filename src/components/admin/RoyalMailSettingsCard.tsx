@@ -32,7 +32,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
     autoCreateShipmentOnPayment: false,
     defaultServiceCode: '',
     defaultPackageType: 'Parcel',
-    defaultWeightGrams: 350,
+    defaultWeightGrams: 70,
     senderAddress: {
       companyName: '',
       addressLine1: '',
@@ -62,7 +62,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
 
   // Address validation & rates calculator state
   const [testPostcode, setTestPostcode] = useState('EC1A 1BB');
-  const [testWeight, setTestWeight] = useState(350);
+  const [testWeight, setTestWeight] = useState(70);
   const [calcLoading, setCalcLoading] = useState(false);
   const [calcResults, setCalcResults] = useState<any>(null);
 
@@ -344,13 +344,17 @@ export const RoyalMailSettingsCard: React.FC = () => {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
                 />
                 <datalist id="royalmail-service-codes">
-                  <option value="OLP1">Royal Mail 1st Class</option>
-                  <option value="OLP1SF">Royal Mail Signed For® 1st Class</option>
-                  <option value="OLP2">Royal Mail 2nd Class</option>
-                  <option value="OLP2SF">Royal Mail Signed For® 2nd Class</option>
+                  <option value="TOLP24">Royal Mail Tracked 24® — tracking number issued</option>
+                  <option value="TOLP48">Royal Mail Tracked 48® — tracking number issued</option>
+                  <option value="OLP1">Royal Mail 1st Class (no tracking)</option>
+                  <option value="OLP1SF">Royal Mail Signed For® 1st Class (no tracking)</option>
+                  <option value="OLP2">Royal Mail 2nd Class (no tracking)</option>
+                  <option value="OLP2SF">Royal Mail Signed For® 2nd Class (no tracking)</option>
                 </datalist>
                 <p className="text-[10px] text-slate-500 font-medium mt-1 leading-snug">
-                  This account&apos;s domestic services are OLP1, OLP1SF, OLP2 and OLP2SF.
+                  This account&apos;s domestic services are TOLP24, TOLP48, OLP1, OLP1SF, OLP2
+                  and OLP2SF. Only the two Tracked services issue a tracking number; on the
+                  others an order cannot be marked Shipped and no dispatch email is sent.
                   A code your account does not hold makes every shipment fail with
                   &quot;service code could not be found&quot;; leaving this blank is also
                   valid and lets you apply postage in Click &amp; Drop instead.
@@ -364,7 +368,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
                 <input
                   type="number"
                   value={settings.defaultWeightGrams}
-                  onChange={(e) => setSettings({ ...settings, defaultWeightGrams: parseInt(e.target.value, 10) || 350 })}
+                  onChange={(e) => setSettings({ ...settings, defaultWeightGrams: parseInt(e.target.value, 10) || 70 })}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
                 />
               </div>
@@ -497,7 +501,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
           <input
             type="number"
             value={testWeight}
-            onChange={(e) => setTestWeight(parseInt(e.target.value, 10) || 350)}
+            onChange={(e) => setTestWeight(parseInt(e.target.value, 10) || 70)}
             placeholder="Weight in Grams"
             className="w-32 px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
           />

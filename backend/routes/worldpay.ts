@@ -654,7 +654,7 @@ async function saveVerifiedOrder(
       console.log(`[Worldpay Order] Auto-registering Click & Drop shipment with Royal Mail for order #${orderId}`);
       createRoyalMailShipment(orderId, {
         serviceCode: rmSettings.defaultServiceCode,
-        weightGrams: rmSettings.defaultWeightGrams || 350
+        weightGrams: rmSettings.defaultWeightGrams || 70
       }).catch(err => {
         console.warn(`[Worldpay Order] Background Royal Mail shipment creation note for #${orderId}:`, err?.message);
       });

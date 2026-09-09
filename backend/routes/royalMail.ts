@@ -291,7 +291,7 @@ router.post("/test-service-code", async (req: Request, res: Response) => {
 router.post("/rates", async (req: Request, res: Response) => {
   try {
     const { weightGrams, countryCode } = req.body;
-    const rates = getShippingRates(weightGrams || 350, countryCode || 'GB');
+    const rates = getShippingRates(weightGrams || 70, countryCode || 'GB');
     res.json({ success: true, rates });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to calculate rates" });

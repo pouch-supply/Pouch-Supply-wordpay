@@ -60,13 +60,14 @@ export const DEFAULT_ROYAL_MAIL_SETTINGS: RoyalMailSettings = {
   enabled: true,
   autoCreateShipmentOnPayment:
     String(process.env.ROYAL_MAIL_AUTO_DISPATCH || '').toLowerCase() === 'true',
-  // Royal Mail 1st Class — one of the four Online Postage services this
-  // account's Click & Drop contract actually holds, so a domestic shipment
-  // works out of the box. Change it in Admin → Settings → Royal Mail; blanking
-  // it is still valid and means "apply postage in Click & Drop".
-  defaultServiceCode: 'OLP1',
+  // Royal Mail Tracked 24 (Online Postage). Verified accepted on this account.
+  // Tracked is the default because it is the only family that issues a tracking
+  // number — without one the order can never move to Shipped and no dispatch
+  // email is sent. Change it in Admin → Settings → Royal Mail; blanking it is
+  // still valid and means "apply postage in Click & Drop".
+  defaultServiceCode: 'TOLP24',
   defaultPackageType: 'Parcel',
-  defaultWeightGrams: 350,
+  defaultWeightGrams: 70,
   senderAddress: {
     companyName: '',
     addressLine1: '',
@@ -255,7 +256,7 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
  * Domestic service codes this Click & Drop account actually holds. Anything
  * outside this set is rejected with error 31 before a label is ever produced.
  */
-export const UK_SERVICE_CODES = ['OLP1', 'OLP1SF', 'OLP2', 'OLP2SF'] as const;
+export const UK_SERVICE_CODES = ['TOLP24', 'TOLP48', 'OLP1', 'OLP1SF', 'OLP2', 'OLP2SF'] as const;
 
 /**
  * Codes the store was configured with before the contract was checked. They are
@@ -264,14 +265,19 @@ export const UK_SERVICE_CODES = ['OLP1', 'OLP1SF', 'OLP2', 'OLP2SF'] as const;
  * re-pick, translate to the nearest service that is actually on the contract.
  */
 const LEGACY_SERVICE_CODE_MAP: Record<string, string> = {
-  // 1st Class equivalents
-  TPNN: 'OLP1',
-  TRNN: 'OLP1',
+  // Tracked equivalents. These used to collapse onto OLP1/OLP2, which quietly
+  // turned a tracked service into an untracked one — the parcel shipped, no
+  // tracking number was ever issued, and the order stayed Unfulfilled.
+  TPNN: 'TOLP24',
+  TRNN: 'TOLP24',
+  TPN24: 'TOLP24',
+  TPSN: 'TOLP48',
+  TRSN: 'TOLP48',
+  TPS48: 'TOLP48',
+  // Untracked 1st Class equivalents
   CRL1: 'OLP1',
   BPL1: 'OLP1',
-  // 2nd Class equivalents
-  TPSN: 'OLP2',
-  TRSN: 'OLP2',
+  // Untracked 2nd Class equivalents
   CRL2: 'OLP2',
   BPL2: 'OLP2',
   // Signature-on-delivery equivalents
@@ -299,7 +305,12 @@ export function serviceSupportsNotifications(code?: string): boolean {
   // No service code means postage is applied in Click & Drop, where the
   // notification setting belongs to whatever service is picked there.
   if (!raw) return false;
-  return !raw.startsWith('OLP');
+  // The Online Postage family, TOLP24/TOLP48 included. Tracked services can
+  // carry Royal Mail's own email and SMS, but the store already sends its own
+  // dispatch email with the tracking number, so switching these on would send
+  // the customer two notifications for one parcel.
+  if (raw.startsWith('OLP') || raw.startsWith('TOLP')) return false;
+  return true;
 }
 
 /**
@@ -375,23 +386,45 @@ export function resolveServiceCode(code?: string): string {
  *
  * This account's contracted domestic services (Click & Drop > Settings >
  * Services, https://business.parcel.royalmail.com/settings/services/) are the
- * Online Postage (OLP) range:
+ * Online Postage (OLP) range, each one confirmed accepted by Royal Mail:
+ *   TOLP24  Royal Mail Tracked 24®          (tracked)
+ *   TOLP48  Royal Mail Tracked 48®          (tracked)
  *   OLP1    Royal Mail 1st Class
  *   OLP1SF  Royal Mail Signed For® 1st Class
  *   OLP2    Royal Mail 2nd Class
  *   OLP2SF  Royal Mail Signed For® 2nd Class
  *
- * The OBA codes this store used previously — TPNN/TPSN (Tracked 24/48), CRL1/
- * CRL2 (RM24/RM48), BPL1/BPL2, SD1 — are NOT on this contract and every
- * domestic shipment sent with them failed with error 31. They are kept only in
+ * Only the two TOLP services issue a tracking number. On the others the order
+ * cannot reach Shipped, so no dispatch email is sent.
+ *
+ * The OBA codes this store used previously — TPNN/TPSN, CRL1/CRL2, BPL1/BPL2,
+ * SD1 — are NOT on this contract and failed with error 31. They are kept in
  * LEGACY_SERVICE_CODE_MAP so a stale saved setting is translated rather than
- * failing.
+ * failing; the tracked ones now translate to TOLP24/TOLP48.
  */
-export function getShippingRates(weightGrams: number = 350, countryCode: string = 'GB'): ShippingRateOption[] {
+export function getShippingRates(weightGrams: number = 70, countryCode: string = 'GB'): ShippingRateOption[] {
   const isUK = normalizeCountryCode(countryCode) === 'GB';
 
   if (isUK) {
     return [
+      {
+        serviceCode: 'TOLP24',
+        serviceName: 'Royal Mail Tracked 24®',
+        estimatedDelivery: '1-2 Working Days (Tracked)',
+        price: 4.75,
+        currency: 'GBP',
+        tracked: true,
+        signatureRequired: false
+      },
+      {
+        serviceCode: 'TOLP48',
+        serviceName: 'Royal Mail Tracked 48®',
+        estimatedDelivery: '2-3 Working Days (Tracked)',
+        price: 3.99,
+        currency: 'GBP',
+        tracked: true,
+        signatureRequired: false
+      },
       {
         serviceCode: 'OLP1',
         serviceName: 'Royal Mail 1st Class',
@@ -632,7 +665,11 @@ export async function testServiceCode(
   message: string;
   cleanedUp: boolean;
 }> {
-  const code = resolveServiceCode(serviceCode);
+  // Deliberately NOT resolveServiceCode(): this probe exists to find out what
+  // the account actually holds. Translating a Tracked code to its Online
+  // Postage stand-in first would test the stand-in and report success, hiding
+  // the very thing the operator is trying to discover.
+  const code = String(serviceCode ?? '').trim().toUpperCase();
   if (!code) {
     return { serviceCode: code, accepted: false, message: 'No service code supplied.', cleanedUp: false };
   }
@@ -666,7 +703,7 @@ export async function testServiceCode(
     orderDate: new Date().toISOString(),
     packages: [
       {
-        weightInGrams: settings.defaultWeightGrams || 350,
+        weightInGrams: settings.defaultWeightGrams || 70,
         packageFormatIdentifier: settings.defaultPackageType || 'Parcel',
         contents: [{ name: 'Service code test', quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
       }
@@ -725,6 +762,10 @@ export interface CreateShipmentResult {
   serviceName: string;
   serviceCode: string;
   labelUrl: string;
+  /** The code asked for, before any contract translation. */
+  requestedServiceCode?: string;
+  /** True when the requested service was swapped for one on the contract. */
+  serviceDowngraded?: boolean;
   message: string;
   order: any;
 }
@@ -775,7 +816,11 @@ export async function createRoyalMailShipment(orderId: string, options: {
   // resolveServiceCode() translates codes left over from the old OBA setup
   // (TPNN, CRL2, BPL1, …) onto the OLP services this contract actually holds,
   // so a stale saved setting does not fail every domestic shipment.
-  const serviceCode = resolveServiceCode(options.serviceCode ?? settings.defaultServiceCode);
+  const requestedServiceCode = String(options.serviceCode ?? settings.defaultServiceCode ?? '').trim().toUpperCase();
+  const serviceCode = resolveServiceCode(requestedServiceCode);
+  // Silently swapping the service is how an operator ends up believing they
+  // bought tracking and posted without it, so the swap is reported back.
+  const serviceDowngraded = Boolean(requestedServiceCode) && serviceCode !== requestedServiceCode;
   const registerCode = String(options.serviceRegisterCode || settings.defaultServiceRegisterCode || '').trim();
   const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
   const selectedRate = rates.find(r => r.serviceCode === serviceCode);
@@ -820,7 +865,7 @@ export async function createRoyalMailShipment(orderId: string, options: {
     orderDate: order.createdAt || new Date().toISOString(),
     packages: [
       {
-        weightInGrams: options.weightGrams || settings.defaultWeightGrams || 350,
+        weightInGrams: options.weightGrams || settings.defaultWeightGrams || 70,
         packageFormatIdentifier: options.packageType || settings.defaultPackageType || 'Parcel',
         contents: Array.isArray(order.items) && order.items.length > 0
           ? order.items.map((it: any) => ({
@@ -835,7 +880,7 @@ export async function createRoyalMailShipment(orderId: string, options: {
                 name: 'Pouch Supply Package',
                 quantity: 1,
                 unitValue: totalVal,
-                unitWeightInGrams: options.weightGrams || settings.defaultWeightGrams || 350
+                unitWeightInGrams: options.weightGrams || settings.defaultWeightGrams || 70
               }
             ]
       }
@@ -994,9 +1039,18 @@ export async function createRoyalMailShipment(orderId: string, options: {
     serviceName,
     serviceCode,
     labelUrl,
-    message: trackingNumber
-      ? `Royal Mail shipment created. Tracking ${trackingNumber}.`
-      : `Royal Mail order ${royalMailOrderId} created. Tracking is allocated when the label is generated — print the label, then sync the order.`,
+    requestedServiceCode,
+    serviceDowngraded,
+    message:
+      (serviceDowngraded
+        ? `Service ${requestedServiceCode} is not on this Click & Drop contract, so ${serviceCode} was used instead — ` +
+          `add ${requestedServiceCode} in Click & Drop > Settings > Services if you need it. `
+        : '') +
+      (trackingNumber
+        ? `Royal Mail shipment created. Tracking ${trackingNumber}.`
+        : `Royal Mail order ${royalMailOrderId} created on ${serviceName}. ` +
+          `No tracking number was issued: it is allocated when the label is generated on a tracked ` +
+          `service, and the Online Postage services (1st/2nd Class, Signed For) never issue one.`),
     order: updatedOrder
   };
 }

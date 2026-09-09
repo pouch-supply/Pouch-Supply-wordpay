@@ -16,12 +16,14 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   onUpdateOrder,
   onAddTimelineComment
 }) => {
-  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'OLP1');
-  const [weightGrams, setWeightGrams] = useState<number>(350);
+  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'TOLP24');
+  const [weightGrams, setWeightGrams] = useState<number>(70);
   const [creating, setCreating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [returning, setReturning] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // 'info' covers the real middle case: Click & Drop accepted the order but
+  // issued no tracking, which is neither a success nor a failure.
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // Edit Real Tracking Modal / Input state
   const [showEditTrackingModal, setShowEditTrackingModal] = useState(false);
@@ -115,9 +117,21 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
 
       const data = await res.json();
       if (res.ok && data.success) {
+        // The old message printed "Tracking #: null" and claimed the dispatch
+        // email had gone out, when neither was true: without a tracking number
+        // the order stays Unfulfilled, so no dispatch email and no Klaviyo
+        // event are sent. It now reports what actually happened.
         setStatusMessage({
-          type: 'success',
-          text: `Royal Mail Shipment created! Tracking #: ${data.trackingNumber}. Resend dispatch email & Klaviyo event sent.`
+          type: data.trackingNumber ? 'success' : 'info',
+          text: (data.serviceDowngraded
+            ? `Note: ${data.requestedServiceCode} is not on your Click & Drop contract, so ${data.serviceCode} was used instead. `
+            : '') + (data.trackingNumber
+            ? `Royal Mail shipment created. Tracking ${data.trackingNumber}. Order marked Shipped — dispatch email and Klaviyo event sent.`
+            : `Royal Mail order ${data.royalMailOrderId || ''} created in Click & Drop${
+                data.serviceName ? ` on ${data.serviceName}` : ''
+              }, but no tracking number was issued, so the order stays Unfulfilled and no dispatch email was sent. ` +
+              `Tracking is only allocated on a tracked service once the label is generated — print the label, then press Sync. ` +
+              `Non-tracked services (1st/2nd Class and Signed For) never issue one.`)
         });
 
         const updated: Order = {
@@ -303,13 +317,19 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
 
       {/* Status Feedback Banner */}
       {statusMessage && (
-        <div className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 ${
-          statusMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'
+        <div className={`p-3 rounded-xl border text-xs font-bold flex items-start gap-2 ${
+          statusMessage.type === 'success'
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+            : statusMessage.type === 'info'
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-rose-50 border-rose-200 text-rose-900'
         }`}>
           {statusMessage.type === 'success' ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+          ) : statusMessage.type === 'info' ? (
+            <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
           ) : (
-            <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+            <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
           )}
           <span>{statusMessage.text}</span>
         </div>
@@ -328,10 +348,12 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                 onChange={(e) => setServiceCode(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 shadow-2xs"
               >
-                <option value="OLP1">Royal Mail 1st Class (OLP1)</option>
-                <option value="OLP1SF">Royal Mail Signed For® 1st Class (OLP1SF)</option>
-                <option value="OLP2">Royal Mail 2nd Class (OLP2)</option>
-                <option value="OLP2SF">Royal Mail Signed For® 2nd Class (OLP2SF)</option>
+                <option value="TOLP24">Royal Mail Tracked 24® (TOLP24) — tracked</option>
+                <option value="TOLP48">Royal Mail Tracked 48® (TOLP48) — tracked</option>
+                <option value="OLP1">Royal Mail 1st Class (OLP1) — no tracking</option>
+                <option value="OLP1SF">Royal Mail Signed For® 1st Class (OLP1SF) — no tracking</option>
+                <option value="OLP2">Royal Mail 2nd Class (OLP2) — no tracking</option>
+                <option value="OLP2SF">Royal Mail Signed For® 2nd Class (OLP2SF) — no tracking</option>
               </select>
             </div>
 
@@ -342,7 +364,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
               <input
                 type="number"
                 value={weightGrams}
-                onChange={(e) => setWeightGrams(parseInt(e.target.value, 10) || 350)}
+                onChange={(e) => setWeightGrams(parseInt(e.target.value, 10) || 70)}
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 shadow-2xs"
               />
             </div>
