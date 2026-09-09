@@ -377,19 +377,6 @@ var init_initialDevSettings = __esm({
         customWebhookUrl: "https://api.pouchsupply.co.uk/webhooks/orders",
         customWebhookEnabled: false
       },
-      envSettings: {
-        apiBaseUrl: "https://api.pouchsupply.co.uk/v1",
-        environmentName: "production",
-        debugMode: false,
-        maintenanceMode: false,
-        enableExperimentalFeatures: true,
-        apiTimeoutMs: 15e3,
-        customHeadersJson: `{
-  "X-Pouch-Client": "web-storefront",
-  "X-Api-Version": "2026-07"
-}`,
-        rateLimitRequestsPerMin: 120
-      },
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
   }
@@ -2232,9 +2219,9 @@ function renderOrderProcessingTemplate(data) {
 function renderOrderShippedTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
-  const tracking = data.trackingNumber || "GB982341234UK";
-  const carrier = data.carrier || "Royal Mail Tracked 24";
-  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`, data) + `
+  const tracking = data.trackingNumber || "";
+  const carrier = data.carrier || "Royal Mail";
+  const trackingBlock = tracking ? `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -2248,13 +2235,23 @@ function renderOrderShippedTemplate(data) {
       <p style="font-size: 13px; color: #15803d; margin: 0;">
         Carrier: <strong>${carrier}</strong>
       </p>
-    </div>
+    </div>` : `
+    <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
+      <span class="badge badge-success" style="margin-bottom: 8px;">Shipped</span>
+      <p style="font-size: 13px; color: #15803d; margin: 0;">
+        Sent by <strong>${carrier}</strong>. This service does not include parcel tracking.
+      </p>
+    </div>`;
+  const trackButton = tracking ? `
+    <div style="text-align: center; margin-top: 24px;">
+      <a href="https://www.royalmail.com/track-your-item#/${tracking}" class="btn">Track Package</a>
+    </div>` : "";
+  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`, data) + `
+    ${trackingBlock}
 
     ${renderOrderItemsTable(data)}
 
-    <div style="text-align: center; margin-top: 24px;">
-      <a href="https://www.royalmail.com/track-your-item#/${tracking}" class="btn">Track Package</a>
-    </div>
+    ${trackButton}
   ` + renderBaseFooter();
 }
 function renderOutForDeliveryTemplate(data) {
@@ -2266,9 +2263,9 @@ function renderOutForDeliveryTemplate(data) {
       <p style="font-size: 14px; color: #0369a1; font-weight: 700; margin: 0 0 6px 0;">
         Your courier has your package on the delivery vehicle today!
       </p>
-      <p style="font-size: 12px; color: #0284c7; margin: 0;">
-        Tracking Ref: <strong>${data.trackingNumber || "GB982341234UK"}</strong>
-      </p>
+      ${data.trackingNumber ? `<p style="font-size: 12px; color: #0284c7; margin: 0;">
+        Tracking Ref: <strong>${data.trackingNumber}</strong>
+      </p>` : ""}
     </div>
 
     ${renderOrderItemsTable(data)}
@@ -3037,8 +3034,12 @@ async function sendOrderShippedEmail(orderData, trackingNumber, carrier) {
     items: orderData.items || [],
     total: orderData.total,
     destination: orderData.destination || orderData.address,
-    trackingNumber: trackingNumber || orderData.trackingNumber || orderData.trackingId || "RM892341234GB",
-    carrier: carrier || orderData.carrier || "Royal Mail Tracked 24"
+    // No stand-in tracking number. This used to fall back to a made-up
+    // 'RM892341234GB', so an order dispatched on a non-tracked service emailed
+    // the customer a number that tracks nothing and a Track Package link that
+    // leads nowhere. Left empty, the template omits the tracking block.
+    trackingNumber: trackingNumber || orderData.trackingNumber || orderData.trackingId || "",
+    carrier: carrier || orderData.carrier || "Royal Mail"
   };
   return sendEmail("order_shipped", recipient, data);
 }
@@ -3049,7 +3050,7 @@ async function sendOutForDeliveryEmail(orderData) {
     customerEmail: recipient,
     orderId: orderData.id || orderData.orderId,
     items: orderData.items || [],
-    trackingNumber: orderData.trackingNumber || orderData.trackingId || "RM892341234GB"
+    trackingNumber: orderData.trackingNumber || orderData.trackingId || ""
   };
   return sendEmail("out_for_delivery", recipient, data);
 }
@@ -3314,38 +3315,61 @@ async function syncKlaviyoProfileWithConsent(email, firstName, lastName, listIdO
   const cleanEmail = email.toLowerCase().trim();
   const listId = listIdOverride || settings.listId;
   if (!apiKey || !cleanEmail) return false;
+  const headers = {
+    "Authorization": `Klaviyo-API-Key ${apiKey}`,
+    "Content-Type": "application/json",
+    "accept": "application/json",
+    "revision": "2024-10-15"
+  };
   try {
-    const profilePayload = {
-      data: {
-        type: "profile",
-        attributes: {
-          email: cleanEmail,
-          first_name: firstName || void 0,
-          last_name: lastName || void 0,
-          subscriptions: {
-            email: {
-              marketing: {
-                can_receive_email_marketing: true,
-                consent: "SUBSCRIBED",
-                consented_at: (/* @__PURE__ */ new Date()).toISOString()
-              }
-            }
-          }
-        }
-      }
-    };
+    const profileAttributes = { email: cleanEmail };
+    if (firstName) profileAttributes.first_name = firstName;
+    if (lastName) profileAttributes.last_name = lastName;
     const profRes = await fetch("https://a.klaviyo.com/api/profiles/", {
       method: "POST",
-      headers: {
-        "Authorization": `Klaviyo-API-Key ${apiKey}`,
-        "Content-Type": "application/json",
-        "accept": "application/json",
-        "revision": "2024-02-15"
-      },
-      body: JSON.stringify(profilePayload)
+      headers,
+      body: JSON.stringify({ data: { type: "profile", attributes: profileAttributes } })
     });
-    if (listId) {
-      const subPayload = {
+    let profileOk = profRes.ok;
+    if (profRes.status === 409) {
+      const conflict = await profRes.json().catch(() => null);
+      const existingId = conflict?.errors?.[0]?.meta?.duplicate_profile_id;
+      if (existingId) {
+        const patchRes = await fetch(`https://a.klaviyo.com/api/profiles/${existingId}/`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            data: { type: "profile", id: existingId, attributes: profileAttributes }
+          })
+        });
+        profileOk = patchRes.ok;
+        if (!patchRes.ok) {
+          const detail = await patchRes.text().catch(() => "");
+          console.warn(
+            `[Klaviyo Profile Sync] Could not update existing profile for ${cleanEmail}: HTTP ${patchRes.status} ${detail.slice(0, 200)}`
+          );
+        }
+      } else {
+        console.warn(
+          `[Klaviyo Profile Sync] Profile for ${cleanEmail} already exists but Klaviyo did not return its id; profile left unchanged.`
+        );
+      }
+    } else if (!profRes.ok) {
+      const detail = await profRes.text().catch(() => "");
+      console.warn(
+        `[Klaviyo Profile Sync] Could not create profile for ${cleanEmail}: HTTP ${profRes.status} ${detail.slice(0, 200)}`
+      );
+    }
+    if (!listId) {
+      console.warn(
+        "[Klaviyo Profile Sync] No Klaviyo list is configured, so email marketing consent cannot be recorded. Marketing flows will skip these profiles. Choose a list in Admin -> Email & Marketing -> Klaviyo. (Flows marked transactional, such as order confirmations, still send without consent.)"
+      );
+      return profileOk;
+    }
+    const subRes = await fetch("https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
         data: {
           type: "profile-subscription-bulk-create-job",
           attributes: {
@@ -3357,42 +3381,25 @@ async function syncKlaviyoProfileWithConsent(email, firstName, lastName, listIdO
                   attributes: {
                     email: cleanEmail,
                     subscriptions: {
-                      email: {
-                        marketing: {
-                          can_receive_email_marketing: true,
-                          consent: "SUBSCRIBED",
-                          consented_at: (/* @__PURE__ */ new Date()).toISOString()
-                        }
-                      }
+                      email: { marketing: { consent: "SUBSCRIBED" } }
                     }
                   }
                 }
               ]
             }
           },
-          relationships: {
-            list: {
-              data: {
-                type: "list",
-                id: listId
-              }
-            }
-          }
+          relationships: { list: { data: { type: "list", id: listId } } }
         }
-      };
-      await fetch("https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/", {
-        method: "POST",
-        headers: {
-          "Authorization": `Klaviyo-API-Key ${apiKey}`,
-          "Content-Type": "application/json",
-          "accept": "application/json",
-          "revision": "2024-02-15"
-        },
-        body: JSON.stringify(subPayload)
-      }).catch(() => {
-      });
+      })
+    });
+    if (!subRes.ok) {
+      const detail = await subRes.text().catch(() => "");
+      console.warn(
+        `[Klaviyo Profile Sync] Consent job rejected for ${cleanEmail}: HTTP ${subRes.status} ${detail.slice(0, 300)}`
+      );
+      return profileOk;
     }
-    return profRes.ok || profRes.status === 202 || profRes.status === 409;
+    return true;
   } catch (err) {
     console.warn("[Klaviyo Profile Sync Error]:", err);
     return false;
@@ -3732,7 +3739,7 @@ async function trackOrderShipped(order, trackingNumber, carrier) {
   return trackKlaviyoEvent("Order Shipped", email, {
     $event_id: String(order.id || order.orderId),
     OrderId: String(order.id || order.orderId),
-    Carrier: carrier || order.carrier || "Royal Mail Tracked 24",
+    Carrier: carrier || order.carrier || "Royal Mail",
     TrackingNumber: trackingNumber || order.trackingNumber || order.trackingId,
     TrackingUrl: `https://www.royalmail.com/track-your-item#/tracking-results/${trackingNumber || order.trackingNumber || order.trackingId}`,
     Destination: order.destination || order.address
@@ -4615,24 +4622,6 @@ function isUsableRecurringHref(href) {
   if (/\/payments\/recurring\/(wp-|mock-)/i.test(href)) return false;
   return true;
 }
-function simulationAllowed() {
-  const optedIn = String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
-  if (!optedIn) return false;
-  if (isLiveWorldpayEnvironment()) {
-    console.error(
-      "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT is set but the environment is LIVE. Simulated charges are refused: a renewal without a real Worldpay stored credential will fail instead of being recorded as paid. Point WORLDPAY_BASE_URL at the try environment to exercise the recurring flow."
-    );
-    return false;
-  }
-  return true;
-}
-function isLiveWorldpayEnvironment() {
-  const declared = String(process.env.WORLDPAY_ENVIRONMENT || "live").toLowerCase();
-  const baseUrl = String(process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").toLowerCase();
-  const looksSandboxed = /try\.|sandbox|test\.access\.worldpay/.test(baseUrl);
-  if (looksSandboxed) return false;
-  return declared === "live" || declared === "production" || baseUrl.includes("access.worldpay.com");
-}
 function getWorldpayConfig() {
   const username = process.env.WORLDPAY_API_USERNAME;
   const password = process.env.WORLDPAY_API_PASSWORD;
@@ -4721,20 +4710,11 @@ async function chargeRecurringSubscription({
   const usableScheme = Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
   const usablePreviousTx = Boolean(previousTransactionId) && !isPlaceholderCredential(previousTransactionId);
   if (!config) {
-    if (simulationAllowed()) {
-      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
-    }
     throw new Error(
       configError || "Worldpay credentials are not configured, so no recurring payment can be taken."
     );
   }
   if (!usableHref && !usableScheme && !usablePreviousTx) {
-    if (simulationAllowed()) {
-      console.warn(
-        `[Worldpay Subscription] No stored credential for ${transactionReference}; returning a SIMULATED authorization because WORLDPAY_ALLOW_SIMULATED_MIT=true.`
-      );
-      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
-    }
     throw new Error(
       "No Worldpay stored credential is available for this subscription. The initial payment must be taken with a customer agreement so Worldpay returns a scheme transaction reference to reuse for recurring charges."
     );
@@ -4779,12 +4759,6 @@ async function chargeRecurringSubscription({
     console.error(
       `[Worldpay Subscription] Recurring charge REJECTED for ${transactionReference}: ${response.status} \u2014 ${errMsg}`
     );
-    if (simulationAllowed()) {
-      console.warn(
-        "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT=true \u2014 returning a simulated authorization instead of failing."
-      );
-      return buildSimulatedResult(transactionReference, amount, currency, schemeReference);
-    }
     throw new Error(errMsg);
   }
   const outcome = String(data?.outcome || data?.lastEvent || "").toLowerCase();
@@ -4807,25 +4781,7 @@ async function chargeRecurringSubscription({
     currency,
     authCode: data?.authorizationCode || data?.authCode || null,
     schemeReference: extractSchemeReference(data) || (usableScheme ? schemeReference : null),
-    simulated: false,
     rawResponse: data,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
-function buildSimulatedResult(transactionReference, amount, currency, schemeReference) {
-  console.log(
-    `[Worldpay Subscription] SIMULATED (no money taken) MIT authorization for tx: ${transactionReference}`
-  );
-  return {
-    id: `WP-SIM-${Date.now().toString().slice(-6)}`,
-    status: "authorized",
-    transactionReference,
-    amount,
-    currency,
-    authCode: "AUTH-SIMULATED",
-    paymentMethod: "Simulated Worldpay Recurring",
-    schemeReference: schemeReference || null,
-    simulated: true,
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
@@ -5021,7 +4977,8 @@ async function createRoyalMailOrders(orders, apiKey) {
   );
 }
 async function getRoyalMailOrder(identifier, apiKey) {
-  const encoded = typeof identifier === "number" ? String(identifier) : `"${encodeURIComponent(identifier)}"`;
+  const raw = String(identifier).trim();
+  const encoded = /^[0-9]+$/.test(raw) ? raw : `"${encodeURIComponent(raw)}"`;
   return royalMailRequest(
     `/orders/${encoded}`,
     {
@@ -5098,7 +5055,14 @@ async function getOrders(apiKey, params = {}) {
   return royalMailRequest(url, { method: "GET" }, apiKey);
 }
 async function getOrderByReference(reference, apiKey) {
-  return getRoyalMailOrder(reference, apiKey);
+  const result = await getRoyalMailOrder(reference, apiKey);
+  if (!Array.isArray(result)) return result;
+  if (result.length === 0) return null;
+  const tracked = result.find(
+    (o) => o?.trackingNumber || o?.packages?.[0]?.trackingNumber
+  );
+  if (tracked) return tracked;
+  return result.slice().sort((a, b) => Number(b?.orderIdentifier || 0) - Number(a?.orderIdentifier || 0))[0];
 }
 async function cancelOrder(reference, apiKey) {
   const values = (Array.isArray(reference) ? reference : [reference]).map((v) => String(v).trim()).filter(Boolean).map((v) => /^\d+$/.test(v) ? v : `"${encodeURIComponent(v)}"`);
@@ -5125,6 +5089,7 @@ var init_royalMail = __esm({
 var royalMailService_exports = {};
 __export(royalMailService_exports, {
   DEFAULT_ROYAL_MAIL_SETTINGS: () => DEFAULT_ROYAL_MAIL_SETTINGS,
+  PACKAGE_FORMATS: () => PACKAGE_FORMATS,
   UK_SERVICE_CODES: () => UK_SERVICE_CODES,
   cancelRoyalMailShipment: () => cancelRoyalMailShipment,
   createReturnLabel: () => createRoyalMailReturnLabel,
@@ -5138,6 +5103,7 @@ __export(royalMailService_exports, {
   normalizeCountryCode: () => normalizeCountryCode,
   parseAddressString: () => parseAddressString,
   requireApiKey: () => requireApiKey,
+  resolvePackageFormat: () => resolvePackageFormat,
   resolveServiceCode: () => resolveServiceCode,
   saveRoyalMailSettings: () => saveRoyalMailSettings,
   serviceSupportsNotifications: () => serviceSupportsNotifications,
@@ -5263,7 +5229,8 @@ function validateAddress(address) {
 function serviceSupportsNotifications(code) {
   const raw = String(code ?? "").trim().toUpperCase();
   if (!raw) return false;
-  return !raw.startsWith("OLP");
+  if (raw.startsWith("OLP") || raw.startsWith("TOLP")) return false;
+  return true;
 }
 async function postOrder(payload, apiKey, orderId) {
   try {
@@ -5284,6 +5251,21 @@ function collectFailureMessages(result) {
     return errors.map((e) => String(e?.errorMessage || e?.message || e?.code || ""));
   });
 }
+function resolvePackageFormat(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "smallParcel";
+  const exact = PACKAGE_FORMATS.find((f) => f === raw);
+  if (exact) return exact;
+  const alias = PACKAGE_FORMAT_ALIASES[raw.toUpperCase()];
+  if (alias) {
+    if (alias !== raw) {
+      console.warn(`[RoyalMailService] Package format "${raw}" read as "${alias}".`);
+    }
+    return alias;
+  }
+  console.warn(`[RoyalMailService] Unknown package format "${raw}"; using smallParcel.`);
+  return "smallParcel";
+}
 function resolveServiceCode(code) {
   const raw = String(code ?? "").trim().toUpperCase();
   if (!raw) return "";
@@ -5296,10 +5278,28 @@ function resolveServiceCode(code) {
   }
   return raw;
 }
-function getShippingRates(weightGrams = 350, countryCode = "GB") {
+function getShippingRates(weightGrams = 70, countryCode = "GB") {
   const isUK = normalizeCountryCode(countryCode) === "GB";
   if (isUK) {
     return [
+      {
+        serviceCode: "TOLP24",
+        serviceName: "Royal Mail Tracked 24\xAE",
+        estimatedDelivery: "1-2 Working Days (Tracked)",
+        price: 4.75,
+        currency: "GBP",
+        tracked: true,
+        signatureRequired: false
+      },
+      {
+        serviceCode: "TOLP48",
+        serviceName: "Royal Mail Tracked 48\xAE",
+        estimatedDelivery: "2-3 Working Days (Tracked)",
+        price: 3.99,
+        currency: "GBP",
+        tracked: true,
+        signatureRequired: false
+      },
       {
         serviceCode: "OLP1",
         serviceName: "Royal Mail 1st Class",
@@ -5447,7 +5447,7 @@ function resolveRecipientFromOrder(order) {
   };
 }
 async function testServiceCode(serviceCode, tradingNameOverride) {
-  const code = resolveServiceCode(serviceCode);
+  const code = String(serviceCode ?? "").trim().toUpperCase();
   if (!code) {
     return { serviceCode: code, accepted: false, message: "No service code supplied.", cleanedUp: false };
   }
@@ -5476,8 +5476,8 @@ async function testServiceCode(serviceCode, tradingNameOverride) {
     orderDate: (/* @__PURE__ */ new Date()).toISOString(),
     packages: [
       {
-        weightInGrams: settings.defaultWeightGrams || 350,
-        packageFormatIdentifier: settings.defaultPackageType || "Parcel",
+        weightInGrams: settings.defaultWeightGrams || 70,
+        packageFormatIdentifier: resolvePackageFormat(settings.defaultPackageType),
         contents: [{ name: "Service code test", quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
       }
     ],
@@ -5542,7 +5542,9 @@ async function createRoyalMailShipment(orderId, options = {}) {
       `Order #${orderId} cannot be shipped \u2014 the delivery address is incomplete: ${errors.join("; ")}. Edit the order's shipping address before creating a Royal Mail shipment.`
     );
   }
-  const serviceCode = resolveServiceCode(options.serviceCode ?? settings.defaultServiceCode);
+  const requestedServiceCode = String(options.serviceCode ?? settings.defaultServiceCode ?? "").trim().toUpperCase();
+  const serviceCode = resolveServiceCode(requestedServiceCode);
+  const serviceDowngraded = Boolean(requestedServiceCode) && serviceCode !== requestedServiceCode;
   const registerCode = String(options.serviceRegisterCode || settings.defaultServiceRegisterCode || "").trim();
   const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
   const selectedRate = rates.find((r) => r.serviceCode === serviceCode);
@@ -5579,8 +5581,8 @@ async function createRoyalMailShipment(orderId, options = {}) {
     orderDate: order.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
     packages: [
       {
-        weightInGrams: options.weightGrams || settings.defaultWeightGrams || 350,
-        packageFormatIdentifier: options.packageType || settings.defaultPackageType || "Parcel",
+        weightInGrams: options.weightGrams || settings.defaultWeightGrams || 70,
+        packageFormatIdentifier: resolvePackageFormat(options.packageType || settings.defaultPackageType),
         contents: Array.isArray(order.items) && order.items.length > 0 ? order.items.map((it) => ({
           name: it.productTitle || it.title || "Pouch Supply Item",
           SKU: it.sku || void 0,
@@ -5592,7 +5594,7 @@ async function createRoyalMailShipment(orderId, options = {}) {
             name: "Pouch Supply Package",
             quantity: 1,
             unitValue: totalVal,
-            unitWeightInGrams: options.weightGrams || settings.defaultWeightGrams || 350
+            unitWeightInGrams: options.weightGrams || settings.defaultWeightGrams || 70
           }
         ]
       }
@@ -5613,7 +5615,15 @@ async function createRoyalMailShipment(orderId, options = {}) {
         receiveEmailNotification: Boolean(recipientObj.emailAddress),
         receiveSmsNotification: Boolean(recipientObj.phoneNumber)
       } : {}
-    }
+    },
+    // Generating the label is what makes Royal Mail allocate the tracking
+    // number -- creating the order alone never does, on any service. Without
+    // this the shipment came back with tracking null, the order could not
+    // leave Unfulfilled and no dispatch email was ever sent.
+    //
+    // This BUYS THE POSTAGE, so it happens once, here, on the operator's
+    // explicit 'create shipment' action, and never anywhere automatic.
+    label: { includeLabelInResponse: true }
   };
   let result = await postOrder(payload, apiKey, orderId);
   if (collectFailureMessages(result).some((m) => NOTIFICATION_UNAVAILABLE_RE.test(m)) && payload.postageDetails && "receiveEmailNotification" in payload.postageDetails) {
@@ -5649,6 +5659,12 @@ async function createRoyalMailShipment(orderId, options = {}) {
   }
   const royalMailOrderId = String(createdOrder.orderIdentifier);
   let trackingNumber = createdOrder.trackingNumber || createdOrder.packages?.[0]?.trackingNumber || null;
+  const labelErrors = Array.isArray(createdOrder.labelErrors) ? createdOrder.labelErrors.map((e) => e?.message).filter(Boolean) : [];
+  if (labelErrors.length > 0) {
+    console.error(
+      `[RoyalMailService] Royal Mail could not generate the label for #${orderId}: ${labelErrors.join("; ")}`
+    );
+  }
   if (!trackingNumber) {
     try {
       const detail = await getOrderByReference(royalMailOrderId, apiKey);
@@ -5708,7 +5724,9 @@ async function createRoyalMailShipment(orderId, options = {}) {
     serviceName,
     serviceCode,
     labelUrl,
-    message: trackingNumber ? `Royal Mail shipment created. Tracking ${trackingNumber}.` : `Royal Mail order ${royalMailOrderId} created. Tracking is allocated when the label is generated \u2014 print the label, then sync the order.`,
+    requestedServiceCode,
+    serviceDowngraded,
+    message: (serviceDowngraded ? `Service ${requestedServiceCode} is not on this Click & Drop contract, so ${serviceCode} was used instead \u2014 add ${requestedServiceCode} in Click & Drop > Settings > Services if you need it. ` : "") + (trackingNumber ? `Royal Mail shipment created. Tracking ${trackingNumber}.` : labelErrors.length > 0 ? `Royal Mail order ${royalMailOrderId} was created on ${serviceName}, but the label could not be generated, so no tracking number was issued: ${labelErrors.join("; ")}. Check the postage balance on the Click & Drop account, then press Sync.` : `Royal Mail order ${royalMailOrderId} created on ${serviceName}. No tracking number was issued yet \u2014 generate the label in Click & Drop, then press Sync.`),
     order: updatedOrder
   };
 }
@@ -5938,7 +5956,7 @@ async function createRoyalMailReturnLabel(orderId) {
     message: `Royal Mail pre-paid returns label retrieved for order #${orderId}.`
   };
 }
-var DEFAULT_ROYAL_MAIL_SETTINGS, UK_SERVICE_CODES, LEGACY_SERVICE_CODE_MAP, NOTIFICATION_UNAVAILABLE_RE, UK_POSTCODE_RE2, COUNTRY_TOKENS;
+var DEFAULT_ROYAL_MAIL_SETTINGS, UK_SERVICE_CODES, LEGACY_SERVICE_CODE_MAP, NOTIFICATION_UNAVAILABLE_RE, PACKAGE_FORMATS, PACKAGE_FORMAT_ALIASES, UK_POSTCODE_RE2, COUNTRY_TOKENS;
 var init_royalMailService = __esm({
   "backend/services/royalMailService.ts"() {
     init_serverDb();
@@ -5948,13 +5966,18 @@ var init_royalMailService = __esm({
       integrationName: "Pouch-Supply",
       enabled: true,
       autoCreateShipmentOnPayment: String(process.env.ROYAL_MAIL_AUTO_DISPATCH || "").toLowerCase() === "true",
-      // Royal Mail 1st Class — one of the four Online Postage services this
-      // account's Click & Drop contract actually holds, so a domestic shipment
-      // works out of the box. Change it in Admin → Settings → Royal Mail; blanking
-      // it is still valid and means "apply postage in Click & Drop".
-      defaultServiceCode: "OLP1",
-      defaultPackageType: "Parcel",
-      defaultWeightGrams: 350,
+      // Royal Mail Tracked 24 (Online Postage). Verified accepted on this account.
+      // Tracked is the default because it is the only family that issues a tracking
+      // number — without one the order can never move to Shipped and no dispatch
+      // email is sent. Change it in Admin → Settings → Royal Mail; blanking it is
+      // still valid and means "apply postage in Click & Drop".
+      defaultServiceCode: "TOLP24",
+      // Click & Drop reads 'parcel' as LARGE Parcel, which Royal Mail refuses to
+      // carry on Tracked 24/48 -- the order is created but the label cannot be
+      // generated, so no tracking number is ever issued. A small parcel is the
+      // format these packs actually are and is valid on every service here.
+      defaultPackageType: "smallParcel",
+      defaultWeightGrams: 70,
       senderAddress: {
         companyName: "",
         addressLine1: "",
@@ -5966,16 +5989,21 @@ var init_royalMailService = __esm({
         contactPhone: ""
       }
     };
-    UK_SERVICE_CODES = ["OLP1", "OLP1SF", "OLP2", "OLP2SF"];
+    UK_SERVICE_CODES = ["TOLP24", "TOLP48", "OLP1", "OLP1SF", "OLP2", "OLP2SF"];
     LEGACY_SERVICE_CODE_MAP = {
-      // 1st Class equivalents
-      TPNN: "OLP1",
-      TRNN: "OLP1",
+      // Tracked equivalents. These used to collapse onto OLP1/OLP2, which quietly
+      // turned a tracked service into an untracked one — the parcel shipped, no
+      // tracking number was ever issued, and the order stayed Unfulfilled.
+      TPNN: "TOLP24",
+      TRNN: "TOLP24",
+      TPN24: "TOLP24",
+      TPSN: "TOLP48",
+      TRSN: "TOLP48",
+      TPS48: "TOLP48",
+      // Untracked 1st Class equivalents
       CRL1: "OLP1",
       BPL1: "OLP1",
-      // 2nd Class equivalents
-      TPSN: "OLP2",
-      TRSN: "OLP2",
+      // Untracked 2nd Class equivalents
       CRL2: "OLP2",
       BPL2: "OLP2",
       // Signature-on-delivery equivalents
@@ -5987,6 +6015,31 @@ var init_royalMailService = __esm({
       SD2: "OLP1SF"
     };
     NOTIFICATION_UNAVAILABLE_RE = /notification is not available|notifications are not available/i;
+    PACKAGE_FORMATS = [
+      "letter",
+      "largeLetter",
+      "smallParcel",
+      "mediumParcel",
+      "parcel",
+      "documents",
+      "tube"
+    ];
+    PACKAGE_FORMAT_ALIASES = {
+      LETTER: "letter",
+      LARGELETTER: "largeLetter",
+      "LARGE LETTER": "largeLetter",
+      SMALLPARCEL: "smallParcel",
+      "SMALL PARCEL": "smallParcel",
+      MEDIUMPARCEL: "mediumParcel",
+      "MEDIUM PARCEL": "mediumParcel",
+      // 'Parcel' was the old stored default and means LARGE parcel to Click & Drop,
+      // which is what broke label generation. Read it as a medium parcel: the
+      // largest format the tracked services accept.
+      PARCEL: "mediumParcel",
+      "LARGE PARCEL": "parcel",
+      DOCUMENTS: "documents",
+      TUBE: "tube"
+    };
     UK_POSTCODE_RE2 = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
     COUNTRY_TOKENS = {
       "united kingdom": "GB",
@@ -6161,8 +6214,7 @@ async function processDueSubscriptions() {
         `[Subscription Worker] Processing renewal for sub ${subId} (${customerEmail}) \u2014 \xA3${amount.toFixed(2)} every ${interval}`
       );
       const hasUsableCredential = isUsableRecurringHref(recurringHref) || Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
-      const allowSimulated = simulationAllowed();
-      if (!hasUsableCredential && !allowSimulated) {
+      if (!hasUsableCredential) {
         console.warn(
           `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential (href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). The initial payment must be taken with a customer agreement so Worldpay returns a reusable reference.`
         );
@@ -6228,7 +6280,6 @@ async function processDueSubscriptions() {
             schemeReference: chargeResult?.schemeReference || schemeReference,
             paymentMethod: "Worldpay Access MIT",
             recurringRenewal: true,
-            simulatedPayment: Boolean(chargeResult?.simulated),
             shippingCost: shippingAmount,
             subtotal: itemSubtotal
           },
@@ -6291,8 +6342,7 @@ async function processDueSubscriptions() {
           status: "succeeded",
           orderId: newOrderId,
           nextBillingDate: claimedNextBilling.toISOString(),
-          transactionReference,
-          simulated: Boolean(chargeResult?.simulated)
+          transactionReference
         });
       } catch (chargeErr) {
         console.error(`[Subscription Worker] Charge FAILED for sub ${subId}:`, chargeErr.message);
@@ -7001,8 +7051,8 @@ import crypto from "crypto";
 init_serverDb();
 import fetch2 from "node-fetch";
 var DEFAULT_RECAPTCHA_SETTINGS = {
-  enabled: true,
-  siteKey: process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SITE_KEY || "6LefWfspAAAAADsJ-68J39yGfE08JzW_0000000",
+  enabled: Boolean(process.env.RECAPTCHA_SECRET_KEY),
+  siteKey: process.env.VITE_RECAPTCHA_SITE_KEY || process.env.RECAPTCHA_SITE_KEY || "",
   secretKey: process.env.RECAPTCHA_SECRET_KEY || "",
   minScore: 0.5
 };
@@ -7045,14 +7095,16 @@ async function verifyRecaptchaToken(token, expectedAction) {
       error: "reCAPTCHA verification token missing. Please complete the reCAPTCHA security check."
     };
   }
-  if (token.startsWith("SIMULATED_RECAPTCHA_TOKEN") || token.startsWith("PASSED_LOCAL_TOKEN")) {
-    console.log("[RecaptchaService] Simulated reCAPTCHA token received and approved (Score: 0.9)");
-    return { success: true, score: 0.9, action: expectedAction };
-  }
   const secretKey = settings.secretKey || process.env.RECAPTCHA_SECRET_KEY;
   if (!secretKey || secretKey.trim().length === 0) {
-    console.warn("[RecaptchaService] No RECAPTCHA_SECRET_KEY configured. Granting pass-through verification for live token.");
-    return { success: true, score: 0.95, action: expectedAction };
+    console.error(
+      "[RecaptchaService] reCAPTCHA is ENABLED but no secret key is configured. Set RECAPTCHA_SECRET_KEY, or add the secret key in the admin reCAPTCHA settings, or turn reCAPTCHA off. Refusing to verify."
+    );
+    return {
+      success: false,
+      score: 0,
+      error: "reCAPTCHA is enabled but not configured on the server. Please contact support."
+    };
   }
   try {
     const params = new URLSearchParams();
@@ -8109,7 +8161,7 @@ async function saveVerifiedOrder(orderId, details) {
       console.log(`[Worldpay Order] Auto-registering Click & Drop shipment with Royal Mail for order #${orderId}`);
       createRoyalMailShipment2(orderId, {
         serviceCode: rmSettings.defaultServiceCode,
-        weightGrams: rmSettings.defaultWeightGrams || 350
+        weightGrams: rmSettings.defaultWeightGrams || 70
       }).catch((err) => {
         console.warn(`[Worldpay Order] Background Royal Mail shipment creation note for #${orderId}:`, err?.message);
       });
@@ -8290,11 +8342,12 @@ async function handleCreateHostedPaymentPage(req, res) {
     const userAgent = req.headers["user-agent"] || "worldpay-hpp/1.0";
     const worldpayUrl = `${cfg.baseUrl}/payment_pages`;
     console.log(`[Worldpay HPP ${cfg.environment.toUpperCase()}] POST ${worldpayUrl} for Order: ${transactionReference}`);
+    const authHeader = cfg.authHeader;
     const postPaymentPage = async (payload) => {
       const res2 = await fetch(worldpayUrl, {
         method: "POST",
         headers: {
-          "Authorization": cfg.authHeader,
+          "Authorization": authHeader,
           "Content-Type": "application/vnd.worldpay.payment_pages-v1.hal+json",
           "Accept": "application/vnd.worldpay.payment_pages-v1.hal+json",
           "WP-CorrelationId": correlationId,
@@ -9965,10 +10018,39 @@ router13.get("/logs", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch email logs" });
   }
 });
-router13.post("/logs/clear", async (_req, res) => {
+router13.post("/logs/clear", async (req, res) => {
   try {
-    await saveResource("email_logs", []);
-    res.json({ success: true, message: "Email logs cleared successfully" });
+    const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
+    const beforeRaw = req.body?.before;
+    const before = beforeRaw ? Date.parse(String(beforeRaw)) : NaN;
+    if (beforeRaw && Number.isNaN(before)) {
+      return res.status(400).json({ error: `Invalid 'before' date: ${beforeRaw}` });
+    }
+    if (!status && !beforeRaw) {
+      await saveResource("email_logs", []);
+      return res.json({ success: true, removed: "all", remaining: 0, message: "Email logs cleared successfully" });
+    }
+    const logs = await getEmailLogs();
+    const timeOf = (l) => {
+      if (l?.timestamp) {
+        const t = Date.parse(l.timestamp);
+        if (!Number.isNaN(t)) return t;
+      }
+      const m = String(l?.id || "").match(/_(d{13})_/);
+      return m ? Number(m[1]) : 0;
+    };
+    const kept = logs.filter((l) => {
+      const statusMatches = !status || String(l?.status) === status;
+      const ageMatches = Number.isNaN(before) || timeOf(l) < before;
+      return !(statusMatches && ageMatches);
+    });
+    await saveResource("email_logs", kept);
+    res.json({
+      success: true,
+      removed: logs.length - kept.length,
+      remaining: kept.length,
+      message: `Removed ${logs.length - kept.length} log entr${logs.length - kept.length === 1 ? "y" : "ies"}, kept ${kept.length}.`
+    });
   } catch (err) {
     res.status(500).json({ error: err.message || "Failed to clear email logs" });
   }
@@ -10281,6 +10363,81 @@ var handleVerify = async (req, res) => {
 };
 router14.get("/verify", handleVerify);
 router14.post("/verify", handleVerify);
+router14.get("/health", async (_req, res) => {
+  try {
+    const settings = await getKlaviyoSettings();
+    let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
+    if (apiKey.toLowerCase().startsWith("klaviyo-api-key ")) apiKey = apiKey.substring(16).trim();
+    if (!apiKey) {
+      return res.json({
+        connected: false,
+        enabled: settings.enabled,
+        issues: ["No Klaviyo private API key is configured."],
+        flows: [],
+        listConfigured: false
+      });
+    }
+    const headers = {
+      "Authorization": `Klaviyo-API-Key ${apiKey}`,
+      "accept": "application/json",
+      "revision": "2024-10-15"
+    };
+    const [flowRes, metricRes] = await Promise.all([
+      fetch("https://a.klaviyo.com/api/flows/", { headers }),
+      fetch("https://a.klaviyo.com/api/metrics/", { headers })
+    ]);
+    const issues = [];
+    const flowJson = flowRes.ok ? await flowRes.json().catch(() => null) : null;
+    const flows = (flowJson && flowJson.data || []).map((f) => ({
+      name: f?.attributes?.name || "Untitled flow",
+      status: f?.attributes?.status || "unknown"
+    }));
+    if (!flowRes.ok) {
+      issues.push("Could not read flows from Klaviyo (the API key may lack the flows:read scope).");
+    } else {
+      const drafts = flows.filter((f) => f.status !== "live");
+      if (flows.length === 0) {
+        issues.push("This Klaviyo account has no flows, so no event can produce an email.");
+      } else if (drafts.length > 0) {
+        issues.push(
+          `${drafts.length} flow(s) are not live and will send nothing: ` + drafts.map((f) => `"${f.name}" (${f.status})`).join(", ") + "."
+        );
+      }
+    }
+    const metricJson = metricRes.ok ? await metricRes.json().catch(() => null) : null;
+    const metrics = (metricJson && metricJson.data || []).map((m) => ({
+      name: m?.attributes?.name || "",
+      integration: m?.attributes?.integration && m.attributes.integration.name || "API"
+    }));
+    const duplicates = Array.from(
+      new Set(
+        metrics.filter((m) => metrics.filter((o) => o.name === m.name).length > 1).map((m) => m.name)
+      )
+    );
+    if (duplicates.length > 0) {
+      issues.push(
+        "Duplicate metrics exist from another integration (" + duplicates.join(", ") + "). Check each flow triggers on the API copy, not the old one."
+      );
+    }
+    if (!settings.listId) {
+      issues.push(
+        "No list is selected, so email marketing consent is never recorded and marketing flows skip these profiles. Order confirmations are unaffected if their flow is marked transactional."
+      );
+    }
+    if (!settings.enabled) issues.push("The Klaviyo integration is switched off in settings.");
+    res.json({
+      connected: flowRes.ok || metricRes.ok,
+      enabled: settings.enabled,
+      listConfigured: Boolean(settings.listId),
+      flows,
+      duplicateMetrics: duplicates,
+      issues,
+      healthy: issues.length === 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Failed to read Klaviyo health" });
+  }
+});
 router14.get("/logs", async (_req, res) => {
   try {
     const logs = await getKlaviyoLogs();
@@ -10289,12 +10446,41 @@ router14.get("/logs", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Klaviyo logs" });
   }
 });
-router14.post("/logs/clear", async (_req, res) => {
+router14.post("/logs/clear", async (req, res) => {
   try {
-    await saveResource("klaviyo_logs", []);
-    res.json({ success: true, message: "Klaviyo logs cleared successfully" });
+    const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
+    const beforeRaw = req.body?.before;
+    const before = beforeRaw ? Date.parse(String(beforeRaw)) : NaN;
+    if (beforeRaw && Number.isNaN(before)) {
+      return res.status(400).json({ error: `Invalid 'before' date: ${beforeRaw}` });
+    }
+    if (!status && !beforeRaw) {
+      await saveResource("klaviyo_logs", []);
+      return res.json({ success: true, removed: "all", remaining: 0, message: "Klaviyo logs cleared successfully" });
+    }
+    const logs = await getKlaviyoLogs();
+    const timeOf = (l) => {
+      if (l?.timestamp) {
+        const t = Date.parse(l.timestamp);
+        if (!Number.isNaN(t)) return t;
+      }
+      const m = String(l?.id || "").match(/_(d{13})_/);
+      return m ? Number(m[1]) : 0;
+    };
+    const kept = logs.filter((l) => {
+      const statusMatches = !status || String(l?.status) === status;
+      const ageMatches = Number.isNaN(before) || timeOf(l) < before;
+      return !(statusMatches && ageMatches);
+    });
+    await saveResource("klaviyo_logs", kept);
+    res.json({
+      success: true,
+      removed: logs.length - kept.length,
+      remaining: kept.length,
+      message: `Removed ${logs.length - kept.length} log entr${logs.length - kept.length === 1 ? "y" : "ies"}, kept ${kept.length}.`
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Failed to clear Klaviyo logs" });
+    res.status(500).json({ error: err.message || "Failed to clear klaviyo logs" });
   }
 });
 router14.post("/track", async (req, res) => {
@@ -10559,7 +10745,7 @@ router15.post("/test-service-code", async (req, res) => {
 router15.post("/rates", async (req, res) => {
   try {
     const { weightGrams, countryCode } = req.body;
-    const rates = getShippingRates(weightGrams || 350, countryCode || "GB");
+    const rates = getShippingRates(weightGrams || 70, countryCode || "GB");
     res.json({ success: true, rates });
   } catch (err) {
     res.status(500).json({ error: err.message || "Failed to calculate rates" });
