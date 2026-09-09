@@ -230,39 +230,116 @@ async function backfillSubscriptionCredential(orderId: string, gatewayResponse: 
   return updated;
 }
 
+/**
+ * The Payment Queries API: a GET with the reference in the query string, and a
+ * versioned HAL media type in Accept.
+ *
+ * Both details matter, and both were wrong. The call used to be a POST to a bare
+ * `/paymentQueries/payments` with a JSON body, which Worldpay answers with an
+ * HTML 404 — that route does not exist — and it asked for `application/json`,
+ * which the endpoint rejects with 406. So this lookup returned null on every
+ * single order since it was written.
+ *
+ * That is not a cosmetic failure. This is the only place a subscription's scheme
+ * transaction reference is read back after the shopper returns from the Hosted
+ * Payment Page, so no subscription could ever record a stored-card mandate, and
+ * every plan reported "no stored-card mandate with Worldpay".
+ *
+ * The correct URL is the one Worldpay itself hands back as `_links.self.href`
+ * when the payment page is created.
+ */
+const PAYMENT_QUERY_ACCEPT = 'application/vnd.worldpay.payment-queries-v1.hal+json';
+
+/** How long to keep asking when Worldpay has not published the payment yet. */
+const PAYMENT_QUERY_ATTEMPTS = 3;
+const PAYMENT_QUERY_RETRY_MS = 1200;
+
+/** Worldpay events that mean the money is committed. */
+const AUTHORISED_PAYMENT_EVENTS = [
+  'authorized',
+  'authorised',
+  'sentforsettlement',
+  'settled',
+  'charged',
+  'captured'
+];
+
+/** Worldpay events that mean the payment definitively did not happen. */
+const FAILED_PAYMENT_EVENTS = ['refused', 'declined', 'failed', 'cancelled', 'canceled', 'expired', 'error'];
+
+/**
+ * Did Worldpay actually take the money?
+ *
+ * The shopper's return URL carries `status=SUCCESS` as a plain query parameter,
+ * which is a claim by the browser, not by Worldpay — anyone can request that URL
+ * and it used to be enough to record an order as Paid. The payment query is the
+ * only trustworthy answer, and it only became usable once the call above was
+ * fixed.
+ */
+function paymentOutcome(payment: any): 'authorised' | 'failed' | 'unknown' {
+  if (!payment) return 'unknown';
+  const raw = String(payment.lastEvent || payment.outcome || payment.status || '')
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
+  if (!raw) return 'unknown';
+  if (AUTHORISED_PAYMENT_EVENTS.includes(raw)) return 'authorised';
+  if (FAILED_PAYMENT_EVENTS.includes(raw)) return 'failed';
+  return 'unknown';
+}
+
 async function fetchWorldpayPaymentDetails(transactionReference: string): Promise<any | null> {
   const cfg = getEnvironmentConfig();
   if (!cfg.authHeader || !cfg.entity) return null;
 
-  try {
-    const response = await fetch(`${cfg.baseUrl}/paymentQueries/payments`, {
-      method: 'POST',
-      headers: {
-        Authorization: cfg.authHeader,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'WP-CorrelationId': crypto.randomUUID ? crypto.randomUUID() : `q-${Date.now()}`
-      },
-      body: JSON.stringify({
-        transactionReference,
-        merchant: { entity: cfg.entity }
-      })
-    });
+  const url = `${cfg.baseUrl}/paymentQueries/payments?transactionReference=${encodeURIComponent(transactionReference)}`;
 
-    if (!response.ok) {
+  for (let attempt = 1; attempt <= PAYMENT_QUERY_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: cfg.authHeader,
+          Accept: PAYMENT_QUERY_ACCEPT,
+          'WP-CorrelationId': crypto.randomUUID ? crypto.randomUUID() : `q-${Date.now()}`
+        }
+      });
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.warn(
+          `[Worldpay Query] Payment lookup for ${transactionReference} returned HTTP ${response.status}. ` +
+            `A subscription created from this payment will have no stored-card mandate. ${detail.slice(0, 300)}`
+        );
+        return null;
+      }
+
+      const data: any = await response.json().catch(() => null);
+      const payment = data?._embedded?.payments?.[0] || data?.payments?.[0] || null;
+      if (payment) return payment;
+
+      // HTTP 200 with an empty collection means Worldpay has not published the
+      // payment yet — it lags the shopper's redirect by a moment. Giving up on
+      // the first empty answer loses the mandate permanently, so ask again.
+      if (attempt < PAYMENT_QUERY_ATTEMPTS) {
+        console.log(
+          `[Worldpay Query] No payment published yet for ${transactionReference} (attempt ${attempt}/${PAYMENT_QUERY_ATTEMPTS}); retrying.`
+        );
+        await new Promise(resolve => setTimeout(resolve, PAYMENT_QUERY_RETRY_MS));
+        continue;
+      }
+
       console.warn(
-        `[Worldpay Query] Payment lookup for ${transactionReference} returned HTTP ${response.status}.`
+        `[Worldpay Query] Worldpay reports no payment for ${transactionReference}. ` +
+          `The shopper did not complete the payment, or it was declined.`
       );
       return null;
+    } catch (err: any) {
+      console.warn(`[Worldpay Query] Payment lookup failed for ${transactionReference}:`, err?.message);
+      return null;
     }
-
-    const data: any = await response.json().catch(() => null);
-    // The query API returns a collection; the payment itself is the first entry.
-    return data?._embedded?.payments?.[0] || data?.payments?.[0] || data || null;
-  } catch (err: any) {
-    console.warn(`[Worldpay Query] Payment lookup failed for ${transactionReference}:`, err?.message);
-    return null;
   }
+
+  return null;
 }
 
 // Helper to save and load pending checkouts persistently
@@ -323,6 +400,12 @@ async function saveVerifiedOrder(
     deliveryMethod?: string;
     discountApplied?: any;
     storeCreditApplied?: number;
+    /**
+     * Whether Worldpay confirmed the money was taken. False when the shopper
+     * returned but the gateway has not published an authorised payment yet:
+     * the order is then recorded as Pending rather than invented as Paid.
+     */
+    paymentConfirmed?: boolean;
   }
 ) {
   const pending = details.pendingData || await getPendingCheckout(orderId);
@@ -384,9 +467,17 @@ async function saveVerifiedOrder(
                     : (total >= 40 ? 0 : 2.99)))));
 
   const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || 'Royal Mail Tracked 24/48';
+
+  // Defaults to true so the webhook and the explicit verify-payment call — both
+  // of which only run on a payment Worldpay has already confirmed — behave as
+  // before. Only the shopper-return callback passes false.
+  const paymentConfirmed = details.paymentConfirmed !== false;
   let createdSubscriptionId: string | undefined;
 
-  if (subItem) {
+  // A subscription is a promise to charge this card again. Creating one from a
+  // payment Worldpay has not confirmed would schedule renewals for money that
+  // was never taken, so it waits for the confirmation instead.
+  if (subItem && paymentConfirmed) {
     try {
       const planName = subItem.productTitle || subItem.title || 'Pouch Supply Subscription';
       const planId = subItem.productId || 'sub-pack-core';
@@ -516,7 +607,11 @@ async function saveVerifiedOrder(
     deliveryCost: effectiveShipping,
     storeCreditApplied,
     discountApplied,
-    paymentStatus: 'Paid',
+    // Never invented. "status=SUCCESS" in the return URL is the browser's claim;
+    // only a payment Worldpay reports as authorised makes this Paid. An
+    // unconfirmed order stays Pending and is completed by the webhook, or by the
+    // status poll the checkout page is already running.
+    paymentStatus: paymentConfirmed ? 'Paid' : 'Pending',
     fulfillmentStatus: 'Unfulfilled',
     worldpayTxId: details.transactionId,
     worldpayAuthCode: details.authCode || 'AUTH-OK',
@@ -993,6 +1088,20 @@ const handleWorldpayCallback = async (req: Request, res: Response) => {
     // subscription comes from.
     const gatewayResponse = await fetchWorldpayPaymentDetails(orderId);
 
+    const outcome = paymentOutcome(gatewayResponse);
+
+    // Worldpay says the payment did not happen. Recording an order here would
+    // create a paid order for money nobody took — and this URL is a plain GET
+    // that anything can request.
+    if (outcome === 'failed') {
+      console.warn(
+        `[Worldpay Callback] Worldpay reports the payment for ${orderId} as ` +
+          `${gatewayResponse?.lastEvent || gatewayResponse?.outcome}. No order created.`
+      );
+      pendingCheckoutsMap.delete(orderId);
+      return res.redirect(`/payment/failed?orderId=${encodeURIComponent(orderId)}&reason=payment_declined`);
+    }
+
     const txId = (params.txId ||
       params.transactionId ||
       gatewayResponse?.id ||
@@ -1006,9 +1115,18 @@ const handleWorldpayCallback = async (req: Request, res: Response) => {
         transactionId: txId,
         authCode,
         cardBrand: gatewayResponse?.paymentInstrument?.card?.brand || 'Worldpay Card',
-        gatewayResponse
+        gatewayResponse,
+        // Only Worldpay's own answer marks an order Paid. When it has not
+        // published the payment yet the order is saved as Pending, and the
+        // webhook — or the status poll the checkout page runs for 90 seconds —
+        // completes it once the authorisation appears.
+        paymentConfirmed: outcome === 'authorised'
       });
-      console.log(`[Worldpay Callback] Successfully saved order ${orderId} as Paid upon return callback.`);
+      console.log(
+        outcome === 'authorised'
+          ? `[Worldpay Callback] Order ${orderId} confirmed by Worldpay and saved as Paid.`
+          : `[Worldpay Callback] Order ${orderId} saved as Pending — Worldpay has not published an authorised payment yet.`
+      );
     } catch (error) {
       console.error('[Worldpay Callback] Error saving order on callback:', error);
     }
@@ -1076,6 +1194,34 @@ router.get('/status', async (req: Request, res: Response) => {
         const orders: any[] = (await fetchResource('orders')) || [];
         foundOrder = orders.find((o: any) => String(o.id) === String(orderId));
       } catch (_e) {}
+    }
+
+    // The checkout page polls this for 90 seconds after the shopper returns.
+    // That is the natural moment to re-ask Worldpay about an order the callback
+    // could not confirm: the authorisation usually appears within seconds, and
+    // completing it here means the order does not depend on a webhook being
+    // configured. It also captures the stored-card mandate the subscription
+    // needs, which is only readable from this query.
+    if (foundOrder && foundOrder.paymentStatus === 'Pending') {
+      const gatewayResponse = await fetchWorldpayPaymentDetails(orderId);
+      const outcome = paymentOutcome(gatewayResponse);
+
+      if (outcome === 'authorised') {
+        console.log(`[Worldpay Status] Worldpay now confirms ${orderId}; completing the order.`);
+        try {
+          foundOrder = await saveVerifiedOrder(orderId, {
+            transactionId: gatewayResponse?.id || foundOrder.worldpayTxId || orderId,
+            authCode: gatewayResponse?.authorizationCode || foundOrder.worldpayAuthCode || 'AUTH-OK',
+            cardBrand: gatewayResponse?.paymentInstrument?.card?.brand || foundOrder.cardBrand,
+            gatewayResponse,
+            paymentConfirmed: true
+          }) || foundOrder;
+        } catch (completionErr: any) {
+          console.error(`[Worldpay Status] Failed to complete ${orderId}:`, completionErr?.message);
+        }
+      } else if (outcome === 'failed') {
+        console.warn(`[Worldpay Status] Worldpay reports ${orderId} as not paid; leaving it Pending.`);
+      }
     }
 
     if (!foundOrder || foundOrder.paymentStatus !== 'Paid') {

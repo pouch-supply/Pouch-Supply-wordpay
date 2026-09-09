@@ -7839,35 +7839,67 @@ async function backfillSubscriptionCredential(orderId, gatewayResponse) {
   }
   return updated;
 }
+var PAYMENT_QUERY_ACCEPT = "application/vnd.worldpay.payment-queries-v1.hal+json";
+var PAYMENT_QUERY_ATTEMPTS = 3;
+var PAYMENT_QUERY_RETRY_MS = 1200;
+var AUTHORISED_PAYMENT_EVENTS = [
+  "authorized",
+  "authorised",
+  "sentforsettlement",
+  "settled",
+  "charged",
+  "captured"
+];
+var FAILED_PAYMENT_EVENTS = ["refused", "declined", "failed", "cancelled", "canceled", "expired", "error"];
+function paymentOutcome(payment) {
+  if (!payment) return "unknown";
+  const raw = String(payment.lastEvent || payment.outcome || payment.status || "").toLowerCase().replace(/[\s_-]/g, "");
+  if (!raw) return "unknown";
+  if (AUTHORISED_PAYMENT_EVENTS.includes(raw)) return "authorised";
+  if (FAILED_PAYMENT_EVENTS.includes(raw)) return "failed";
+  return "unknown";
+}
 async function fetchWorldpayPaymentDetails(transactionReference) {
   const cfg = getEnvironmentConfig();
   if (!cfg.authHeader || !cfg.entity) return null;
-  try {
-    const response = await fetch(`${cfg.baseUrl}/paymentQueries/payments`, {
-      method: "POST",
-      headers: {
-        Authorization: cfg.authHeader,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "WP-CorrelationId": crypto3.randomUUID ? crypto3.randomUUID() : `q-${Date.now()}`
-      },
-      body: JSON.stringify({
-        transactionReference,
-        merchant: { entity: cfg.entity }
-      })
-    });
-    if (!response.ok) {
+  const url = `${cfg.baseUrl}/paymentQueries/payments?transactionReference=${encodeURIComponent(transactionReference)}`;
+  for (let attempt = 1; attempt <= PAYMENT_QUERY_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: cfg.authHeader,
+          Accept: PAYMENT_QUERY_ACCEPT,
+          "WP-CorrelationId": crypto3.randomUUID ? crypto3.randomUUID() : `q-${Date.now()}`
+        }
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        console.warn(
+          `[Worldpay Query] Payment lookup for ${transactionReference} returned HTTP ${response.status}. A subscription created from this payment will have no stored-card mandate. ${detail.slice(0, 300)}`
+        );
+        return null;
+      }
+      const data = await response.json().catch(() => null);
+      const payment = data?._embedded?.payments?.[0] || data?.payments?.[0] || null;
+      if (payment) return payment;
+      if (attempt < PAYMENT_QUERY_ATTEMPTS) {
+        console.log(
+          `[Worldpay Query] No payment published yet for ${transactionReference} (attempt ${attempt}/${PAYMENT_QUERY_ATTEMPTS}); retrying.`
+        );
+        await new Promise((resolve) => setTimeout(resolve, PAYMENT_QUERY_RETRY_MS));
+        continue;
+      }
       console.warn(
-        `[Worldpay Query] Payment lookup for ${transactionReference} returned HTTP ${response.status}.`
+        `[Worldpay Query] Worldpay reports no payment for ${transactionReference}. The shopper did not complete the payment, or it was declined.`
       );
       return null;
+    } catch (err) {
+      console.warn(`[Worldpay Query] Payment lookup failed for ${transactionReference}:`, err?.message);
+      return null;
     }
-    const data = await response.json().catch(() => null);
-    return data?._embedded?.payments?.[0] || data?.payments?.[0] || data || null;
-  } catch (err) {
-    console.warn(`[Worldpay Query] Payment lookup failed for ${transactionReference}:`, err?.message);
-    return null;
   }
+  return null;
 }
 async function savePendingCheckout(orderId, payload) {
   pendingCheckoutsMap.set(orderId, payload);
@@ -7937,8 +7969,9 @@ async function saveVerifiedOrder(orderId, details) {
   const subItemsTotal = subItemsList.reduce((sum, it) => sum + Number(it.price || 0) * (Number(it.quantity) || 1), 0);
   const effectiveShipping = typeof pending?.shippingCost === "number" ? pending.shippingCost : typeof pending?.deliveryCost === "number" ? pending.deliveryCost : typeof details.shippingCost === "number" ? details.shippingCost : typeof details.deliveryCost === "number" ? details.deliveryCost : total > subItemsTotal && subItemsTotal > 0 ? Number((total - subItemsTotal).toFixed(2)) : total >= 40 ? 0 : 2.99;
   const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || "Royal Mail Tracked 24/48";
+  const paymentConfirmed = details.paymentConfirmed !== false;
   let createdSubscriptionId;
-  if (subItem) {
+  if (subItem && paymentConfirmed) {
     try {
       const planName = subItem.productTitle || subItem.title || "Pouch Supply Subscription";
       const planId = subItem.productId || "sub-pack-core";
@@ -8037,7 +8070,11 @@ async function saveVerifiedOrder(orderId, details) {
     deliveryCost: effectiveShipping,
     storeCreditApplied,
     discountApplied,
-    paymentStatus: "Paid",
+    // Never invented. "status=SUCCESS" in the return URL is the browser's claim;
+    // only a payment Worldpay reports as authorised makes this Paid. An
+    // unconfirmed order stays Pending and is completed by the webhook, or by the
+    // status poll the checkout page is already running.
+    paymentStatus: paymentConfirmed ? "Paid" : "Pending",
     fulfillmentStatus: "Unfulfilled",
     worldpayTxId: details.transactionId,
     worldpayAuthCode: details.authCode || "AUTH-OK",
@@ -8404,6 +8441,14 @@ var handleWorldpayCallback = async (req, res) => {
   }
   if (status === "SUCCESS" || status === "PENDING" || status === "AUTHORIZED") {
     const gatewayResponse = await fetchWorldpayPaymentDetails(orderId);
+    const outcome = paymentOutcome(gatewayResponse);
+    if (outcome === "failed") {
+      console.warn(
+        `[Worldpay Callback] Worldpay reports the payment for ${orderId} as ${gatewayResponse?.lastEvent || gatewayResponse?.outcome}. No order created.`
+      );
+      pendingCheckoutsMap.delete(orderId);
+      return res.redirect(`/payment/failed?orderId=${encodeURIComponent(orderId)}&reason=payment_declined`);
+    }
     const txId = params.txId || params.transactionId || gatewayResponse?.id || `WP-CB-${Date.now().toString().slice(-6)}`;
     const authCode = params.authCode || gatewayResponse?.authorizationCode || "CALLBACK-OK";
     try {
@@ -8411,9 +8456,16 @@ var handleWorldpayCallback = async (req, res) => {
         transactionId: txId,
         authCode,
         cardBrand: gatewayResponse?.paymentInstrument?.card?.brand || "Worldpay Card",
-        gatewayResponse
+        gatewayResponse,
+        // Only Worldpay's own answer marks an order Paid. When it has not
+        // published the payment yet the order is saved as Pending, and the
+        // webhook — or the status poll the checkout page runs for 90 seconds —
+        // completes it once the authorisation appears.
+        paymentConfirmed: outcome === "authorised"
       });
-      console.log(`[Worldpay Callback] Successfully saved order ${orderId} as Paid upon return callback.`);
+      console.log(
+        outcome === "authorised" ? `[Worldpay Callback] Order ${orderId} confirmed by Worldpay and saved as Paid.` : `[Worldpay Callback] Order ${orderId} saved as Pending \u2014 Worldpay has not published an authorised payment yet.`
+      );
     } catch (error) {
       console.error("[Worldpay Callback] Error saving order on callback:", error);
     }
@@ -8469,6 +8521,26 @@ router10.get("/status", async (req, res) => {
         const orders = await fetchResource("orders") || [];
         foundOrder = orders.find((o) => String(o.id) === String(orderId));
       } catch (_e) {
+      }
+    }
+    if (foundOrder && foundOrder.paymentStatus === "Pending") {
+      const gatewayResponse = await fetchWorldpayPaymentDetails(orderId);
+      const outcome = paymentOutcome(gatewayResponse);
+      if (outcome === "authorised") {
+        console.log(`[Worldpay Status] Worldpay now confirms ${orderId}; completing the order.`);
+        try {
+          foundOrder = await saveVerifiedOrder(orderId, {
+            transactionId: gatewayResponse?.id || foundOrder.worldpayTxId || orderId,
+            authCode: gatewayResponse?.authorizationCode || foundOrder.worldpayAuthCode || "AUTH-OK",
+            cardBrand: gatewayResponse?.paymentInstrument?.card?.brand || foundOrder.cardBrand,
+            gatewayResponse,
+            paymentConfirmed: true
+          }) || foundOrder;
+        } catch (completionErr) {
+          console.error(`[Worldpay Status] Failed to complete ${orderId}:`, completionErr?.message);
+        }
+      } else if (outcome === "failed") {
+        console.warn(`[Worldpay Status] Worldpay reports ${orderId} as not paid; leaving it Pending.`);
       }
     }
     if (!foundOrder || foundOrder.paymentStatus !== "Paid") {
