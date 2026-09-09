@@ -4112,6 +4112,9 @@ async function saveSingleOrder(orderData) {
     deliveryCost: typeof orderData.deliveryCost === "number" ? orderData.deliveryCost : typeof orderData.shippingCost === "number" ? orderData.shippingCost : typeof existingOrder?.deliveryCost === "number" ? existingOrder.deliveryCost : void 0,
     storeCreditApplied: typeof orderData.storeCreditApplied === "number" ? orderData.storeCreditApplied : parseFloat(orderData.storeCreditApplied) || existingOrder?.storeCreditApplied || 0,
     destination: orderData.destination || orderData.address || existingOrder?.destination || "United Kingdom",
+    // The address as separate fields, kept alongside the joined display string
+    // so a shipping label can be produced without parsing it back apart.
+    shippingAddress: (orderData.shippingAddress && typeof orderData.shippingAddress === "object" ? orderData.shippingAddress : null) || existingOrder?.shippingAddress || null,
     date: orderData.date || existingOrder?.date || (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     deliveryMethod: orderData.deliveryMethod || existingOrder?.deliveryMethod || "Royal Mail Tracked 24/48",
     subscriptionId: orderData.subscriptionId || existingOrder?.subscriptionId || null,
@@ -4126,6 +4129,7 @@ async function saveSingleOrder(orderData) {
       deliveryCost: orderData.deliveryCost ?? existingOrder?.data?.deliveryCost,
       subtotal: orderData.subtotal ?? existingOrder?.data?.subtotal,
       address: orderData.address || existingOrder?.data?.address,
+      shippingAddress: (orderData.shippingAddress && typeof orderData.shippingAddress === "object" ? orderData.shippingAddress : null) || existingOrder?.data?.shippingAddress || void 0,
       paymentMethod: orderData.paymentMethod || existingOrder?.data?.paymentMethod,
       // Merge rather than overwrite: a caller passing its own `data` block must
       // not be able to wipe the record of what has already been emailed.
@@ -4528,7 +4532,22 @@ function isUsableRecurringHref(href) {
   return true;
 }
 function simulationAllowed() {
-  return String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+  const optedIn = String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+  if (!optedIn) return false;
+  if (isLiveWorldpayEnvironment()) {
+    console.error(
+      "[Worldpay Subscription] WORLDPAY_ALLOW_SIMULATED_MIT is set but the environment is LIVE. Simulated charges are refused: a renewal without a real Worldpay stored credential will fail instead of being recorded as paid. Point WORLDPAY_BASE_URL at the try environment to exercise the recurring flow."
+    );
+    return false;
+  }
+  return true;
+}
+function isLiveWorldpayEnvironment() {
+  const declared = String(process.env.WORLDPAY_ENVIRONMENT || "live").toLowerCase();
+  const baseUrl = String(process.env.WORLDPAY_BASE_URL || "https://access.worldpay.com").toLowerCase();
+  const looksSandboxed = /try\.|sandbox|test\.access\.worldpay/.test(baseUrl);
+  if (looksSandboxed) return false;
+  return declared === "live" || declared === "production" || baseUrl.includes("access.worldpay.com");
 }
 function getWorldpayConfig() {
   const username = process.env.WORLDPAY_API_USERNAME;
@@ -4998,8 +5017,8 @@ async function getOrderByReference(reference, apiKey) {
   return getRoyalMailOrder(reference, apiKey);
 }
 async function cancelOrder(reference, apiKey) {
-  const encoded = `"${encodeURIComponent(reference)}"`;
-  return royalMailRequest(`/orders/${encoded}`, { method: "DELETE" }, apiKey);
+  const values = (Array.isArray(reference) ? reference : [reference]).map((v) => String(v).trim()).filter(Boolean).map((v) => /^\d+$/.test(v) ? v : `"${encodeURIComponent(v)}"`);
+  return royalMailRequest(`/orders/${values.join(";")}`, { method: "DELETE" }, apiKey);
 }
 async function getApiVersion(apiKey) {
   return royalMailRequest("/version", { method: "GET" }, apiKey);
@@ -5022,6 +5041,7 @@ var init_royalMail = __esm({
 var royalMailService_exports = {};
 __export(royalMailService_exports, {
   DEFAULT_ROYAL_MAIL_SETTINGS: () => DEFAULT_ROYAL_MAIL_SETTINGS,
+  UK_SERVICE_CODES: () => UK_SERVICE_CODES,
   cancelRoyalMailShipment: () => cancelRoyalMailShipment,
   createReturnLabel: () => createRoyalMailReturnLabel,
   createRoyalMailReturnLabel: () => createRoyalMailReturnLabel,
@@ -5031,9 +5051,13 @@ __export(royalMailService_exports, {
   getRoyalMailSettings: () => getRoyalMailSettings,
   getRoyalMailTracking: () => getRoyalMailTracking,
   getShippingRates: () => getShippingRates,
+  normalizeCountryCode: () => normalizeCountryCode,
+  parseAddressString: () => parseAddressString,
   requireApiKey: () => requireApiKey,
+  resolveServiceCode: () => resolveServiceCode,
   saveRoyalMailSettings: () => saveRoyalMailSettings,
   syncRoyalMailOrderStatus: () => syncRoyalMailOrderStatus,
+  testServiceCode: () => testServiceCode,
   validateAddress: () => validateAddress
 });
 async function getRoyalMailSettings() {
@@ -5051,6 +5075,11 @@ async function getRoyalMailSettings() {
       return {
         ...DEFAULT_ROYAL_MAIL_SETTINGS,
         ...item,
+        // A saved code from the old OBA setup is translated here rather than at
+        // shipment time only, so the admin screen shows the service that will
+        // actually be used. An empty saved value stays empty — "apply postage in
+        // Click & Drop" is a deliberate choice, not a missing setting.
+        defaultServiceCode: item.defaultServiceCode === void 0 ? DEFAULT_ROYAL_MAIL_SETTINGS.defaultServiceCode : resolveServiceCode(item.defaultServiceCode),
         apiKey: item.apiKey && item.apiKey.trim().length > 0 ? item.apiKey : envKey || DEFAULT_ROYAL_MAIL_SETTINGS.apiKey,
         senderAddress: {
           ...DEFAULT_ROYAL_MAIL_SETTINGS.senderAddress,
@@ -5120,8 +5149,8 @@ function validateAddress(address) {
   if (!address.postcode || address.postcode.trim().length < 3) {
     errors.push("Postcode / Postal Code is required");
   } else {
-    const country = (address.countryCode || "GB").toUpperCase();
-    if (country === "GB" || country === "UK") {
+    const country = normalizeCountryCode(address.countryCode);
+    if (country === "GB") {
       const ukPostcodeRegex = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
       if (!ukPostcodeRegex.test(address.postcode.trim())) {
         errors.push("Postcode format does not appear to be a valid UK postcode (e.g. EC1A 1BB or SW1A 1AA)");
@@ -5136,7 +5165,7 @@ function validateAddress(address) {
     city: (address.city || "").trim(),
     county: (address.county || "").trim(),
     postcode: (address.postcode || "").trim().toUpperCase(),
-    countryCode: (address.countryCode || "GB").toUpperCase(),
+    countryCode: normalizeCountryCode(address.countryCode),
     email: (address.email || "").trim(),
     phone: (address.phone || "").trim()
   };
@@ -5146,45 +5175,57 @@ function validateAddress(address) {
     parsed
   };
 }
+function resolveServiceCode(code) {
+  const raw = String(code ?? "").trim().toUpperCase();
+  if (!raw) return "";
+  const mapped = LEGACY_SERVICE_CODE_MAP[raw];
+  if (mapped) {
+    console.warn(
+      `[RoyalMailService] Service code ${raw} is not on this Click & Drop contract; using ${mapped} instead.`
+    );
+    return mapped;
+  }
+  return raw;
+}
 function getShippingRates(weightGrams = 350, countryCode = "GB") {
-  const isUK = countryCode.toUpperCase() === "GB" || countryCode.toUpperCase() === "UK";
+  const isUK = normalizeCountryCode(countryCode) === "GB";
   if (isUK) {
     return [
       {
-        serviceCode: "TPS24",
-        serviceName: "Royal Mail Tracked 24\xAE",
-        estimatedDelivery: "Next Working Day",
-        price: 4.95,
+        serviceCode: "OLP1",
+        serviceName: "Royal Mail 1st Class",
+        estimatedDelivery: "1-2 Working Days",
+        price: 3.95,
         currency: "GBP",
-        tracked: true,
+        tracked: false,
         signatureRequired: false
       },
       {
-        serviceCode: "TPS48",
-        serviceName: "Royal Mail Tracked 48\xAE",
-        estimatedDelivery: "2-3 Working Days",
-        price: 3.85,
+        serviceCode: "OLP1SF",
+        serviceName: "Royal Mail Signed For\xAE 1st Class",
+        estimatedDelivery: "1-2 Working Days (Signature on Delivery)",
+        price: 5.45,
         currency: "GBP",
-        tracked: true,
-        signatureRequired: false
-      },
-      {
-        serviceCode: "SD1",
-        serviceName: "Royal Mail Special Delivery Guaranteed by 1pm\xAE",
-        estimatedDelivery: "Next Day by 1:00 PM (Guaranteed)",
-        price: 8.95,
-        currency: "GBP",
-        tracked: true,
+        tracked: false,
         signatureRequired: true
       },
       {
-        serviceCode: "CRL2",
-        serviceName: "Royal Mail 24 Business Parcel (Tracked Standard)",
-        estimatedDelivery: "1-2 Working Days",
-        price: 4.25,
+        serviceCode: "OLP2",
+        serviceName: "Royal Mail 2nd Class",
+        estimatedDelivery: "2-3 Working Days",
+        price: 3.25,
         currency: "GBP",
-        tracked: true,
+        tracked: false,
         signatureRequired: false
+      },
+      {
+        serviceCode: "OLP2SF",
+        serviceName: "Royal Mail Signed For\xAE 2nd Class",
+        estimatedDelivery: "2-3 Working Days (Signature on Delivery)",
+        price: 4.75,
+        currency: "GBP",
+        tracked: false,
+        signatureRequired: true
       }
     ];
   }
@@ -5209,8 +5250,61 @@ function getShippingRates(weightGrams = 350, countryCode = "GB") {
     }
   ];
 }
+function normalizeCountryCode(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "GB";
+  if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase() === "UK" ? "GB" : raw.toUpperCase();
+  const mapped = COUNTRY_TOKENS[raw.toLowerCase()];
+  return mapped || raw.toUpperCase();
+}
+function parseAddressString(raw, fallbackName = "") {
+  const text = String(raw || "").trim();
+  if (!text) return { fullName: fallbackName };
+  let segments = text.split(",").map((s) => s.trim()).filter(Boolean);
+  const deduped = [];
+  for (const seg of segments) {
+    if (!deduped.some((existing) => existing.toLowerCase() === seg.toLowerCase())) {
+      deduped.push(seg);
+    }
+  }
+  segments = deduped;
+  let countryCode = "";
+  let postcode = "";
+  let city = "";
+  if (segments.length > 1) {
+    const last = segments[segments.length - 1].toLowerCase();
+    if (COUNTRY_TOKENS[last]) {
+      countryCode = COUNTRY_TOKENS[last];
+      segments.pop();
+    }
+  }
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const match = segments[i].match(UK_POSTCODE_RE);
+    if (!match) continue;
+    postcode = `${match[1]} ${match[2]}`.toUpperCase();
+    const remainder = segments[i].replace(match[0], "").trim().replace(/^[,\s-]+|[,\s-]+$/g, "");
+    if (remainder) {
+      segments[i] = remainder;
+    } else {
+      segments.splice(i, 1);
+    }
+    break;
+  }
+  if (segments.length > 1) {
+    city = segments.pop();
+  }
+  return {
+    fullName: fallbackName,
+    addressLine1: segments[0] || "",
+    addressLine2: segments.slice(1).join(", "),
+    city,
+    postcode,
+    countryCode: countryCode || "GB"
+  };
+}
 function resolveRecipientFromOrder(order) {
-  const rawAddr = order.data?.address || order.shippingAddress || order.destination || "";
+  const structured = (order.shippingAddress && typeof order.shippingAddress === "object" ? order.shippingAddress : null) || (order.data?.shippingAddress && typeof order.data.shippingAddress === "object" ? order.data.shippingAddress : null) || (order.data?.address && typeof order.data.address === "object" ? order.data.address : null) || (order.address && typeof order.address === "object" ? order.address : null);
+  const rawAddr = structured || order.data?.address || order.address || order.shippingAddress || order.destination || "";
   let addressObj = {};
   if (rawAddr && typeof rawAddr === "object") {
     addressObj = {
@@ -5226,13 +5320,14 @@ function resolveRecipientFromOrder(order) {
       phone: rawAddr.phone || order.customerPhone || ""
     };
   } else {
+    const parsedFromString = parseAddressString(
+      typeof rawAddr === "string" ? rawAddr : "",
+      order.customerName || ""
+    );
     addressObj = {
-      fullName: order.customerName,
-      addressLine1: typeof rawAddr === "string" ? rawAddr.trim() : "",
-      city: "",
-      postcode: "",
-      countryCode: "GB",
-      email: order.customerEmail
+      ...parsedFromString,
+      email: order.customerEmail,
+      phone: order.customerPhone || ""
     };
   }
   const validation = validateAddress(addressObj);
@@ -5240,6 +5335,75 @@ function resolveRecipientFromOrder(order) {
     valid: validation.valid,
     errors: validation.errors,
     recipient: validation.parsed
+  };
+}
+async function testServiceCode(serviceCode, tradingNameOverride) {
+  const code = resolveServiceCode(serviceCode);
+  if (!code) {
+    return { serviceCode: code, accepted: false, message: "No service code supplied.", cleanedUp: false };
+  }
+  const settings = await getRoyalMailSettings();
+  const apiKey = await requireApiKey(settings);
+  const overrideName = String(tradingNameOverride || "").trim();
+  const sender = overrideName ? { ...settings.senderAddress || {}, companyName: overrideName } : requireSender(settings);
+  const reference = `SVC-TEST-${Date.now().toString().slice(-8)}`;
+  const payload = {
+    orderReference: reference,
+    isRecipientABusiness: false,
+    recipient: {
+      address: {
+        fullName: "Service Code Test",
+        addressLine1: sender.addressLine1 || "1 Test Street",
+        city: sender.city || "London",
+        postcode: sender.postcode || "EC1A 1BB",
+        countryCode: "GB"
+      }
+    },
+    sender: { tradingName: sender.companyName.trim() },
+    subtotal: 1,
+    shippingCostCharged: 0,
+    total: 1,
+    currencyCode: "GBP",
+    orderDate: (/* @__PURE__ */ new Date()).toISOString(),
+    packages: [
+      {
+        weightInGrams: settings.defaultWeightGrams || 350,
+        packageFormatIdentifier: settings.defaultPackageType || "Parcel",
+        contents: [{ name: "Service code test", quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
+      }
+    ],
+    postageDetails: { serviceCode: code, sendNotificationsTo: "Sender" }
+  };
+  let result;
+  try {
+    result = await createRoyalMailOrders([payload], apiKey);
+  } catch (err) {
+    return { serviceCode: code, accepted: false, message: err?.message || String(err), cleanedUp: false };
+  }
+  const failed = result?.failedOrders?.[0];
+  if (failed) {
+    const errors = Array.isArray(failed.errors) ? failed.errors : failed.errors ? [failed.errors] : [];
+    const message = errors.map((e) => e?.errorMessage || e?.message || JSON.stringify(e)).join(" | ");
+    return { serviceCode: code, accepted: false, message: message || "Rejected by Royal Mail.", cleanedUp: false };
+  }
+  const identifier = result?.createdOrders?.[0]?.orderIdentifier;
+  let cleanedUp = false;
+  if (identifier) {
+    try {
+      await cancelOrder(String(identifier), apiKey);
+      cleanedUp = true;
+    } catch (delErr) {
+      console.warn(
+        `[RoyalMailService] Test order ${identifier} for ${code} could not be removed automatically:`,
+        delErr?.message
+      );
+    }
+  }
+  return {
+    serviceCode: code,
+    accepted: true,
+    message: cleanedUp ? `Royal Mail accepts "${code}" on this account.` : `Royal Mail accepts "${code}", but the throwaway test order (${identifier}) is still in Click & Drop and should be deleted manually.`,
+    cleanedUp
   };
 }
 async function createRoyalMailShipment(orderId, options = {}) {
@@ -5264,10 +5428,11 @@ async function createRoyalMailShipment(orderId, options = {}) {
       `Order #${orderId} cannot be shipped \u2014 the delivery address is incomplete: ${errors.join("; ")}. Edit the order's shipping address before creating a Royal Mail shipment.`
     );
   }
-  const serviceCode = options.serviceCode || settings.defaultServiceCode || "TPS24";
+  const serviceCode = resolveServiceCode(options.serviceCode ?? settings.defaultServiceCode);
+  const registerCode = String(options.serviceRegisterCode || settings.defaultServiceRegisterCode || "").trim();
   const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
   const selectedRate = rates.find((r) => r.serviceCode === serviceCode);
-  const serviceName = selectedRate?.serviceName || `Royal Mail (${serviceCode})`;
+  const serviceName = selectedRate?.serviceName || (serviceCode ? `Royal Mail (${serviceCode})` : "Royal Mail (postage set in Click & Drop)");
   console.log(`[RoyalMailService] Creating live Click & Drop order for #${orderId} via ${serviceCode}`);
   const addressObj = {
     fullName: recipient.fullName,
@@ -5319,8 +5484,15 @@ async function createRoyalMailShipment(orderId, options = {}) {
       }
     ],
     postageDetails: {
-      serviceCode,
-      sendNotificationsTo: recipientObj.emailAddress ? "recipient" : "none",
+      // Sent only when the store has one. Click & Drop accepts an order with no
+      // service at all and lets postage be applied in the portal, which is the only
+      // way an account with no services on its contract can ship anything: any code
+      // it does not hold is rejected outright.
+      ...serviceCode ? { serviceCode } : {},
+      ...serviceCode && registerCode ? { serviceRegisterCode: registerCode } : {},
+      // Royal Mail rejects anything outside Sender/Recipient/Billing, and it
+      // rejects the whole order, not just this field.
+      sendNotificationsTo: recipientObj.emailAddress ? "Recipient" : "Sender",
       receiveEmailNotification: Boolean(recipientObj.emailAddress),
       receiveSmsNotification: Boolean(recipientObj.phoneNumber)
     }
@@ -5328,16 +5500,19 @@ async function createRoyalMailShipment(orderId, options = {}) {
   const result = await createRoyalMailOrders([payload], apiKey);
   if (result?.failedOrders && result.failedOrders.length > 0) {
     const errMsgs = [];
+    let unknownServiceCode = false;
     result.failedOrders.forEach((f) => {
-      if (Array.isArray(f.errors)) {
-        f.errors.forEach((e) => errMsgs.push(e.message || e.code || JSON.stringify(e)));
-      } else if (f.errors) {
-        errMsgs.push(JSON.stringify(f.errors));
-      }
+      const errors2 = Array.isArray(f.errors) ? f.errors : f.errors ? [f.errors] : [];
+      errors2.forEach((e) => {
+        if (Number(e?.errorCode) === 31) unknownServiceCode = true;
+        errMsgs.push(e?.errorMessage || e?.message || e?.code || JSON.stringify(e));
+      });
     });
-    throw new Error(
-      `Royal Mail rejected the shipment for order #${orderId}: ${errMsgs.join(" | ") || "unknown error"}`
-    );
+    let detail = errMsgs.join(" | ") || "unknown error";
+    if (unknownServiceCode) {
+      detail += ` \u2014 "${serviceCode}" is not a service Royal Mail will accept for this account. The domestic services on this contract are OLP1 (1st Class), OLP1SF (Signed For 1st Class), OLP2 (2nd Class) and OLP2SF (Signed For 2nd Class). Set one of those in Admin > Settings > Royal Mail, or leave the service code blank and apply postage in Click & Drop. If the contract has changed, check business.parcel.royalmail.com/settings/services/ or POST /api/royalmail/test-service-code to have Royal Mail confirm a code directly.`;
+    }
+    throw new Error(`Royal Mail rejected the shipment for order #${orderId}: ${detail}`);
   }
   const createdOrder = result?.createdOrders?.[0];
   if (!createdOrder?.orderIdentifier) {
@@ -5636,7 +5811,7 @@ async function createRoyalMailReturnLabel(orderId) {
     message: `Royal Mail pre-paid returns label retrieved for order #${orderId}.`
   };
 }
-var DEFAULT_ROYAL_MAIL_SETTINGS;
+var DEFAULT_ROYAL_MAIL_SETTINGS, UK_SERVICE_CODES, LEGACY_SERVICE_CODE_MAP, UK_POSTCODE_RE, COUNTRY_TOKENS;
 var init_royalMailService = __esm({
   "backend/services/royalMailService.ts"() {
     init_serverDb();
@@ -5646,7 +5821,11 @@ var init_royalMailService = __esm({
       integrationName: "Pouch-Supply",
       enabled: true,
       autoCreateShipmentOnPayment: String(process.env.ROYAL_MAIL_AUTO_DISPATCH || "").toLowerCase() === "true",
-      defaultServiceCode: "TPS24",
+      // Royal Mail 1st Class — one of the four Online Postage services this
+      // account's Click & Drop contract actually holds, so a domestic shipment
+      // works out of the box. Change it in Admin → Settings → Royal Mail; blanking
+      // it is still valid and means "apply postage in Click & Drop".
+      defaultServiceCode: "OLP1",
       defaultPackageType: "Parcel",
       defaultWeightGrams: 350,
       senderAddress: {
@@ -5659,6 +5838,39 @@ var init_royalMailService = __esm({
         contactEmail: process.env.ADMIN_NOTIFICATION_EMAIL || "",
         contactPhone: ""
       }
+    };
+    UK_SERVICE_CODES = ["OLP1", "OLP1SF", "OLP2", "OLP2SF"];
+    LEGACY_SERVICE_CODE_MAP = {
+      // 1st Class equivalents
+      TPNN: "OLP1",
+      TRNN: "OLP1",
+      CRL1: "OLP1",
+      BPL1: "OLP1",
+      // 2nd Class equivalents
+      TPSN: "OLP2",
+      TRSN: "OLP2",
+      CRL2: "OLP2",
+      BPL2: "OLP2",
+      // Signature-on-delivery equivalents
+      TPNS: "OLP1SF",
+      TPSS: "OLP2SF",
+      BPR1: "OLP1SF",
+      BPR2: "OLP2SF",
+      SD1: "OLP1SF",
+      SD2: "OLP1SF"
+    };
+    UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
+    COUNTRY_TOKENS = {
+      "united kingdom": "GB",
+      "great britain": "GB",
+      uk: "GB",
+      gb: "GB",
+      england: "GB",
+      scotland: "GB",
+      wales: "GB",
+      "northern ireland": "GB",
+      ireland: "IE",
+      "republic of ireland": "IE"
     };
   }
 });
@@ -5821,7 +6033,7 @@ async function processDueSubscriptions() {
         `[Subscription Worker] Processing renewal for sub ${subId} (${customerEmail}) \u2014 \xA3${amount.toFixed(2)} every ${interval}`
       );
       const hasUsableCredential = isUsableRecurringHref(recurringHref) || Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
-      const allowSimulated = String(process.env.WORLDPAY_ALLOW_SIMULATED_MIT || "").toLowerCase() === "true";
+      const allowSimulated = simulationAllowed();
       if (!hasUsableCredential && !allowSimulated) {
         console.warn(
           `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential (href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). The initial payment must be taken with a customer agreement so Worldpay returns a reusable reference.`
@@ -5909,7 +6121,7 @@ async function processDueSubscriptions() {
           const hasKey = Boolean(rmSettings.apiKey || process.env.ROYAL_MAIL_API_KEY || process.env.RM_API_KEY);
           if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
             createRoyalMailShipment2(newOrderId, {
-              serviceCode: rmSettings.defaultServiceCode || "TPS24",
+              serviceCode: rmSettings.defaultServiceCode,
               weightGrams: rmSettings.defaultWeightGrams || 350
             }).catch((err) => {
               console.warn(
@@ -6023,7 +6235,17 @@ var init_subscriptionCron = __esm({
       "lastPaymentStatus",
       "lastPaymentId",
       "lastPaymentAt",
-      "failedPaymentCount"
+      "failedPaymentCount",
+      "lastPaymentError",
+      "items",
+      "cansCount",
+      "itemPrice",
+      "shippingCost",
+      "shippingAddress",
+      "deliveryMethod",
+      "sourceOrderId",
+      "cancelledAt",
+      "cancellationReason"
     ]);
     isProcessing = false;
     cronIntervalHandle = null;
@@ -7427,6 +7649,49 @@ function extractWorldpayRedirectUrl(responseBody) {
   }
   return null;
 }
+async function backfillSubscriptionCredential(orderId, gatewayResponse) {
+  const href = extractRecurringAuthorizationHref(gatewayResponse);
+  const scheme = extractSchemeReference(gatewayResponse);
+  if (!href && !scheme) return false;
+  let updated = false;
+  try {
+    const storedSubs = await fetchResource("subscriptions") || [];
+    const next = storedSubs.map((sub) => {
+      if (String(sub?.sourceOrderId || sub?.worldpayTransactionId || "") !== String(orderId)) return sub;
+      const hasUsable = isUsableRecurringHref(sub.worldpayRecurringHref) || Boolean(sub.worldpaySchemeReference) && !isPlaceholderCredential(sub.worldpaySchemeReference);
+      if (hasUsable) return sub;
+      updated = true;
+      console.log(
+        `[Worldpay Order] Recording Worldpay stored credential for subscription ${sub.id} from a later gateway response for order ${orderId}.`
+      );
+      return {
+        ...sub,
+        worldpayRecurringHref: href || sub.worldpayRecurringHref || null,
+        worldpaySchemeReference: scheme || sub.worldpaySchemeReference || null
+      };
+    });
+    if (updated) {
+      await saveResource("subscriptions", next);
+      const target = next.find(
+        (sub) => String(sub?.sourceOrderId || sub?.worldpayTransactionId || "") === String(orderId)
+      );
+      if (target?.id) {
+        try {
+          await prisma.subscription.update({
+            where: { id: String(target.id) },
+            data: {
+              worldpayRecurringHref: target.worldpayRecurringHref,
+              worldpaySchemeReference: target.worldpaySchemeReference
+            }
+          });
+        } catch (_e) {
+        }
+      }
+    }
+  } catch (_e) {
+  }
+  return updated;
+}
 async function fetchWorldpayPaymentDetails(transactionReference) {
   const cfg = getEnvironmentConfig();
   if (!cfg.authHeader || !cfg.entity) return null;
@@ -7495,6 +7760,7 @@ async function saveVerifiedOrder(orderId, details) {
     const already = existingOrders.find((o) => String(o.id) === String(orderId));
     if (already && already.paymentStatus === "Paid") {
       console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid \u2014 skipping duplicate creation.`);
+      await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
       return already;
     }
   } catch (_e) {
@@ -7506,6 +7772,7 @@ async function saveVerifiedOrder(orderId, details) {
       console.log(
         `[Worldpay Order] A subscription (${dupeSub.id}) already exists for order ${orderId} \u2014 not creating another.`
       );
+      await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
       return (await fetchResource("orders")).find((o) => String(o.id) === String(orderId)) || null;
     }
   } catch (_e) {
@@ -7610,6 +7877,9 @@ async function saveVerifiedOrder(orderId, details) {
     customerName,
     customerEmail,
     destination,
+    // The separate address fields ride along with the order so Royal Mail can
+    // read the town and postcode directly.
+    shippingAddress: pending?.shippingAddress || details.shippingAddress || null,
     items,
     total,
     subtotal: calculatedSubtotal,
@@ -7651,7 +7921,7 @@ async function saveVerifiedOrder(orderId, details) {
     if (rmSettings.enabled && rmSettings.autoCreateShipmentOnPayment && hasKey) {
       console.log(`[Worldpay Order] Auto-registering Click & Drop shipment with Royal Mail for order #${orderId}`);
       createRoyalMailShipment2(orderId, {
-        serviceCode: rmSettings.defaultServiceCode || "TPS24",
+        serviceCode: rmSettings.defaultServiceCode,
         weightGrams: rmSettings.defaultWeightGrams || 350
       }).catch((err) => {
         console.warn(`[Worldpay Order] Background Royal Mail shipment creation note for #${orderId}:`, err?.message);
@@ -7689,8 +7959,10 @@ async function handleCreateHostedPaymentPage(req, res) {
       customerName,
       customerEmail,
       destination,
+      shippingAddress,
       address,
       items,
+      recurring,
       discountApplied,
       storeCreditApplied,
       origin: bodyOrigin
@@ -7716,6 +7988,9 @@ async function handleCreateHostedPaymentPage(req, res) {
       customerName: customerName || "Valued Customer",
       customerEmail: (customerEmail || "customer@pouch-supply.com").toLowerCase().trim(),
       destination: destination || address || "United Kingdom",
+      // Kept as separate fields so the shipping label can be produced without
+      // having to take the joined string apart again.
+      shippingAddress: shippingAddress && typeof shippingAddress === "object" ? shippingAddress : void 0,
       items: Array.isArray(items) ? items.map((it) => {
         let planName = it.subscriptionPlan || "";
         const rawPlan = (it.subscriptionPlan || "").toLowerCase();
@@ -7798,22 +8073,57 @@ async function handleCreateHostedPaymentPage(req, res) {
         expiryURL: expiryReturnUrl
       }
     };
+    const isSubscriptionCheckout = Boolean(
+      recurring || Array.isArray(items) && items.some(
+        (it) => it?.isSubscription || typeof it?.productId === "string" && it.productId.includes("sub-pack")
+      )
+    );
+    if (isSubscriptionCheckout) {
+      body.customerAgreement = {
+        type: "subscription",
+        storedCardUsage: "first"
+      };
+      body.createToken = {
+        type: "worldpay",
+        // Groups the shopper's stored cards. Their email keeps renewals for one
+        // person together without exposing anything Worldpay does not already hold.
+        namespace: String(customerEmail || transactionReference).toLowerCase().slice(0, 64),
+        description: "Pouch Supply subscription",
+        // Consent for the stored card is taken in our own checkout terms, so the
+        // shopper is not asked a second time on Worldpay's page.
+        optIn: "Silent"
+      };
+    }
     const correlationId = crypto3.randomUUID ? crypto3.randomUUID() : `hpp-${Math.random().toString(36).slice(2, 12)}`;
     const userAgent = req.headers["user-agent"] || "worldpay-hpp/1.0";
     const worldpayUrl = `${cfg.baseUrl}/payment_pages`;
     console.log(`[Worldpay HPP ${cfg.environment.toUpperCase()}] POST ${worldpayUrl} for Order: ${transactionReference}`);
-    const response = await fetch(worldpayUrl, {
-      method: "POST",
-      headers: {
-        "Authorization": cfg.authHeader,
-        "Content-Type": "application/vnd.worldpay.payment_pages-v1.hal+json",
-        "Accept": "application/vnd.worldpay.payment_pages-v1.hal+json",
-        "WP-CorrelationId": correlationId,
-        "User-Agent": userAgent
-      },
-      body: JSON.stringify(body)
-    });
-    const responseBody = await response.json().catch(() => ({ message: "Invalid response from Worldpay." }));
+    const postPaymentPage = async (payload) => {
+      const res2 = await fetch(worldpayUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": cfg.authHeader,
+          "Content-Type": "application/vnd.worldpay.payment_pages-v1.hal+json",
+          "Accept": "application/vnd.worldpay.payment_pages-v1.hal+json",
+          "WP-CorrelationId": correlationId,
+          "User-Agent": userAgent
+        },
+        body: JSON.stringify(payload)
+      });
+      const parsed = await res2.json().catch(() => ({ message: "Invalid response from Worldpay." }));
+      return { res: res2, parsed };
+    };
+    let { res: response, parsed: responseBody } = await postPaymentPage(body);
+    if (!response.ok && isSubscriptionCheckout) {
+      const rejection = String(responseBody?.description || responseBody?.message || responseBody?.errorName || "");
+      console.error(
+        `[Worldpay HPP] Subscription mandate rejected for ${transactionReference} (${response.status}): ${rejection}. Retrying as a one-off payment \u2014 this subscription will NOT be able to take recurring payments until customer agreements / tokenisation are enabled on entity ${cfg.entity}.`
+      );
+      const fallbackBody = { ...body };
+      delete fallbackBody.customerAgreement;
+      delete fallbackBody.createToken;
+      ({ res: response, parsed: responseBody } = await postPaymentPage(fallbackBody));
+    }
     if (!response.ok) {
       const errMsg = responseBody?.description || responseBody?.message || "Hosted Payment Pages creation failed.";
       return res.status(response.status).json({
@@ -8141,6 +8451,12 @@ router11.get("/process-renewals", handleProcessRenewals);
 router11.post("/process-renewals", handleProcessRenewals);
 router11.get("/cron", handleProcessRenewals);
 router11.post("/cron", handleProcessRenewals);
+function canChargeRecurring(sub) {
+  if (!sub) return false;
+  const href = sub.worldpayRecurringHref || sub.recurringHref;
+  const scheme = sub.worldpaySchemeReference;
+  return isUsableRecurringHref(href) || Boolean(scheme) && !isPlaceholderCredential(scheme);
+}
 router11.get("/status", async (_req, res) => {
   try {
     let subscriptions = [];
@@ -8181,7 +8497,12 @@ router11.get("/status", async (_req, res) => {
         lastPaymentStatus: s.lastPaymentStatus,
         lastPaymentAt: s.lastPaymentAt,
         worldpayTransactionId: s.worldpayTransactionId,
-        hasRecurringToken: Boolean(s.worldpayRecurringHref || s.recurringHref)
+        // A stored value is not the same as a usable mandate. Earlier builds wrote
+        // locally manufactured references that look present but authorise nothing,
+        // so reporting mere presence here showed dead subscriptions as healthy.
+        hasRecurringToken: canChargeRecurring(s),
+        canChargeRecurring: canChargeRecurring(s),
+        credentialIssue: canChargeRecurring(s) ? null : "No Worldpay stored-card mandate. This subscription cannot take a recurring payment; the customer must subscribe again so Worldpay issues one."
       }))
     });
   } catch (error) {
@@ -9815,6 +10136,21 @@ router15.post("/validate-address", async (req, res) => {
     res.status(500).json({ error: err.message || "Address validation failed" });
   }
 });
+router15.post("/test-service-code", async (req, res) => {
+  try {
+    const codes = Array.isArray(req.body?.serviceCodes) ? req.body.serviceCodes : [req.body?.serviceCode].filter(Boolean);
+    if (codes.length === 0) {
+      return res.status(400).json({ success: false, message: "Provide serviceCode or serviceCodes." });
+    }
+    const results = [];
+    for (const code of codes.slice(0, 10)) {
+      results.push(await testServiceCode(String(code), req.body?.tradingName));
+    }
+    return res.json({ success: true, results, accepted: results.filter((r) => r.accepted).map((r) => r.serviceCode) });
+  } catch (error) {
+    return res.status(200).json({ success: false, message: error?.message || "Service code test failed." });
+  }
+});
 router15.post("/rates", async (req, res) => {
   try {
     const { weightGrams, countryCode } = req.body;
@@ -10373,347 +10709,11 @@ router17.post("/reset", async (req, res) => {
   }
   return res.json({ success: true });
 });
-router17.get("/demo-portal", (req, res) => {
+router17.get("/demo-portal", (_req, res) => {
   return res.status(410).json({
     success: false,
     message: "The legacy AgeChecked demo portal is no longer available."
   });
-  const reference = String(req.query.reference || "checkout-ref");
-  const agecheckid = String(req.query.agecheckid || `AC-${Date.now()}`);
-  const email = String(req.query.email || "");
-  const name = String(req.query.name || "Customer");
-  const surname = String(req.query.surname || "");
-  const postcode = String(req.query.postcode || "EC1A 1BB");
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.removeHeader("X-Frame-Options");
-  res.setHeader("Content-Security-Policy", "frame-ancestors * 'self'");
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <meta charset="utf-8">
-        <title>AgeChecked 18+ ID & Age Verification</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-          * { box-sizing: border-box; }
-          body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
-            background: #071d37; 
-            color: #f8fafc; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 100vh; 
-            margin: 0; 
-            padding: 16px; 
-          }
-          .card { 
-            background: #0d284c; 
-            border: 1px solid #1e406e; 
-            border-radius: 24px; 
-            padding: 28px 24px; 
-            max-width: 480px; 
-            width: 100%; 
-            text-align: center; 
-            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6); 
-          }
-          .badge { 
-            display: inline-flex; 
-            align-items: center; 
-            gap: 6px; 
-            background: rgba(56, 189, 248, 0.15); 
-            border: 1px solid #38bdf8; 
-            color: #38bdf8; 
-            font-size: 11px; 
-            font-weight: 800; 
-            letter-spacing: 1.2px; 
-            text-transform: uppercase; 
-            padding: 6px 14px; 
-            border-radius: 9999px; 
-            margin-bottom: 16px; 
-          }
-          h1 { font-size: 20px; margin: 0 0 8px 0; font-weight: 800; color: #ffffff; }
-          p { font-size: 13px; color: #94a3b8; line-height: 1.5; margin: 0 0 20px 0; }
-          
-          .doc-selector { display: grid; grid-cols: 3; gap: 8px; margin-bottom: 18px; text-align: left; }
-          .doc-btn { 
-            background: #11335f; 
-            border: 1.5px solid #1e406e; 
-            color: #e2e8f0; 
-            padding: 12px 14px; 
-            border-radius: 12px; 
-            cursor: pointer; 
-            font-size: 12px; 
-            font-weight: 700; 
-            display: flex; 
-            align-items: center; 
-            justify-content: space-between; 
-            transition: all 0.2s; 
-          }
-          .doc-btn:hover, .doc-btn.active { 
-            border-color: #38bdf8; 
-            background: #163f75; 
-            color: #ffffff; 
-          }
-          
-          .scanner-box { 
-            background: #07192f; 
-            border: 2px dashed #1e406e; 
-            border-radius: 16px; 
-            padding: 24px 16px; 
-            margin-bottom: 20px; 
-            position: relative; 
-            overflow: hidden; 
-          }
-          .scanner-line { 
-            position: absolute; 
-            top: 0; 
-            left: 0; 
-            right: 0; 
-            height: 2px; 
-            background: #38bdf8; 
-            box-shadow: 0 0 12px #38bdf8; 
-            animation: scan 2s infinite ease-in-out; 
-            display: none; 
-          }
-          @keyframes scan { 
-            0% { top: 5%; opacity: 0.3; } 
-            50% { top: 90%; opacity: 1; } 
-            100% { top: 5%; opacity: 0.3; } 
-          }
-          
-          .btn-primary { 
-            background: #0284c7; 
-            color: #ffffff; 
-            font-weight: 800; 
-            font-size: 14px; 
-            border: none; 
-            padding: 14px 20px; 
-            border-radius: 12px; 
-            width: 100%; 
-            cursor: pointer; 
-            transition: all 0.2s; 
-            text-transform: uppercase; 
-            letter-spacing: 0.5px; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            gap: 8px; 
-          }
-          .btn-primary:hover { background: #0369a1; transform: translateY(-1px); }
-          .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-          
-          .btn-decline { 
-            background: transparent; 
-            color: #64748b; 
-            font-weight: 600; 
-            font-size: 12px; 
-            border: none; 
-            padding: 10px; 
-            width: 100%; 
-            cursor: pointer; 
-            margin-top: 8px; 
-          }
-          .btn-decline:hover { color: #94a3b8; }
-          
-          .ref { font-family: monospace; font-size: 10px; color: #64748b; margin-top: 18px; }
-          .hidden { display: none; }
-          
-          .success-icon { 
-            width: 64px; 
-            height: 64px; 
-            background: rgba(16, 185, 129, 0.15); 
-            border: 2px solid #10b981; 
-            border-radius: 50%; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            margin: 0 auto 16px auto; 
-            color: #10b981; 
-            font-size: 32px; 
-            font-weight: bold; 
-          }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <!-- Step 1: Document & ID Scanner Selection -->
-          <div id="step-scan">
-            <div class="badge">\u{1F6E1}\uFE0F AgeChecked Official Service</div>
-            <h1>18+ Age & ID Verification</h1>
-            <p>UK legal regulations require 18+ age verification before purchasing nicotine pouches.</p>
-            
-            <div class="doc-selector">
-              <button type="button" class="doc-btn active" onclick="selectDoc(this, 'UK Driving Licence')">
-                <span>\u{1F697} UK Driving Licence</span>
-                <span>\u2713</span>
-              </button>
-              <button type="button" class="doc-btn" onclick="selectDoc(this, 'Passport')">
-                <span>\u{1F6C2} UK / International Passport</span>
-                <span></span>
-              </button>
-              <button type="button" class="doc-btn" onclick="selectDoc(this, 'National ID / CitizenCard')">
-                <span>\u{1FAAA} UK CitizenCard / PASS Card</span>
-                <span></span>
-              </button>
-            </div>
-
-            <div class="scanner-box" id="scannerBox">
-              <div class="scanner-line" id="scanLine"></div>
-              <div id="scanPrompt">
-                <div style="font-size: 28px; margin-bottom: 6px;">\u{1F4F7}</div>
-                <div style="font-size: 13px; font-weight: 700; color: #f1f5f9;">Ready to Scan ID Document</div>
-                <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Name: ${name} ${surname} \u2022 ${postcode}</div>
-              </div>
-              <div id="scanStatus" class="hidden" style="font-size: 12px; color: #38bdf8; font-weight: bold;">
-                Scanning MRZ code & verifying age 18+...
-              </div>
-            </div>
-
-            <button type="button" class="btn-primary" id="startBtn" onclick="performScan()">
-              Scan & Verify Age (18+)
-            </button>
-            <button type="button" class="btn-decline" onclick="decline()">Cancel Verification</button>
-            
-            <div class="ref">Session Ref: ${reference} | AgeCheck ID: ${agecheckid}</div>
-          </div>
-
-          <!-- Step 2: Confirmation Screen -->
-          <div id="step-confirmed" class="hidden">
-            <div class="success-icon">\u2713</div>
-            <div class="badge" style="background: rgba(16,185,129,0.2); border-color: #10b981; color: #10b981;">
-              Age Verified (18+ Approved)
-            </div>
-            <h1>Verification Complete</h1>
-            <p>Your ID documents have been successfully verified with AgeChecked. Closing window and returning to checkout...</p>
-            <button type="button" class="btn-primary" style="background: #10b981;" onclick="finishAndClose()">
-              Continue to Payment \u2192
-            </button>
-            <div class="ref">AgeChecked ID: ${agecheckid}</div>
-          </div>
-        </div>
-
-        <script>
-          let selectedDocName = 'UK Driving Licence';
-
-          function selectDoc(el, docName) {
-            selectedDocName = docName;
-            document.querySelectorAll('.doc-btn').forEach(btn => {
-              btn.classList.remove('active');
-              btn.querySelector('span:last-child').textContent = '';
-            });
-            el.classList.add('active');
-            el.querySelector('span:last-child').textContent = '\u2713';
-          }
-
-          async function performScan() {
-            const startBtn = document.getElementById('startBtn');
-            const scanLine = document.getElementById('scanLine');
-            const scanPrompt = document.getElementById('scanPrompt');
-            const scanStatus = document.getElementById('scanStatus');
-            
-            startBtn.disabled = true;
-            startBtn.textContent = 'Scanning ID Document...';
-            scanLine.style.display = 'block';
-            scanPrompt.classList.add('hidden');
-            scanStatus.classList.remove('hidden');
-
-            setTimeout(async () => {
-              try {
-                localStorage.setItem('agechecked-approved', 'true');
-                localStorage.setItem('ageVerified', 'true');
-                localStorage.setItem('agechecked-verified-at', new Date().toISOString());
-                localStorage.setItem('agechecked-id', '${agecheckid}');
-              } catch(e) {}
-
-              try {
-                await fetch('/api/agechecked/approve', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    reference: '${reference}',
-                    agecheckid: '${agecheckid}',
-                    email: '${email}',
-                    verified: true,
-                    method: selectedDocName
-                  })
-                });
-              } catch(e) {}
-
-              // Notify parent window / opener via BroadcastChannel & postMessage
-              try {
-                if (typeof BroadcastChannel !== 'undefined') {
-                  const bc = new BroadcastChannel('agechecked_channel');
-                  bc.postMessage({ 
-                    type: 'agechecked-approved', 
-                    status: 'approved', 
-                    agecheckid: '${agecheckid}', 
-                    reference: '${reference}',
-                    email: '${email}',
-                    approved: true, 
-                    verified: true 
-                  });
-                  bc.close();
-                }
-              } catch(e) {}
-
-              const payload = {
-                getidEventName: 'complete',
-                data: {
-                  id: '${agecheckid}',
-                  status: 'approved',
-                  agecheckid: '${agecheckid}',
-                  reference: '${reference}',
-                  method: selectedDocName
-                }
-              };
-
-              const targets = [window.opener, window.parent, window.top].filter(t => t && t !== window);
-              targets.forEach(target => {
-                try {
-                  target.postMessage(payload, '*');
-                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, approved: true, data: payload.data }, '*');
-                  target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: '${agecheckid}', approved: true, verified: true }, '*');
-                  target.postMessage('agechecked-approved', '*');
-                } catch(e) {}
-              });
-
-              document.getElementById('step-scan').classList.add('hidden');
-              document.getElementById('step-confirmed').classList.remove('hidden');
-
-              // Automatically close window
-              setTimeout(finishAndClose, 400);
-            }, 1000);
-          }
-
-          function finishAndClose() {
-            try {
-              window.close();
-            } catch(e) {}
-            setTimeout(() => {
-              if (!window.closed) {
-                document.body.innerHTML = '<div style="font-family:sans-serif;color:#f8fafc;background:#071d37;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;"><div><div style="font-size:48px;margin-bottom:12px;color:#10b981;">\u2713</div><h2>Age Verified (18+)</h2><p style="color:#94a3b8;">Verification complete. You may now return to your checkout screen.</p></div></div>';
-              }
-            }, 200);
-          }
-
-          function decline() {
-            try {
-              localStorage.setItem('agechecked-approved', 'false');
-            } catch(e) {}
-            if (window.opener && !window.opener.closed) {
-              try {
-                window.opener.postMessage({ type: 'agechecked-declined', status: 'declined', approved: false }, '*');
-              } catch(e) {}
-              window.close();
-            } else {
-              window.location.href = '/pages/checkout?agechecked=declined';
-            }
-          }
-        </script>
-      </body>
-    </html>
-  `);
 });
 var handleCallback = async (req, res) => {
   const query = req.query || {};
@@ -10732,9 +10732,6 @@ var handleCallback = async (req, res) => {
   );
   const email = String(
     query.email || query.userfield2 || body.email || body.userfield2 || ""
-  );
-  const returnUrl = String(
-    query.returnUrl || query.redirectUrl || body.returnUrl || body.redirectUrl || "/pages/checkout"
   );
   const approved = isApprovedStatus(status) || isApprovedStatus(statusText) || query.approved === "true" || query.agechecked === "approved" || query.verified === "true" || body.approved === true || body.verified === true || statusText.toLowerCase() === "approved" || req.path.includes("pass") || req.path.includes("success") || req.path.includes("complete");
   if (approved) {
@@ -10762,39 +10759,40 @@ var handleCallback = async (req, res) => {
   res.setHeader("Content-Security-Policy", "frame-ancestors * 'self'");
   res.send(`
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
       <head>
         <meta charset="utf-8">
-        <title>AgeChecked Verification Complete</title>
+        <title>AgeChecked Verification</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
           * { box-sizing: border-box; }
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #071d37; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
-          .card { background: #0d284c; border: 1px solid ${approved ? "#10b981" : "#f43f5e"}; border-radius: 24px; padding: 32px 24px; max-width: 440px; width: 100%; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
-          .icon { width: 56px; height: 56px; background: ${approved ? "rgba(34,197,94,0.15)" : "rgba(244,63,94,0.15)"}; border: 2px solid ${approved ? "#22c55e" : "#f43f5e"}; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; color: ${approved ? "#22c55e" : "#f43f5e"}; font-size: 28px; }
-          .badge { display: inline-flex; align-items: center; gap: 6px; background: ${approved ? "#22c55e" : "#f43f5e"}; color: ${approved ? "#052e16" : "#ffffff"}; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
-          h1 { font-size: 22px; margin: 0 0 10px 0; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
-          p { font-size: 13.5px; color: #94a3b8; line-height: 1.5; margin-bottom: 24px; }
-          .btn-continue { background: #0284c7; color: #ffffff; font-weight: 800; font-size: 15px; border: none; padding: 16px 22px; border-radius: 14px; width: 100%; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 10px 20px -5px rgba(2,132,199,0.4); text-decoration: none; }
-          .btn-continue:hover { background: #0369a1; transform: translateY(-1px); }
-          .ref { font-family: monospace; font-size: 11px; color: #64748b; margin-top: 20px; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #ffffff; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; }
+          .panel { text-align: center; max-width: 380px; }
+          .icon { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px auto; font-size: 22px; background: ${approved ? "#dcfce7" : "#fef3c7"}; color: ${approved ? "#15803d" : "#b45309"}; }
+          h1 { font-size: 16px; margin: 0 0 6px 0; font-weight: 800; letter-spacing: -0.2px; }
+          p { font-size: 12.5px; color: #64748b; line-height: 1.5; margin: 0; }
+          .ref { font-family: monospace; font-size: 10.5px; color: #94a3b8; margin-top: 16px; }
         </style>
       </head>
       <body>
-        <div class="card">
-          <div class="icon">${approved ? "\u2713" : "\u26A0\uFE0F"}</div>
-          <div class="badge">${approved ? "Verified 18+" : "Incomplete"}</div>
-          <h1>${approved ? "Verification Successful" : "Verification Incomplete"}</h1>
-          <p>${approved ? "Your age documents have been verified successfully. Closing window and returning to checkout..." : "Verification could not be confirmed. Please return to checkout and try again."}</p>
-          <a href="${returnUrl}" class="btn-continue" onclick="finishAndClose(event)">${approved ? "Return to Checkout \u2192" : "Back to Checkout"}</a>
-          <div class="ref">AgeChecked ID: ${agecheckid}</div>
+        <div class="panel">
+          <div class="icon">${approved ? "&#10003;" : "!"}</div>
+          <h1>${approved ? "Age verified" : "Verification not completed"}</h1>
+          <p>${approved ? "Returning you to checkout&hellip;" : "The 18+ check could not be confirmed. Close this panel and try again."}</p>
+          <div class="ref">Ref ${agecheckid}</div>
         </div>
         <script>
           (function() {
-            const isApproved = ${approved ? "true" : "false"};
-            const ageCheckId = "${agecheckid}";
-            const sessionRef = "${reference}";
-            const customerEmail = "${email}";
+            var isApproved = ${approved ? "true" : "false"};
+            var ageCheckId = ${JSON.stringify(String(agecheckid))};
+            var sessionRef = ${JSON.stringify(String(reference))};
+            var customerEmail = ${JSON.stringify(String(email))};
+
+            var payloads = [
+              { getidEventName: isApproved ? 'complete' : 'cancel', data: { id: ageCheckId, status: isApproved ? 'approved' : 'pending', agecheckid: ageCheckId, reference: sessionRef } },
+              { type: 'AGECHECKED_VERIFIED', verified: isApproved, approved: isApproved, data: { id: ageCheckId, agecheckid: ageCheckId, reference: sessionRef, email: customerEmail } },
+              { type: 'agechecked-approved', status: isApproved ? 'approved' : 'pending', approved: isApproved, verified: isApproved, agecheckid: ageCheckId }
+            ];
 
             if (isApproved) {
               try {
@@ -10802,62 +10800,32 @@ var handleCallback = async (req, res) => {
                 localStorage.setItem('ageVerified', 'true');
                 localStorage.setItem('agechecked-verified-at', new Date().toISOString());
                 localStorage.setItem('agechecked-id', ageCheckId);
-              } catch(e) {}
+              } catch (e) {}
 
-              // Notify BroadcastChannel
               try {
                 if (typeof BroadcastChannel !== 'undefined') {
-                  const bc = new BroadcastChannel('agechecked_channel');
-                  bc.postMessage({ 
-                    type: 'agechecked-approved', 
-                    status: 'approved', 
-                    approved: true, 
-                    verified: true, 
-                    agecheckid: ageCheckId, 
-                    reference: sessionRef, 
-                    email: customerEmail 
-                  });
+                  var bc = new BroadcastChannel('agechecked_channel');
+                  bc.postMessage({ type: 'agechecked-approved', status: 'approved', approved: true, verified: true, agecheckid: ageCheckId, reference: sessionRef, email: customerEmail });
                   bc.close();
                 }
-              } catch(e) {}
-
-              // Notify postMessage listeners (opener, parent, top)
-              const payload = {
-                getidEventName: 'complete',
-                data: { id: ageCheckId, status: 'approved', agecheckid: ageCheckId, reference: sessionRef }
-              };
-              const targets = [window.opener, window.parent, window.top].filter(t => t && t !== window);
-              targets.forEach(target => {
-                try {
-                  target.postMessage(payload, '*');
-                  target.postMessage({ type: 'AGECHECKED_VERIFIED', verified: true, approved: true, data: { id: ageCheckId, agecheckid: ageCheckId, reference: sessionRef } }, '*');
-                  target.postMessage({ type: 'agechecked-approved', status: 'approved', agecheckid: ageCheckId, approved: true, verified: true }, '*');
-                  target.postMessage('agechecked-approved', '*');
-                } catch(e) {}
-              });
-
-              // Automatically close window immediately
-              try {
-                window.close();
-              } catch(e) {}
-
-              // Some browsers only allow closing after moving the popup back to its opener.
-              setTimeout(function() {
-                try {
-                  window.open('', '_self');
-                  window.close();
-                } catch(e) {}
-              }, 400);
+              } catch (e) {}
             }
-          })();
 
-          function finishAndClose(e) {
-            if (e) e.preventDefault();
-            try {
-              window.open('', '_self');
-              window.close();
-            } catch(err) {}
-          }
+            // The panel host is the parent frame. window.opener is only set on the
+            // legacy popup flow and is kept so an older session still completes.
+            var targets = [window.parent, window.top, window.opener].filter(function (t, i, all) {
+              return t && t !== window && all.indexOf(t) === i;
+            });
+
+            targets.forEach(function (target) {
+              payloads.forEach(function (payload) {
+                try { target.postMessage(payload, '*'); } catch (e) {}
+              });
+            });
+
+            // Nothing calls window.close() here: in a frame it is a no-op, and the
+            // messages above already tell the checkout page to dismiss the panel.
+          })();
         </script>
       </body>
     </html>

@@ -16,7 +16,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   onUpdateOrder,
   onAddTimelineComment
 }) => {
-  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'TPNN');
+  const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'OLP1');
   const [weightGrams, setWeightGrams] = useState<number>(350);
   const [creating, setCreating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -26,7 +26,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   // Edit Real Tracking Modal / Input state
   const [showEditTrackingModal, setShowEditTrackingModal] = useState(false);
   const [customTrackingInput, setCustomTrackingInput] = useState('');
-  const [customCarrierInput, setCustomCarrierInput] = useState(order.carrier || 'Royal Mail Tracked 24');
+  const [customCarrierInput, setCustomCarrierInput] = useState(order.carrier || 'Royal Mail 1st Class');
   const [savingTracking, setSavingTracking] = useState(false);
 
   // Tracking modal state
@@ -56,13 +56,13 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
         fulfillmentStatus: 'Shipped',
         trackingNumber: trimmed,
         trackingId: trimmed,
-        carrier: carrierName || 'Royal Mail Tracked 24',
+        carrier: carrierName || 'Royal Mail 1st Class',
         data: {
           ...(order.data || {}),
           royalMail: {
             ...(order.data?.royalMail || {}),
             trackingNumber: trimmed,
-            carrier: carrierName || 'Royal Mail Tracked 24',
+            carrier: carrierName || 'Royal Mail 1st Class',
             shippedAt: order.data?.royalMail?.shippedAt || new Date().toISOString(),
             isRealApi: true
           }
@@ -328,15 +328,10 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                 onChange={(e) => setServiceCode(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 shadow-2xs"
               >
-                <option value="TPNN">Tracked 24® no signature (TPNN)</option>
-                <option value="TPNS">Tracked 24® with signature (TPNS)</option>
-                <option value="TPSN">Tracked 48® no signature (TPSN)</option>
-                <option value="TPSS">Tracked 48® with signature (TPSS)</option>
-                <option value="CRL1">Royal Mail 24® (CRL1)</option>
-                <option value="CRL2">Royal Mail 48® (CRL2)</option>
-                <option value="BPL1">Royal Mail 1st Class (BPL1)</option>
-                <option value="BPL2">Royal Mail 2nd Class (BPL2)</option>
-                <option value="SD1">Special Delivery Guaranteed by 1pm® (SD1)</option>
+                <option value="OLP1">Royal Mail 1st Class (OLP1)</option>
+                <option value="OLP1SF">Royal Mail Signed For® 1st Class (OLP1SF)</option>
+                <option value="OLP2">Royal Mail 2nd Class (OLP2)</option>
+                <option value="OLP2SF">Royal Mail Signed For® 2nd Class (OLP2SF)</option>
               </select>
             </div>
 
@@ -390,7 +385,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                 {trackingNumber}
               </span>
               <span className="text-xs text-slate-500 font-semibold block">
-                {order.carrier || 'Royal Mail Tracked 24'}
+                {order.carrier || 'Royal Mail 1st Class'}
               </span>
             </div>
 
@@ -398,7 +393,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
               <button
                 onClick={() => {
                   setCustomTrackingInput(trackingNumber || '');
-                  setCustomCarrierInput(order.carrier || 'Royal Mail Tracked 24®');
+                  setCustomCarrierInput(order.carrier || 'Royal Mail 1st Class');
                   setShowEditTrackingModal(true);
                 }}
                 className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
@@ -511,7 +506,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
                   type="text"
                   value={customCarrierInput}
                   onChange={(e) => setCustomCarrierInput(e.target.value)}
-                  placeholder="e.g. Royal Mail Tracked 24®"
+                  placeholder="e.g. Royal Mail 1st Class"
                   className="w-full border border-slate-200 p-2.5 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-rose-500 text-xs font-medium text-slate-900"
                 />
               </div>

@@ -344,25 +344,16 @@ export const RoyalMailSettingsCard: React.FC = () => {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
                 />
                 <datalist id="royalmail-service-codes">
-                  <option value="TPNN">Tracked 24® no signature</option>
-                  <option value="TPNS">Tracked 24® with signature</option>
-                  <option value="TPSN">Tracked 48® no signature</option>
-                  <option value="TPSS">Tracked 48® with signature</option>
-                  <option value="TRNN">Tracked 24® letterboxable</option>
-                  <option value="TRSN">Tracked 48® letterboxable</option>
-                  <option value="CRL1">Royal Mail 24®</option>
-                  <option value="CRL2">Royal Mail 48®</option>
-                  <option value="BPL1">Royal Mail 1st Class</option>
-                  <option value="BPL2">Royal Mail 2nd Class</option>
-                  <option value="BPR1">Royal Mail Signed 1st Class</option>
-                  <option value="BPR2">Royal Mail Signed 2nd Class</option>
-                  <option value="SD1">Special Delivery Guaranteed by 1pm®</option>
+                  <option value="OLP1">Royal Mail 1st Class</option>
+                  <option value="OLP1SF">Royal Mail Signed For® 1st Class</option>
+                  <option value="OLP2">Royal Mail 2nd Class</option>
+                  <option value="OLP2SF">Royal Mail Signed For® 2nd Class</option>
                 </datalist>
                 <p className="text-[10px] text-slate-500 font-medium mt-1 leading-snug">
-                  Leave blank unless your Royal Mail contract actually includes the
-                  service. Click &amp; Drop accepts orders with no service code and lets
-                  you apply postage in the portal; a code your account does not hold
-                  makes every shipment fail with &quot;service code could not be found&quot;.
+                  This account&apos;s domestic services are OLP1, OLP1SF, OLP2 and OLP2SF.
+                  A code your account does not hold makes every shipment fail with
+                  &quot;service code could not be found&quot;; leaving this blank is also
+                  valid and lets you apply postage in Click &amp; Drop instead.
                 </p>
               </div>
 

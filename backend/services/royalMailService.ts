@@ -30,7 +30,7 @@ export interface RoyalMailSettings {
    * packed, not when it is paid for.
    */
   autoCreateShipmentOnPayment: boolean;
-  defaultServiceCode: string; // Royal Mail service code, e.g. 'TPNN', 'TPSN', 'CRL1'
+  defaultServiceCode: string; // Royal Mail service code — this account holds OLP1, OLP1SF, OLP2, OLP2SF
   // Two-digit OBA contract identifier ("01", "02", ...). Some accounts hold more
   // than one rate agreement for the same service and Click & Drop needs to know
   // which. Left blank when the account has only one.
@@ -60,9 +60,11 @@ export const DEFAULT_ROYAL_MAIL_SETTINGS: RoyalMailSettings = {
   enabled: true,
   autoCreateShipmentOnPayment:
     String(process.env.ROYAL_MAIL_AUTO_DISPATCH || '').toLowerCase() === 'true',
-  // Blank on purpose: an account only accepts codes on its own contract, and a
-  // wrong one fails every shipment. Postage is then applied in Click & Drop.
-  defaultServiceCode: '',
+  // Royal Mail 1st Class — one of the four Online Postage services this
+  // account's Click & Drop contract actually holds, so a domestic shipment
+  // works out of the box. Change it in Admin → Settings → Royal Mail; blanking
+  // it is still valid and means "apply postage in Click & Drop".
+  defaultServiceCode: 'OLP1',
   defaultPackageType: 'Parcel',
   defaultWeightGrams: 350,
   senderAddress: {
@@ -125,6 +127,14 @@ export async function getRoyalMailSettings(): Promise<RoyalMailSettings> {
       return {
         ...DEFAULT_ROYAL_MAIL_SETTINGS,
         ...item,
+        // A saved code from the old OBA setup is translated here rather than at
+        // shipment time only, so the admin screen shows the service that will
+        // actually be used. An empty saved value stays empty — "apply postage in
+        // Click & Drop" is a deliberate choice, not a missing setting.
+        defaultServiceCode:
+          item.defaultServiceCode === undefined
+            ? DEFAULT_ROYAL_MAIL_SETTINGS.defaultServiceCode
+            : resolveServiceCode(item.defaultServiceCode),
         apiKey: item.apiKey && item.apiKey.trim().length > 0 ? item.apiKey : (envKey || DEFAULT_ROYAL_MAIL_SETTINGS.apiKey),
         senderAddress: {
           ...DEFAULT_ROYAL_MAIL_SETTINGS.senderAddress,
@@ -242,6 +252,57 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
 }
 
 /**
+ * Domestic service codes this Click & Drop account actually holds. Anything
+ * outside this set is rejected with error 31 before a label is ever produced.
+ */
+export const UK_SERVICE_CODES = ['OLP1', 'OLP1SF', 'OLP2', 'OLP2SF'] as const;
+
+/**
+ * Codes the store was configured with before the contract was checked. They are
+ * OBA services this account does not hold, so a saved setting containing one
+ * would fail every domestic shipment. Rather than making the operator notice and
+ * re-pick, translate to the nearest service that is actually on the contract.
+ */
+const LEGACY_SERVICE_CODE_MAP: Record<string, string> = {
+  // 1st Class equivalents
+  TPNN: 'OLP1',
+  TRNN: 'OLP1',
+  CRL1: 'OLP1',
+  BPL1: 'OLP1',
+  // 2nd Class equivalents
+  TPSN: 'OLP2',
+  TRSN: 'OLP2',
+  CRL2: 'OLP2',
+  BPL2: 'OLP2',
+  // Signature-on-delivery equivalents
+  TPNS: 'OLP1SF',
+  TPSS: 'OLP2SF',
+  BPR1: 'OLP1SF',
+  BPR2: 'OLP2SF',
+  SD1: 'OLP1SF',
+  SD2: 'OLP1SF'
+};
+
+/**
+ * Maps a service code onto one this account can actually post with. Unknown
+ * codes are passed through untouched — an operator may legitimately add a new
+ * service in Click & Drop before this list catches up, and Royal Mail is the
+ * authority on what it accepts, not us.
+ */
+export function resolveServiceCode(code?: string): string {
+  const raw = String(code ?? '').trim().toUpperCase();
+  if (!raw) return '';
+  const mapped = LEGACY_SERVICE_CODE_MAP[raw];
+  if (mapped) {
+    console.warn(
+      `[RoyalMailService] Service code ${raw} is not on this Click & Drop contract; using ${mapped} instead.`
+    );
+    return mapped;
+  }
+  return raw;
+}
+
+/**
  * 3. The store's own delivery price card.
  *
  * These are the prices YOU charge the customer at checkout and the service
@@ -249,20 +310,22 @@ export function validateAddress(address: Partial<AddressPayload>): { valid: bool
  * by Royal Mail comes from your account's contracted rates, not from here.
  *
  * The service codes, however, are not ours to choose. They must be real Royal
- * Mail codes AND present on your OBA contract, or Click & Drop rejects the
- * shipment with error 31.
+ * Mail codes AND present on your OBA / Click & Drop contract, or Click & Drop
+ * rejects the shipment with error 31.
  *
- * Tracked codes carry a signature suffix — TPN and TPS name the service family,
- * not a bookable service:
- *   TPNN/TPNS  Tracked 24, without / with signature
- *   TPSN/TPSS  Tracked 48, without / with signature
- *   TRNN/TRSN  the letterboxable equivalents
- * Non-Tracked OBA services use their own codes: CRL1 (RM24), CRL2 (RM48),
- * BPL1/BPL2 (1st/2nd Class), BPR1/BPR2 (Signed 1st/2nd).
+ * This account's contracted domestic services (Click & Drop > Settings >
+ * Services, https://business.parcel.royalmail.com/settings/services/) are the
+ * Online Postage (OLP) range:
+ *   OLP1    Royal Mail 1st Class
+ *   OLP1SF  Royal Mail Signed For® 1st Class
+ *   OLP2    Royal Mail 2nd Class
+ *   OLP2SF  Royal Mail Signed For® 2nd Class
  *
- * Which of these you may actually use is account-specific and no API lists
- * them, so confirm against Click & Drop > Settings > Shipping services (or run
- * POST /api/royalmail/test-service-code) before adding a code here.
+ * The OBA codes this store used previously — TPNN/TPSN (Tracked 24/48), CRL1/
+ * CRL2 (RM24/RM48), BPL1/BPL2, SD1 — are NOT on this contract and every
+ * domestic shipment sent with them failed with error 31. They are kept only in
+ * LEGACY_SERVICE_CODE_MAP so a stale saved setting is translated rather than
+ * failing.
  */
 export function getShippingRates(weightGrams: number = 350, countryCode: string = 'GB'): ShippingRateOption[] {
   const isUK = normalizeCountryCode(countryCode) === 'GB';
@@ -270,40 +333,40 @@ export function getShippingRates(weightGrams: number = 350, countryCode: string 
   if (isUK) {
     return [
       {
-        serviceCode: 'TPNN',
-        serviceName: 'Royal Mail Tracked 24®',
-        estimatedDelivery: 'Next Working Day',
-        price: 4.95,
+        serviceCode: 'OLP1',
+        serviceName: 'Royal Mail 1st Class',
+        estimatedDelivery: '1-2 Working Days',
+        price: 3.95,
         currency: 'GBP',
-        tracked: true,
+        tracked: false,
         signatureRequired: false
       },
       {
-        serviceCode: 'TPSN',
-        serviceName: 'Royal Mail Tracked 48®',
-        estimatedDelivery: '2-3 Working Days',
-        price: 3.85,
+        serviceCode: 'OLP1SF',
+        serviceName: 'Royal Mail Signed For® 1st Class',
+        estimatedDelivery: '1-2 Working Days (Signature on Delivery)',
+        price: 5.45,
         currency: 'GBP',
-        tracked: true,
-        signatureRequired: false
-      },
-      {
-        serviceCode: 'SD1',
-        serviceName: 'Royal Mail Special Delivery Guaranteed by 1pm®',
-        estimatedDelivery: 'Next Day by 1:00 PM (Guaranteed)',
-        price: 8.95,
-        currency: 'GBP',
-        tracked: true,
+        tracked: false,
         signatureRequired: true
       },
       {
-        serviceCode: 'CRL2',
-        serviceName: 'Royal Mail 24 Business Parcel (Tracked Standard)',
-        estimatedDelivery: '1-2 Working Days',
-        price: 4.25,
+        serviceCode: 'OLP2',
+        serviceName: 'Royal Mail 2nd Class',
+        estimatedDelivery: '2-3 Working Days',
+        price: 3.25,
         currency: 'GBP',
-        tracked: true,
+        tracked: false,
         signatureRequired: false
+      },
+      {
+        serviceCode: 'OLP2SF',
+        serviceName: 'Royal Mail Signed For® 2nd Class',
+        estimatedDelivery: '2-3 Working Days (Signature on Delivery)',
+        price: 4.75,
+        currency: 'GBP',
+        tracked: false,
+        signatureRequired: true
       }
     ];
   }
@@ -509,7 +572,7 @@ export async function testServiceCode(
   message: string;
   cleanedUp: boolean;
 }> {
-  const code = String(serviceCode || '').trim().toUpperCase();
+  const code = resolveServiceCode(serviceCode);
   if (!code) {
     return { serviceCode: code, accepted: false, message: 'No service code supplied.', cleanedUp: false };
   }
@@ -644,7 +707,10 @@ export async function createRoyalMailShipment(orderId: string, options: {
   }
 
   // Empty means "no service": a deliberate, working choice, not a missing value.
-  const serviceCode = String(options.serviceCode ?? settings.defaultServiceCode ?? '').trim();
+  // resolveServiceCode() translates codes left over from the old OBA setup
+  // (TPNN, CRL2, BPL1, …) onto the OLP services this contract actually holds,
+  // so a stale saved setting does not fail every domestic shipment.
+  const serviceCode = resolveServiceCode(options.serviceCode ?? settings.defaultServiceCode);
   const registerCode = String(options.serviceRegisterCode || settings.defaultServiceRegisterCode || '').trim();
   const rates = getShippingRates(options.weightGrams || settings.defaultWeightGrams, recipient.countryCode);
   const selectedRate = rates.find(r => r.serviceCode === serviceCode);
@@ -746,12 +812,13 @@ export async function createRoyalMailShipment(orderId: string, options: {
     if (unknownServiceCode) {
       detail +=
         ` — "${serviceCode}" is not a service Royal Mail will accept for this account. ` +
-        'Tracked codes need a signature suffix: TPNN/TPNS (Tracked 24) and ' +
-        'TPSN/TPSS (Tracked 48). Non-Tracked OBA services use CRL1 (RM24), ' +
-        'CRL2 (RM48), BPL1/BPL2 (1st/2nd Class). Which of these your account may ' +
-        'use is contract-specific — check Click & Drop > Settings > Shipping ' +
-        'services, or POST /api/royalmail/test-service-code to have Royal Mail ' +
-        'tell you directly, then set it in Admin > Settings > Royal Mail.';
+        'The domestic services on this contract are OLP1 (1st Class), OLP1SF ' +
+        '(Signed For 1st Class), OLP2 (2nd Class) and OLP2SF (Signed For 2nd ' +
+        'Class). Set one of those in Admin > Settings > Royal Mail, or leave the ' +
+        'service code blank and apply postage in Click & Drop. If the contract ' +
+        'has changed, check business.parcel.royalmail.com/settings/services/ or ' +
+        'POST /api/royalmail/test-service-code to have Royal Mail confirm a code ' +
+        'directly.';
     }
 
     throw new Error(`Royal Mail rejected the shipment for order #${orderId}: ${detail}`);
