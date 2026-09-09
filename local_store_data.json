@@ -6134,7 +6134,10 @@
       "gatewayAuthCode": "AUTH-SIMULATED",
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
-      "storeCreditApplied": 0
+      "storeCreditApplied": 0,
+      "trackingId": null,
+      "trackingHistory": null,
+      "createdAt": "2026-09-09T07:00:29.565Z"
     },
     {
       "id": "PS75082",
@@ -6186,7 +6189,10 @@
       "gatewayAuthCode": "AUTH-SIMULATED",
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
-      "storeCreditApplied": 0
+      "storeCreditApplied": 0,
+      "trackingId": null,
+      "trackingHistory": null,
+      "createdAt": "2026-09-09T07:00:29.650Z"
     },
     {
       "id": "PS46141",
@@ -6238,7 +6244,10 @@
       "gatewayAuthCode": "AUTH-SIMULATED",
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
-      "storeCreditApplied": 0
+      "storeCreditApplied": 0,
+      "trackingId": null,
+      "trackingHistory": null,
+      "createdAt": "2026-09-09T07:00:29.696Z"
     },
     {
       "id": "PS58451",
@@ -6343,7 +6352,10 @@
           }
         ],
         "frequencyDiscount": "10%"
-      }
+      },
+      "trackingId": null,
+      "trackingHistory": null,
+      "createdAt": "2026-09-09T07:00:29.539Z"
     },
     {
       "id": "PS16610",
@@ -6502,7 +6514,10 @@
           }
         ],
         "frequencyDiscount": "10%"
-      }
+      },
+      "trackingId": null,
+      "trackingHistory": null,
+      "createdAt": "2026-09-09T07:00:29.616Z"
     }
   ],
   "files": [

@@ -894,11 +894,15 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
 
     console.log(`[Worldpay HPP ${cfg.environment.toUpperCase()}] POST ${worldpayUrl} for Order: ${transactionReference}`);
 
+    // The credentials guard above proves `cfg.authHeader` is set, but that
+    // narrowing does not survive into the closure below, so hold it as a const.
+    const authHeader = cfg.authHeader;
+
     const postPaymentPage = async (payload: Record<string, unknown>) => {
       const res = await fetch(worldpayUrl, {
         method: 'POST',
         headers: {
-          'Authorization': cfg.authHeader,
+          'Authorization': authHeader,
           'Content-Type': 'application/vnd.worldpay.payment_pages-v1.hal+json',
           'Accept': 'application/vnd.worldpay.payment_pages-v1.hal+json',
           'WP-CorrelationId': correlationId,
