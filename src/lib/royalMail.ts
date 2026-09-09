@@ -345,14 +345,25 @@ export async function createRoyalMailOrders(
 /**
  * Retrieve one order.
  */
+/**
+ * Click & Drop tells order identifiers and order references apart by quoting:
+ * a numeric identifier goes through bare, a reference must be wrapped in
+ * double quotes. Quoting a number makes Click & Drop hunt for a REFERENCE of
+ * that name and answer "order does not exist".
+ *
+ * The old check keyed off the JavaScript type rather than the value, so an
+ * identifier that had been through String() — which is exactly what the
+ * shipment and sync paths pass — was quoted and always rejected. The tracking
+ * number is read back through here, so it could never be found and every
+ * order stayed Unfulfilled with tracking null. cancelOrder already tested the
+ * value; this now matches it.
+ */
 export async function getRoyalMailOrder(
   identifier: string | number,
   apiKey?: string
 ) {
-  const encoded =
-    typeof identifier === "number"
-      ? String(identifier)
-      : `"${encodeURIComponent(identifier)}"`;
+  const raw = String(identifier).trim();
+  const encoded = /^[0-9]+$/.test(raw) ? raw : `"${encodeURIComponent(raw)}"`;
 
   return royalMailRequest(
     `/orders/${encoded}`,
@@ -472,8 +483,31 @@ export async function getOrders(apiKey: string, params: Record<string, string | 
   return royalMailRequest(url, { method: "GET" }, apiKey);
 }
 
+/**
+ * One Click & Drop order, or null.
+ *
+ * The endpoint always answers with an ARRAY, even for a single identifier.
+ * Every caller read `.trackingNumber` straight off the result, which on an
+ * array is undefined -- so the tracking number was never found even once the
+ * lookup itself started working. Unwrapping here fixes all of them at once.
+ *
+ * A reference can legitimately match several orders (creating a shipment twice
+ * for one order leaves two). Prefer one that actually carries a tracking
+ * number, then the newest, so a duplicate cannot mask a real result.
+ */
 export async function getOrderByReference(reference: string, apiKey: string) {
-  return getRoyalMailOrder(reference, apiKey);
+  const result: any = await getRoyalMailOrder(reference, apiKey);
+  if (!Array.isArray(result)) return result;
+  if (result.length === 0) return null;
+
+  const tracked = result.find(
+    (o: any) => o?.trackingNumber || o?.packages?.[0]?.trackingNumber
+  );
+  if (tracked) return tracked;
+
+  return result
+    .slice()
+    .sort((a: any, b: any) => Number(b?.orderIdentifier || 0) - Number(a?.orderIdentifier || 0))[0];
 }
 
 /**
