@@ -728,8 +728,12 @@ export async function sendOrderShippedEmail(orderData: any, trackingNumber?: str
     items: orderData.items || [],
     total: orderData.total,
     destination: orderData.destination || orderData.address,
-    trackingNumber: trackingNumber || orderData.trackingNumber || orderData.trackingId || 'RM892341234GB',
-    carrier: carrier || orderData.carrier || 'Royal Mail Tracked 24'
+    // No stand-in tracking number. This used to fall back to a made-up
+    // 'RM892341234GB', so an order dispatched on a non-tracked service emailed
+    // the customer a number that tracks nothing and a Track Package link that
+    // leads nowhere. Left empty, the template omits the tracking block.
+    trackingNumber: trackingNumber || orderData.trackingNumber || orderData.trackingId || '',
+    carrier: carrier || orderData.carrier || 'Royal Mail'
   };
   return sendEmail('order_shipped', recipient, data);
 }
@@ -741,7 +745,7 @@ export async function sendOutForDeliveryEmail(orderData: any) {
     customerEmail: recipient,
     orderId: orderData.id || orderData.orderId,
     items: orderData.items || [],
-    trackingNumber: orderData.trackingNumber || orderData.trackingId || 'RM892341234GB'
+    trackingNumber: orderData.trackingNumber || orderData.trackingId || ''
   };
   return sendEmail('out_for_delivery', recipient, data);
 }

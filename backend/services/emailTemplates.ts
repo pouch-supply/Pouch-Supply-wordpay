@@ -249,10 +249,14 @@ export function renderOrderProcessingTemplate(data: EmailTemplateData): string {
 export function renderOrderShippedTemplate(data: EmailTemplateData): string {
   const name = data.customerName || 'Valued Customer';
   const orderId = data.orderId || 'PS10001';
-  const tracking = data.trackingNumber || 'GB982341234UK';
-  const carrier = data.carrier || 'Royal Mail Tracked 24';
+  // Only shown when Royal Mail actually issued a number. Non-tracked services
+  // (the Online Postage range: 1st/2nd Class and Signed For) never do, and a
+  // placeholder here reached the customer as a real tracking number.
+  const tracking = data.trackingNumber || '';
+  const carrier = data.carrier || 'Royal Mail';
 
-  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`, data) + `
+  const trackingBlock = tracking
+    ? `
     <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
         <div>
@@ -266,13 +270,28 @@ export function renderOrderShippedTemplate(data: EmailTemplateData): string {
       <p style="font-size: 13px; color: #15803d; margin: 0;">
         Carrier: <strong>${carrier}</strong>
       </p>
-    </div>
+    </div>`
+    : `
+    <div class="card" style="background-color: #f0fdf4; border-color: #bbf7d0;">
+      <span class="badge badge-success" style="margin-bottom: 8px;">Shipped</span>
+      <p style="font-size: 13px; color: #15803d; margin: 0;">
+        Sent by <strong>${carrier}</strong>. This service does not include parcel tracking.
+      </p>
+    </div>`;
+
+  const trackButton = tracking
+    ? `
+    <div style="text-align: center; margin-top: 24px;">
+      <a href="https://www.royalmail.com/track-your-item#/${tracking}" class="btn">Track Package</a>
+    </div>`
+    : '';
+
+  return renderBaseHeader(`Order Dispatched #${orderId}`, `Your package is on its way, ${name}!`, data) + `
+    ${trackingBlock}
 
     ${renderOrderItemsTable(data)}
 
-    <div style="text-align: center; margin-top: 24px;">
-      <a href="https://www.royalmail.com/track-your-item#/${tracking}" class="btn">Track Package</a>
-    </div>
+    ${trackButton}
   ` + renderBaseFooter();
 }
 
@@ -287,9 +306,9 @@ export function renderOutForDeliveryTemplate(data: EmailTemplateData): string {
       <p style="font-size: 14px; color: #0369a1; font-weight: 700; margin: 0 0 6px 0;">
         Your courier has your package on the delivery vehicle today!
       </p>
-      <p style="font-size: 12px; color: #0284c7; margin: 0;">
-        Tracking Ref: <strong>${data.trackingNumber || 'GB982341234UK'}</strong>
-      </p>
+      ${data.trackingNumber ? `<p style="font-size: 12px; color: #0284c7; margin: 0;">
+        Tracking Ref: <strong>${data.trackingNumber}</strong>
+      </p>` : ''}
     </div>
 
     ${renderOrderItemsTable(data)}

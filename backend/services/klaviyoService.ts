@@ -718,7 +718,7 @@ export async function trackOrderShipped(order: any, trackingNumber?: string, car
   return trackKlaviyoEvent('Order Shipped', email, {
     $event_id: String(order.id || order.orderId),
     OrderId: String(order.id || order.orderId),
-    Carrier: carrier || order.carrier || 'Royal Mail Tracked 24',
+    Carrier: carrier || order.carrier || 'Royal Mail',
     TrackingNumber: trackingNumber || order.trackingNumber || order.trackingId,
     TrackingUrl: `https://www.royalmail.com/track-your-item#/tracking-results/${trackingNumber || order.trackingNumber || order.trackingId}`,
     Destination: order.destination || order.address

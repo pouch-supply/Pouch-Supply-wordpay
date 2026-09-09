@@ -6286,73 +6286,20 @@
       ],
       "total": 25.19,
       "carrier": "Royal Mail",
-      "subtotal": 25.19,
       "cardBrand": "Worldpay Stored Card",
       "destination": "United Kingdom",
       "gatewayTxId": "WP-SIM-983194",
       "customerName": "Scott Kivlin",
-      "deliveryCost": 0,
-      "shippingCost": 0,
       "worldpayTxId": "WP-SIM-983194",
       "customerEmail": "scott@pouch-supply.com",
       "paymentStatus": "Paid",
       "deliveryMethod": "Royal Mail Tracked 24/48",
-      "isSubscription": true,
-      "subscriptionId": "sub_1787134213848_7vtxnf",
       "trackingNumber": null,
       "discountApplied": null,
       "gatewayAuthCode": "AUTH-SIMULATED",
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "subscriptionDetails": {
-        "items": [
-          {
-            "name": "5.2 mg Watermelon ice",
-            "variant": "",
-            "quantity": 3,
-            "variantName": "",
-            "productTitle": "5.2 mg Watermelon ice",
-            "formattedLabel": "5.2 mg Watermelon ice (Qty:3)",
-            "isReconstructed": true
-          },
-          {
-            "name": "20 mg Ghost Cola Ice",
-            "variant": "",
-            "quantity": 3,
-            "variantName": "",
-            "productTitle": "20 mg Ghost Cola Ice",
-            "formattedLabel": "20 mg Ghost Cola Ice (Qty:3)",
-            "isReconstructed": true
-          }
-        ],
-        "planName": "LITE Plan",
-        "frequency": "Bi-Weekly",
-        "paymentStatus": "Paid",
-        "lastPaymentDate": "8 Sept 2026",
-        "nextPaymentDate": "22 Sept 2026",
-        "selectedProducts": [
-          {
-            "name": "5.2 mg Watermelon ice",
-            "variant": "",
-            "quantity": 3,
-            "variantName": "",
-            "productTitle": "5.2 mg Watermelon ice",
-            "formattedLabel": "5.2 mg Watermelon ice (Qty:3)",
-            "isReconstructed": true
-          },
-          {
-            "name": "20 mg Ghost Cola Ice",
-            "variant": "",
-            "quantity": 3,
-            "variantName": "",
-            "productTitle": "20 mg Ghost Cola Ice",
-            "formattedLabel": "20 mg Ghost Cola Ice (Qty:3)",
-            "isReconstructed": true
-          }
-        ],
-        "frequencyDiscount": "10%"
-      },
       "trackingId": null,
       "trackingHistory": null,
       "createdAt": "2026-09-09T07:00:29.539Z"
@@ -6394,127 +6341,20 @@
       ],
       "total": 45.71,
       "carrier": "Royal Mail",
-      "subtotal": 45.71,
       "cardBrand": "Worldpay Stored Card",
       "destination": "United Kingdom",
       "gatewayTxId": "WP-SIM-023832",
       "customerName": "Ritesh Dhiman",
-      "deliveryCost": 0,
-      "shippingCost": 0,
       "worldpayTxId": "WP-SIM-023832",
       "customerEmail": "info@gtlofficial.com",
       "paymentStatus": "Paid",
       "deliveryMethod": "Royal Mail Tracked 24/48",
-      "isSubscription": true,
-      "subscriptionId": "sub_1786955794956_cl9l2f",
       "trackingNumber": null,
       "discountApplied": null,
       "gatewayAuthCode": "AUTH-SIMULATED",
       "worldpayAuthCode": "AUTH-SIMULATED",
       "fulfillmentStatus": "Unfulfilled",
       "storeCreditApplied": 0,
-      "subscriptionDetails": {
-        "items": [
-          {
-            "name": "5.2 mg Watermelon ice",
-            "variant": "",
-            "quantity": 1,
-            "variantName": "",
-            "productTitle": "5.2 mg Watermelon ice",
-            "formattedLabel": "5.2 mg Watermelon ice (Qty:1)",
-            "isReconstructed": true
-          },
-          {
-            "name": "20 mg Ghost Cola Ice",
-            "variant": "",
-            "quantity": 4,
-            "variantName": "",
-            "productTitle": "20 mg Ghost Cola Ice",
-            "formattedLabel": "20 mg Ghost Cola Ice (Qty:4)",
-            "isReconstructed": true
-          },
-          {
-            "name": "10.4 mg Watermelon Ice",
-            "variant": "",
-            "quantity": 5,
-            "variantName": "",
-            "productTitle": "10.4 mg Watermelon Ice",
-            "formattedLabel": "10.4 mg Watermelon Ice (Qty:5)",
-            "isReconstructed": true
-          },
-          {
-            "name": "5.6 mg Zesty Pear Regular",
-            "variant": "",
-            "quantity": 1,
-            "variantName": "",
-            "productTitle": "5.6 mg Zesty Pear Regular",
-            "formattedLabel": "5.6 mg Zesty Pear Regular (Qty:1)",
-            "isReconstructed": true
-          },
-          {
-            "name": "5.5 mg Watermelon Dry Regular",
-            "variant": "",
-            "quantity": 2,
-            "variantName": "",
-            "productTitle": "5.5 mg Watermelon Dry Regular",
-            "formattedLabel": "5.5 mg Watermelon Dry Regular (Qty:2)",
-            "isReconstructed": true
-          }
-        ],
-        "planName": "ULTIMATE Plan",
-        "frequency": "Bi-Weekly",
-        "paymentStatus": "Paid",
-        "lastPaymentDate": "8 Sept 2026",
-        "nextPaymentDate": "22 Sept 2026",
-        "selectedProducts": [
-          {
-            "name": "5.2 mg Watermelon ice",
-            "variant": "",
-            "quantity": 1,
-            "variantName": "",
-            "productTitle": "5.2 mg Watermelon ice",
-            "formattedLabel": "5.2 mg Watermelon ice (Qty:1)",
-            "isReconstructed": true
-          },
-          {
-            "name": "20 mg Ghost Cola Ice",
-            "variant": "",
-            "quantity": 4,
-            "variantName": "",
-            "productTitle": "20 mg Ghost Cola Ice",
-            "formattedLabel": "20 mg Ghost Cola Ice (Qty:4)",
-            "isReconstructed": true
-          },
-          {
-            "name": "10.4 mg Watermelon Ice",
-            "variant": "",
-            "quantity": 5,
-            "variantName": "",
-            "productTitle": "10.4 mg Watermelon Ice",
-            "formattedLabel": "10.4 mg Watermelon Ice (Qty:5)",
-            "isReconstructed": true
-          },
-          {
-            "name": "5.6 mg Zesty Pear Regular",
-            "variant": "",
-            "quantity": 1,
-            "variantName": "",
-            "productTitle": "5.6 mg Zesty Pear Regular",
-            "formattedLabel": "5.6 mg Zesty Pear Regular (Qty:1)",
-            "isReconstructed": true
-          },
-          {
-            "name": "5.5 mg Watermelon Dry Regular",
-            "variant": "",
-            "quantity": 2,
-            "variantName": "",
-            "productTitle": "5.5 mg Watermelon Dry Regular",
-            "formattedLabel": "5.5 mg Watermelon Dry Regular (Qty:2)",
-            "isReconstructed": true
-          }
-        ],
-        "frequencyDiscount": "10%"
-      },
       "trackingId": null,
       "trackingHistory": null,
       "createdAt": "2026-09-09T07:00:29.616Z"
@@ -18092,5 +17932,6 @@
       "discountApplied": null,
       "storeCreditApplied": 0
     }
-  ]
+  ],
+  "recaptcha_settings": []
 }
