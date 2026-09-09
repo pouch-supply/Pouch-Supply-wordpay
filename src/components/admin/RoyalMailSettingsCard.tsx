@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, CheckCircle2, AlertCircle, Save, RefreshCw, ShieldCheck, MapPin, Package, Calculator, ExternalLink } from 'lucide-react';
+import { Truck, CheckCircle2, AlertCircle, AlertTriangle, Save, RefreshCw, ShieldCheck, MapPin, Package, Calculator, ExternalLink } from 'lucide-react';
 
 export interface RoyalMailSettingsData {
   apiKey: string;
@@ -48,6 +48,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
 
   // Live Connection Status
@@ -113,20 +114,47 @@ export const RoyalMailSettingsCard: React.FC = () => {
   const handleSave = async () => {
     setSaving(true);
     setSaveSuccess(false);
+    setSaveError(null);
     try {
       const res = await fetch('/api/royalmail/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
-      if (res.ok) {
+      // A rejected save used to fall through this branch in silence, so the
+      // screen looked exactly as it does on success and the settings were
+      // quietly left unsaved. Read the value back instead of trusting the
+      // status code: this form is the only thing standing between an operator
+      // and a shipment that cannot be created.
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        setSaveError(detail?.error || `Save failed (HTTP ${res.status}). Settings were not stored.`);
+        return;
+      }
+
+      const confirmRes = await fetch('/api/royalmail/settings');
+      const stored = confirmRes.ok ? await confirmRes.json().catch(() => null) : null;
+      const senderMissing =
+        !stored?.senderAddress?.companyName?.trim() ||
+        !stored?.senderAddress?.addressLine1?.trim() ||
+        !stored?.senderAddress?.city?.trim() ||
+        !stored?.senderAddress?.postcode?.trim();
+
+      if (senderMissing) {
+        setSaveError(
+          'Saved, but the sender address did not store. Royal Mail needs a company name, ' +
+            'address line 1, town and postcode before any shipment can be created.'
+        );
+      } else {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
-        // Automatically re-check live Royal Mail connection with the newly saved key
-        checkLiveConnection();
       }
-    } catch (err) {
-      alert('Failed to save Royal Mail settings');
+
+      if (stored) setSettings(prev => ({ ...prev, ...stored, senderAddress: { ...prev.senderAddress, ...(stored.senderAddress || {}) } }));
+      // Re-check the live Royal Mail connection with the newly saved key
+      checkLiveConnection();
+    } catch (err: any) {
+      setSaveError(err?.message || 'Failed to save Royal Mail settings.');
     } finally {
       setSaving(false);
     }
@@ -204,7 +232,14 @@ export const RoyalMailSettingsCard: React.FC = () => {
         {saveSuccess && (
           <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-lg flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-            <span>Royal Mail Click & Drop settings saved successfully!</span>
+            <span>Royal Mail Click &amp; Drop settings saved and verified.</span>
+          </div>
+        )}
+
+        {saveError && (
+          <div className="mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-lg flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>{saveError}</span>
           </div>
         )}
       </div>

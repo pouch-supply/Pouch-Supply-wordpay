@@ -17933,5 +17933,25 @@
       "storeCreditApplied": 0
     }
   ],
-  "royalmail_settings": []
+  "royalmail_settings": [
+    {
+      "apiKey": "b0c7133f-8409-418b-a203-a498f58cb853",
+      "integrationName": "Pouch-Supply",
+      "enabled": true,
+      "autoCreateShipmentOnPayment": false,
+      "defaultServiceCode": "TOLP24",
+      "defaultPackageType": "Parcel",
+      "defaultWeightGrams": 70,
+      "senderAddress": {
+        "companyName": "Pouch Supply Ltd",
+        "addressLine1": "39 Tonks Drive",
+        "addressLine2": "Lawley Bank",
+        "city": "Telford",
+        "postcode": "TF4 2TQ",
+        "countryCode": "GB",
+        "contactEmail": "scottkivlinpouch@gmail.com",
+        "contactPhone": ""
+      }
+    }
+  ]
 }
