@@ -17940,7 +17940,7 @@
       "enabled": true,
       "autoCreateShipmentOnPayment": false,
       "defaultServiceCode": "TOLP24",
-      "defaultPackageType": "Parcel",
+      "defaultPackageType": "smallParcel",
       "defaultWeightGrams": 70,
       "senderAddress": {
         "companyName": "Pouch Supply Ltd",

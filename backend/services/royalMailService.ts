@@ -35,7 +35,7 @@ export interface RoyalMailSettings {
   // than one rate agreement for the same service and Click & Drop needs to know
   // which. Left blank when the account has only one.
   defaultServiceRegisterCode?: string;
-  defaultPackageType: string; // 'Parcel', 'LargeLetter', 'Letter'
+  defaultPackageType: string; // Click & Drop packageFormatIdentifier, e.g. 'smallParcel'
   defaultWeightGrams: number;
   senderAddress: {
     companyName: string;
@@ -66,7 +66,11 @@ export const DEFAULT_ROYAL_MAIL_SETTINGS: RoyalMailSettings = {
   // email is sent. Change it in Admin → Settings → Royal Mail; blanking it is
   // still valid and means "apply postage in Click & Drop".
   defaultServiceCode: 'TOLP24',
-  defaultPackageType: 'Parcel',
+  // Click & Drop reads 'parcel' as LARGE Parcel, which Royal Mail refuses to
+  // carry on Tracked 24/48 -- the order is created but the label cannot be
+  // generated, so no tracking number is ever issued. A small parcel is the
+  // format these packs actually are and is valid on every service here.
+  defaultPackageType: 'smallParcel',
   defaultWeightGrams: 70,
   senderAddress: {
     companyName: '',
@@ -360,6 +364,58 @@ function collectFailureMessages(result: any): string[] {
  * service in Click & Drop before this list catches up, and Royal Mail is the
  * authority on what it accepts, not us.
  */
+/**
+ * Click & Drop package formats, and the values people actually have saved.
+ *
+ * The identifiers are camelCase and 'parcel' means LARGE parcel -- a 70g pack
+ * sent as one is refused by Royal Mail on the Tracked services with
+ * "not possible to ship to the specified country, package format using this
+ * shipping service". The order still saves, so the only visible symptom is a
+ * label that never generates and a tracking number that never arrives.
+ */
+export const PACKAGE_FORMATS = [
+  'letter',
+  'largeLetter',
+  'smallParcel',
+  'mediumParcel',
+  'parcel',
+  'documents',
+  'tube'
+] as const;
+
+const PACKAGE_FORMAT_ALIASES: Record<string, string> = {
+  LETTER: 'letter',
+  LARGELETTER: 'largeLetter',
+  'LARGE LETTER': 'largeLetter',
+  SMALLPARCEL: 'smallParcel',
+  'SMALL PARCEL': 'smallParcel',
+  MEDIUMPARCEL: 'mediumParcel',
+  'MEDIUM PARCEL': 'mediumParcel',
+  // 'Parcel' was the old stored default and means LARGE parcel to Click & Drop,
+  // which is what broke label generation. Read it as a medium parcel: the
+  // largest format the tracked services accept.
+  PARCEL: 'mediumParcel',
+  'LARGE PARCEL': 'parcel',
+  DOCUMENTS: 'documents',
+  TUBE: 'tube'
+};
+
+export function resolvePackageFormat(value?: string): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 'smallParcel';
+  const exact = PACKAGE_FORMATS.find(f => f === raw);
+  if (exact) return exact;
+  const alias = PACKAGE_FORMAT_ALIASES[raw.toUpperCase()];
+  if (alias) {
+    if (alias !== raw) {
+      console.warn(`[RoyalMailService] Package format "${raw}" read as "${alias}".`);
+    }
+    return alias;
+  }
+  console.warn(`[RoyalMailService] Unknown package format "${raw}"; using smallParcel.`);
+  return 'smallParcel';
+}
+
 export function resolveServiceCode(code?: string): string {
   const raw = String(code ?? '').trim().toUpperCase();
   if (!raw) return '';
@@ -704,7 +760,7 @@ export async function testServiceCode(
     packages: [
       {
         weightInGrams: settings.defaultWeightGrams || 70,
-        packageFormatIdentifier: settings.defaultPackageType || 'Parcel',
+        packageFormatIdentifier: resolvePackageFormat(settings.defaultPackageType),
         contents: [{ name: 'Service code test', quantity: 1, unitValue: 1, unitWeightInGrams: 100 }]
       }
     ],
@@ -866,7 +922,7 @@ export async function createRoyalMailShipment(orderId: string, options: {
     packages: [
       {
         weightInGrams: options.weightGrams || settings.defaultWeightGrams || 70,
-        packageFormatIdentifier: options.packageType || settings.defaultPackageType || 'Parcel',
+        packageFormatIdentifier: resolvePackageFormat(options.packageType || settings.defaultPackageType),
         contents: Array.isArray(order.items) && order.items.length > 0
           ? order.items.map((it: any) => ({
               name: it.productTitle || it.title || 'Pouch Supply Item',

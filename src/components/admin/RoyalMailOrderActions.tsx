@@ -18,6 +18,10 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
 }) => {
   const [serviceCode, setServiceCode] = useState<string>(order.data?.royalMail?.serviceCode || 'TOLP24');
   const [weightGrams, setWeightGrams] = useState<number>(70);
+  // Royal Mail refuses some format/service pairs outright -- a Large Parcel on
+  // Tracked 24 creates the order but the label never generates, so no tracking
+  // number is issued.
+  const [packageType, setPackageType] = useState<string>(order.data?.royalMail?.packageType || 'smallParcel');
   const [creating, setCreating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [returning, setReturning] = useState(false);
@@ -102,7 +106,7 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   };
 
   const handleCreateShipment = async () => {
-    const label = `${serviceCode} • ${weightGrams}g`;
+    const label = `${serviceCode} • ${packageType} • ${weightGrams}g`;
     if (!window.confirm(
       `Buy postage and create the Royal Mail label for order ${order.id}?
 
@@ -121,7 +125,8 @@ ${label}
         body: JSON.stringify({
           orderId: order.id,
           serviceCode,
-          weightGrams
+          weightGrams,
+          packageType
         })
       });
 
@@ -377,6 +382,29 @@ ${label}
                 onChange={(e) => setWeightGrams(parseInt(e.target.value, 10) || 70)}
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 shadow-2xs"
               />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider block mb-1">
+                Package Format
+              </label>
+              <select
+                value={packageType}
+                onChange={(e) => setPackageType(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 shadow-2xs"
+              >
+                <option value="letter">Letter</option>
+                <option value="largeLetter">Large Letter</option>
+                <option value="smallParcel">Small Parcel</option>
+                <option value="mediumParcel">Medium Parcel</option>
+                <option value="parcel">Large Parcel — refused on Tracked 24/48</option>
+                <option value="tube">Tube</option>
+              </select>
+              <p className="text-[10px] text-slate-500 font-medium mt-1 leading-snug">
+                Royal Mail refuses some format and service pairs. A Large Parcel on Tracked
+                24/48 still creates the order, but the label never generates and no tracking
+                number is issued.
+              </p>
             </div>
           </div>
 

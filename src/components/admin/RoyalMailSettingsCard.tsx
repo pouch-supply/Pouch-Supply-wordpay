@@ -31,7 +31,7 @@ export const RoyalMailSettingsCard: React.FC = () => {
     enabled: true,
     autoCreateShipmentOnPayment: false,
     defaultServiceCode: '',
-    defaultPackageType: 'Parcel',
+    defaultPackageType: 'smallParcel',
     defaultWeightGrams: 70,
     senderAddress: {
       companyName: '',
