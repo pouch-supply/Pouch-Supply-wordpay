@@ -1410,13 +1410,19 @@ router.get(
       // Merged from both stores rather than "Prisma, else the file store": a
       // plan that exists in only one of them used to be invisible whenever the
       // other returned anything at all.
-      const subscriptions = (await loadCustomerSubscriptions(email))
+      const all = await loadCustomerSubscriptions(email);
+      const subscriptions = all
         .filter(s => !isDeletedStatus(s.status))
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
       return res.json({
         success: true,
         subscriptions: subscriptions.map(s => toCustomerSubscription(s, now)),
+        // Ids only, no plan detail. The account page rebuilds a plan card from
+        // a subscription order when this endpoint has no record for it, so it
+        // needs to tell "never stored" apart from "the customer removed it" —
+        // otherwise removing a plan would resurrect it from its own orders.
+        deletedSubscriptionIds: all.filter(s => isDeletedStatus(s.status)).map(s => String(s.id)),
       });
     } catch (error: any) {
       return res.status(500).json({

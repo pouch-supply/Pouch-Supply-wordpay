@@ -1,5 +1,5 @@
 import { Order, Product } from '../types';
-import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from './subscriptionParser';
+import { parseSubscriptionProducts, formatSubscriptionItemDisplay, isSubscriptionLineItem } from './subscriptionParser';
 
 /**
  * Printable / downloadable invoices for the customer portal.
@@ -48,17 +48,6 @@ export function getInvoiceFileName(order: Order): string {
   return `${getInvoiceNumber(order)}.html`;
 }
 
-function isSubscriptionLine(item: any): boolean {
-  const title = String(item?.productTitle || '').toLowerCase();
-  return Boolean(
-    item?.isSubscription ||
-    item?.vendor === 'Subscription Pack' ||
-    String(item?.productId || '').includes('sub-pack') ||
-    title.includes('subscription') ||
-    title.includes('plan')
-  );
-}
-
 /**
  * Splits the recorded total into lines that always add back up to it.
  *
@@ -97,7 +86,7 @@ export function buildInvoiceHtml(
 
   const rows = (order.items || [])
     .map(item => {
-      const isSub = isSubscriptionLine(item);
+      const isSub = isSubscriptionLineItem(item);
       const title = isSub
         ? subDetails?.planName || (item as any).subscriptionPlan || item.productTitle
         : item.productTitle;

@@ -495,14 +495,49 @@ function isPackWrapperLine(item: any): boolean {
   );
 }
 
+/**
+ * Is this order line a subscription plan rather than a one-off product?
+ *
+ * The single definition used everywhere. The account page, the order history
+ * badge and the invoice each carried their own slightly different copy of this
+ * test, so a plan line such as "CORE Plan (Recurring Renewal)" counted as a
+ * subscription in one place and not in another.
+ */
+export function isSubscriptionLineItem(item: any): boolean {
+  if (!item) return false;
+  return Boolean(
+    item.isSubscription ||
+    item.vendor === 'Subscription Pack' ||
+    (typeof item.productId === 'string' && item.productId.includes('sub-pack')) ||
+    (item.productTitle && /subscription|plan|pack/i.test(item.productTitle))
+  );
+}
+
+/** Is this order a subscription purchase or one of its recurring renewals? */
+export function isSubscriptionOrder(order: any): boolean {
+  if (!order) return false;
+  return Boolean(
+    order.isSubscription ||
+    // Both the checkout and the renewal cron stamp this onto the order, so it
+    // is the most reliable signal available.
+    order.subscriptionId ||
+    order.subscriptionDetails?.subscriptionId ||
+    order.data?.subscriptionId ||
+    (Array.isArray(order.tags) && order.tags.some((t: any) => typeof t === 'string' && t.toLowerCase().includes('subscription'))) ||
+    (Array.isArray(order.items) && order.items.some(isSubscriptionLineItem))
+  );
+}
+
+/** The subscription id an order was booked against, or '' when it names none. */
+export function getOrderSubscriptionId(order: any): string {
+  return String(
+    order?.subscriptionId || order?.subscriptionDetails?.subscriptionId || order?.data?.subscriptionId || ''
+  ).trim();
+}
+
 /** Finds the cart line that represents the subscription box itself. */
 export function findSubscriptionItem(order: any): any {
-  return order?.items?.find((i: any) =>
-    i.isSubscription ||
-    i.vendor === 'Subscription Pack' ||
-    (typeof i.productId === 'string' && i.productId.includes('sub-pack')) ||
-    (i.productTitle && /subscription|plan|pack/i.test(i.productTitle))
-  );
+  return order?.items?.find(isSubscriptionLineItem);
 }
 
 /**

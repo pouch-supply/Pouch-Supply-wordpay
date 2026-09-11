@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Customer, Product, Order, Discount } from '../types';
 import { getWishlistProductTitle } from '../utils/mediaUtils';
 import { parseOrderTime, calculateDiscountAmount } from '../utils';
@@ -8,7 +8,13 @@ import { signInWithGoogle } from '../lib/auth';
 import SubscriptionIcon from './SubscriptionIcon';
 import { useRecaptcha } from '../hooks/useRecaptcha';
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
-import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
+import {
+  parseSubscriptionProducts,
+  formatSubscriptionItemDisplay,
+  isSubscriptionOrder,
+  getOrderSubscriptionId,
+  extractSubscriptionDetails
+} from '../utils/subscriptionParser';
 import SubscriptionBoxManager, { BoxLine } from './account/SubscriptionBoxManager';
 import { printInvoice, downloadInvoiceFile, getInvoiceNumber } from '../utils/invoice';
 import {
@@ -220,6 +226,10 @@ export default function CustomerAccount({
     setActiveTab('subscriptions', subscriptionId ? String(subscriptionId) : null);
   };
   const [accountSubscriptions, setAccountSubscriptions] = useState<any[]>([]);
+  // Plans the customer removed. The API strips them from `subscriptions`
+  // entirely, so without their ids a removed plan would be rebuilt from its own
+  // orders and reappear.
+  const [deletedSubscriptionIds, setDeletedSubscriptionIds] = useState<string[]>([]);
   // Which single subscription a per-plan Resume / Remove button is working on,
   // so one card's spinner does not disable every other card's buttons.
   const [subActionBusyId, setSubActionBusyId] = useState<string | null>(null);
@@ -318,17 +328,7 @@ export default function CustomerAccount({
     : [];
   const ordersCount = myOrders.length;
 
-  const mySubOrders = myOrders.filter(o => 
-    o.isSubscription ||
-    (Array.isArray(o.tags) && o.tags.some(t => t && t.toLowerCase().includes('subscription'))) ||
-    (Array.isArray(o.items) && o.items.some((i: any) => 
-      i && (
-        i.isSubscription || 
-        i.vendor === 'Subscription Pack' || 
-        (i.productTitle && (i.productTitle.toLowerCase().includes('subscription') || i.productTitle.toLowerCase().includes('pack')))
-      )
-    ))
-  );
+  const mySubOrders = myOrders.filter(isSubscriptionOrder);
 
   /**
    * Loads this customer's own subscriptions.
@@ -350,6 +350,7 @@ export default function CustomerAccount({
       const data = await res.json();
       const subs = Array.isArray(data?.subscriptions) ? data.subscriptions : [];
       setAccountSubscriptions(subs);
+      setDeletedSubscriptionIds(Array.isArray(data?.deletedSubscriptionIds) ? data.deletedSubscriptionIds.map(String) : []);
       return subs;
     } catch {
       return [];
@@ -361,6 +362,7 @@ export default function CustomerAccount({
     const email = loggedInCustomer?.email?.trim();
     if (!email) {
       setAccountSubscriptions([]);
+      setDeletedSubscriptionIds([]);
       return () => { cancelled = true; };
     }
 
@@ -369,9 +371,13 @@ export default function CustomerAccount({
       .then(data => {
         if (cancelled) return;
         setAccountSubscriptions(Array.isArray(data?.subscriptions) ? data.subscriptions : []);
+        setDeletedSubscriptionIds(Array.isArray(data?.deletedSubscriptionIds) ? data.deletedSubscriptionIds.map(String) : []);
       })
       .catch(() => {
-        if (!cancelled) setAccountSubscriptions([]);
+        if (!cancelled) {
+          setAccountSubscriptions([]);
+          setDeletedSubscriptionIds([]);
+        }
       });
 
     return () => { cancelled = true; };
@@ -379,8 +385,89 @@ export default function CustomerAccount({
 
   // Plans the customer removed from their account are kept server-side for
   // order history but must not appear in their list.
-  const visibleAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
+  const storedAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
     String(subscription.status || '').toLowerCase() !== 'deleted'
+  );
+
+  /**
+   * Plans rebuilt from the customer's own subscription orders.
+   *
+   * Checkout writes the subscription record and the order separately, and both
+   * writes are best-effort (Prisma and the JSON store are each wrapped in their
+   * own try/catch). When the record write is the one that fails, the plan is
+   * invisible on this page even though its order is sitting in the customer's
+   * history — which is exactly what a customer who subscribed yesterday sees.
+   * Rebuilding a card from the order keeps the plan on screen.
+   */
+  const orderDerivedSubscriptions = useMemo(() => {
+    const storedIds = new Set(storedAccountSubscriptions.map((s: any) => String(s.id)));
+    const removedIds = new Set(deletedSubscriptionIds);
+    const derived = new Map<string, any>();
+
+    // mySubOrders is newest-first, so the first order seen for a plan is the
+    // one whose price, frequency and box contents are current.
+    for (const order of mySubOrders) {
+      const linkedId = getOrderSubscriptionId(order);
+
+      // Already covered by a stored plan — nothing to rebuild.
+      if (linkedId && storedIds.has(linkedId)) continue;
+      // Removing a plan is meant to take it off this list for good. Its orders
+      // stay in the history, so rebuilding from them would undo the removal.
+      if (linkedId && removedIds.has(linkedId)) continue;
+      // An order naming no plan cannot be attributed to one, so it is only
+      // rebuilt when the customer holds no plans at all and has removed none:
+      // there is nothing else it could belong to. This mirrors how the server
+      // treats unlinked orders.
+      if (!linkedId && (storedIds.size > 0 || removedIds.size > 0)) continue;
+
+      const details = extractSubscriptionDetails(order, allProducts as any);
+      const planName = details.planName || 'Subscription Box';
+      // Renewals of one plan collapse onto a single card rather than showing
+      // one card per delivery.
+      const key = linkedId || `plan:${planName.toLowerCase()}`;
+      if (derived.has(key)) continue;
+
+      const cancelled = Boolean(
+        details.isCancelled ||
+        order.subscriptionCancelled ||
+        String(details.status || '').toLowerCase() === 'cancelled' ||
+        (Array.isArray(order.tags) && order.tags.some(t => String(t).toLowerCase() === 'subscription cancelled'))
+      );
+      const boxItems = details.selectedProducts || [];
+      const planTier = ACCOUNT_SUB_PLANS.find(t => t.id === details.planSlug);
+
+      derived.set(key, {
+        id: linkedId || `order-${order.id}`,
+        planName,
+        planId: details.planSlug,
+        customerEmail: order.customerEmail,
+        customerName: order.customerName,
+        amount: Number(order.total) || planTier?.price || 0,
+        currency: 'GBP',
+        status: cancelled ? 'cancelled' : 'active',
+        billingInterval: details.frequency,
+        nextBillingDate: details.nextPaymentDate,
+        cansCount:
+          boxItems.reduce((sum: number, p: any) => sum + (Number(p.quantity) || 0), 0) || planTier?.cans || 0,
+        items: boxItems,
+        deliveryMethod: order.deliveryMethod,
+        createdAt: order.createdAt || order.date,
+        sourceOrderId: order.id,
+        cancellationReason: details.cancellationReason,
+        cancelledAt: details.cancelledAt,
+        // Flags a plan that exists only as an order: the subscriptions store has
+        // no record to update, so the UI must not offer actions the server
+        // cannot carry out against it.
+        isDerivedFromOrder: true
+      });
+    }
+
+    return Array.from(derived.values());
+  }, [mySubOrders, storedAccountSubscriptions, deletedSubscriptionIds, allProducts]);
+
+  const visibleAccountSubscriptions = useMemo(
+    () => [...storedAccountSubscriptions, ...orderDerivedSubscriptions],
+    [storedAccountSubscriptions, orderDerivedSubscriptions]
   );
 
   /**
@@ -399,6 +486,25 @@ export default function CustomerAccount({
     visibleAccountSubscriptions[0] ||
     null;
 
+  /**
+   * The plan the customer explicitly asked to manage, or null on the plan list.
+   *
+   * `activeSubscription` cannot answer this: it falls back to the first plan so
+   * the editor is never empty, which is why the management console and the box
+   * editor used to be open the moment the page loaded. Managing is a deliberate
+   * act — "Manage This Plan" — and it is recorded in the URL as ?sub=<id>.
+   */
+  const managedSubscription = activeSubscriptionId
+    ? visibleAccountSubscriptions.find((s: any) => String(s.id) === String(activeSubscriptionId)) || null
+    : null;
+  const isManagingSubscription = Boolean(managedSubscription);
+
+  /** Closes the management console and returns to the plan list. */
+  const closeSubscriptionManager = () => {
+    setActiveSubscriptionId(null);
+    setActiveTab('subscriptions', null);
+  };
+
   // A plan named in the URL that this customer does not hold is ignored rather
   // than shown: it is either stale or someone else's.
   useEffect(() => {
@@ -407,19 +513,19 @@ export default function CustomerAccount({
     const exists = visibleAccountSubscriptions.some((s: any) => String(s.id) === String(activeSubscriptionId));
     if (!exists) setActiveSubscriptionId(null);
   }, [activeSubscriptionId, accountSubscriptions]);
-  const activeAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
+  // Counted over the visible list, not the raw API response, so a plan rebuilt
+  // from a brand-new order flips the page out of its "not subscribed" state
+  // instead of being shown while the page still claims there is nothing there.
+  const activeAccountSubscriptions = visibleAccountSubscriptions.filter((subscription: any) =>
     ['active', 'subscribed', 'paused'].includes(String(subscription.status || '').toLowerCase())
   );
-  const cancelledAccountSubscriptions = accountSubscriptions.filter((subscription: any) =>
+  const cancelledAccountSubscriptions = visibleAccountSubscriptions.filter((subscription: any) =>
     ['cancelled', 'canceled', 'inactive', 'cancelled_at'].includes(String(subscription.status || '').toLowerCase())
   );
   const hasCancelledSubscription = cancelledAccountSubscriptions.length > 0 || String((loggedInCustomer as any)?.subStatus || '').toLowerCase() === 'cancelled';
-  const hasRealSubscription = activeAccountSubscriptions.length > 0 || (
-    accountSubscriptions.length === 0 && mySubOrders.length > 0 &&
-    !mySubOrders.some(order => order.subscriptionCancelled || String(order.subscriptionDetails?.status || '').toLowerCase() === 'cancelled')
-  ) || Boolean(
+  const hasRealSubscription = activeAccountSubscriptions.length > 0 || Boolean(
     loggedInCustomer &&
-    accountSubscriptions.length === 0 &&
+    visibleAccountSubscriptions.length === 0 &&
     !hasCancelledSubscription &&
     ((loggedInCustomer as any).hasPurchasedSubscription || (loggedInCustomer as any).subscriptionStatus === 'Subscribed' || (loggedInCustomer as any).hasActiveSubscription || (loggedInCustomer as any).subStatus === 'Active' || (loggedInCustomer as any).subStatus === 'Paused' || (loggedInCustomer as any).subPlan)
   );
@@ -901,19 +1007,6 @@ export default function CustomerAccount({
     ACCOUNT_SUB_PLANS.find(p => p.id === 'core')!;
 
   const subPlanPrice = Number(custState?.subPrice ?? selectedPlanTier.price) || selectedPlanTier.price;
-  const dashboardSubscriptions = activeAccountSubscriptions.length > 0
-    ? activeAccountSubscriptions
-    : hasRealSubscription && !hasCancelledSubscription
-      ? [{
-          id: 'profile-subscription',
-          planName: getAccountPlanLabel(custState?.subPlan),
-          amount: custState?.subPrice,
-          billingInterval: custState?.subFrequency,
-          nextBillingDate: custState?.nextPayment,
-          planImage: getPlanImage(custState?.subPlan)
-        }]
-      : [];
-
   // calculateDiscountAmount expects cart items; the plan is a single line item.
   const subPseudoCart = [
     {
@@ -1484,7 +1577,10 @@ export default function CustomerAccount({
    * this screen.
    */
   const handleSaveSubscriptionBox = async (lines: BoxLine[]) => {
-    if (!activeSubscription || !loggedInCustomer?.email) return;
+    // Scoped to the plan the editor was opened for, which is the same plan the
+    // editor below is mounted with — never activeSubscription's first-plan
+    // fallback, or saving would write the box onto a plan nobody opened.
+    if (!managedSubscription || !loggedInCustomer?.email) return;
     setIsSavingBox(true);
     setSubActionToast(null);
 
@@ -1515,13 +1611,13 @@ export default function CustomerAccount({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subscriptionId: activeSubscription.id,
+          subscriptionId: managedSubscription.id,
           customerEmail: loggedInCustomer.email,
-          planName: activeSubscription.planName,
-          planId: activeSubscription.planId,
-          amount: activeSubscription.amount,
-          billingInterval: activeSubscription.billingInterval,
-          status: activeSubscription.status,
+          planName: managedSubscription.planName,
+          planId: managedSubscription.planId,
+          amount: managedSubscription.amount,
+          billingInterval: managedSubscription.billingInterval,
+          status: managedSubscription.status,
           items,
           subItems: items,
           cansCount: totalCans,
@@ -1537,13 +1633,13 @@ export default function CustomerAccount({
       // reloads from when the customer switches between plans.
       setAccountSubscriptions(previous =>
         previous.map((s: any) =>
-          String(s.id) === String(activeSubscription.id) ? { ...s, items, cansCount: totalCans } : s
+          String(s.id) === String(managedSubscription.id) ? { ...s, items, cansCount: totalCans } : s
         )
       );
 
       setSubActionToast({
         type: 'success',
-        message: `Box updated for ${activeSubscription.planName || 'your plan'}: ${totalCans} can${totalCans === 1 ? '' : 's'} saved.`
+        message: `Box updated for ${managedSubscription.planName || 'your plan'}: ${totalCans} can${totalCans === 1 ? '' : 's'} saved.`
       });
     } catch (err: any) {
       setSubActionToast({
@@ -2594,58 +2690,13 @@ export default function CustomerAccount({
                         </div>
                       )}
 
-                      {/* Active subscription summary card */}
-                      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs">
-                        <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-4">
-                          <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider flex items-center gap-1.5">
-                            <RefreshCw className="h-4.5 w-4.5 text-[#dfa047]" />
-                            Your active subscription
-                          </h3>
-                          <span className={`text-[10px] font-bold py-1 px-3 rounded-full border ${dashboardSubscriptions.length > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : hasCancelledSubscription ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                            {dashboardSubscriptions.length > 0 ? 'Active' : hasCancelledSubscription ? 'Cancelled' : 'Inactive'}
-                          </span>
-                        </div>
-
-                        {dashboardSubscriptions.length > 0 ? (
-                          <div className="space-y-3">
-                            {dashboardSubscriptions.map((subscription: any) => {
-                              const planName = subscription.planName || subscription.name || custState?.subPlan || 'Subscription Box';
-                              const planSlug = getPlanSlug(planName);
-                              const planTier = ACCOUNT_SUB_PLANS.find(tier => tier.id === planSlug);
-                              const amount = Number(subscription.amount ?? subscription.subPrice ?? planTier?.price ?? 0);
-                              return (
-                                <div key={subscription.id || planName} className="flex flex-col md:flex-row gap-4 items-center border border-slate-100 rounded-2xl p-3">
-                                  <img
-                                    src={getPlanImage(planName)}
-                                    className="w-20 h-20 object-contain rounded-xl bg-slate-50"
-                                    alt={`${planName} subscription plan`}
-                                  />
-                                  <div className="flex-1 space-y-1 text-center md:text-left">
-                                    <h4 className="text-sm font-black text-[#071d37] uppercase tracking-wide">{planName}</h4>
-                                    <p className="text-xs text-slate-500">{planTier?.cans || subscription.cansCount || custState?.subCansCount || 6} items • Deliver {subscription.billingInterval || subscription.subFrequency || custState?.subFrequency || 'Bi-Weekly'}</p>
-                                    <p className="text-xs font-bold text-[#dfa047]">£{amount.toFixed(2)} per delivery{subscription.nextBillingDate ? ` • Next charge: ${subscription.nextBillingDate}` : ''}</p>
-                                  </div>
-                                  <button
-                                    onClick={() => openSubscriptionManager(subscription.id)}
-                                    className="w-full md:w-36 bg-white hover:bg-slate-50 border border-slate-200 text-[#071d37] font-bold text-xs py-2 rounded-xl cursor-pointer text-center"
-                                  >
-                                    Manage Plan
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : hasCancelledSubscription ? (
-                          <div className="text-center py-6 px-4 bg-rose-50 rounded-2xl border border-rose-100 space-y-2">
-                            <h4 className="text-sm font-black text-rose-900 uppercase tracking-wide">Subscription Cancelled</h4>
-                            <p className="text-xs text-rose-700">Your recurring subscription has been cancelled. No active plan is currently running.</p>
-                          </div>
-                        ) : (
-                          <div className="text-center py-6 px-4 bg-slate-50 rounded-2xl border border-slate-100">
-                            <h4 className="text-sm font-black text-slate-700 uppercase tracking-wide">Subscription Inactive</h4>
-                          </div>
-                        )}
-                      </div>
+                      {/*
+                        The plan summary that used to sit here now lives only on
+                        /pages/account/subscriptions, which is the page that can
+                        actually act on it. "Next Subscription Delivery" above
+                        already tells the dashboard reader where their plan
+                        stands, and links across to manage it.
+                      */}
 
                     </div>
 
@@ -3304,7 +3355,10 @@ export default function CustomerAccount({
                               const isPausedPlan = status === 'paused';
                               const busy = subActionBusyId === String(subscription.id);
                               const confirmingDelete = pendingDeleteSubId === String(subscription.id);
-                              const isManaged = String(activeSubscription?.id || '') === String(subscription.id);
+                              // Only the plan actually opened for management, not
+                              // activeSubscription's first-plan fallback — otherwise
+                              // the top card claims to be managed with no console below it.
+                              const isManaged = String(managedSubscription?.id || '') === String(subscription.id);
                               const nextDate = subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null;
                               const cancelledDate = subscription.cancelledAt ? new Date(subscription.cancelledAt) : null;
                               const formatDate = (d: Date | null) =>
@@ -3374,6 +3428,22 @@ export default function CustomerAccount({
                                     <p className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
                                       <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-px" />
                                       <span>{subscription.credentialIssue || 'This plan has no saved card mandate and cannot renew automatically.'}</span>
+                                    </p>
+                                  )}
+
+                                  {/*
+                                    Rebuilt from the customer's order because the
+                                    subscriptions store returned no record for it.
+                                    Said plainly rather than passed off as a fully
+                                    loaded plan: its details come from the order.
+                                  */}
+                                  {subscription.isDerivedFromOrder && (
+                                    <p className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
+                                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px text-slate-400" />
+                                      <span>
+                                        Rebuilt from order {subscription.sourceOrderId}. We could not load this plan's
+                                        live record, so the details shown come from that order.
+                                      </span>
                                     </p>
                                   )}
 
@@ -3455,10 +3525,40 @@ export default function CustomerAccount({
                         </div>
                       )}
 
-                      {/* Subscription management console */}
+                      {/*
+                        No plan to list and none to manage. The account is
+                        flagged as subscribed somewhere — a profile field, most
+                        likely — but nothing on the server backs it, so say so
+                        rather than showing an editor with nothing behind it.
+                      */}
+                      {visibleAccountSubscriptions.length === 0 && (
+                        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs text-center space-y-2">
+                          <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">No Plan Records Found</h3>
+                          <p className="text-xs text-slate-500 max-w-md mx-auto">
+                            Your account is marked as subscribed but we could not load a plan for it. If you have just
+                            subscribed, refresh in a moment — otherwise contact support and we will restore it.
+                          </p>
+                        </div>
+                      )}
+
+                      {/*
+                        Subscription management console — the "Manage This Plan"
+                        screen. It stays closed on the plan list: this is where a
+                        plan is edited, and editing one is something the customer
+                        opts into, not the page's default state.
+                      */}
+                      {isManagingSubscription && (
                       <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-6">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-4 border-b border-slate-100">
                           <div>
+                            <button
+                              type="button"
+                              onClick={closeSubscriptionManager}
+                              className="text-[10px] font-black uppercase tracking-wider text-slate-500 hover:text-[#071d37] flex items-center gap-1 mb-2 cursor-pointer transition-colors"
+                            >
+                              <ChevronRight className="w-3 h-3 rotate-180" />
+                              All Plans
+                            </button>
                             <div className="flex items-center gap-2">
                               <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">Subscription Plan & Deliveries</h3>
                               <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border ${
@@ -3756,40 +3856,33 @@ export default function CustomerAccount({
                           </div>
                         )}
                       </div>
+                      )}
 
                       {/*
-                        Box editor for the ONE plan being managed. Everything it
-                        writes is scoped to activeSubscription.id, so a customer
-                        with two plans edits them independently.
+                        "Your Active Box Lineup" — the editor for the ONE plan
+                        being managed. Like the console above it belongs to the
+                        manage screen, so it stays closed on the plan list.
+                        Everything it writes is scoped to the managed plan's id,
+                        so a customer with two plans edits them independently.
                       */}
-                      {activeSubscription ? (
+                      {isManagingSubscription && managedSubscription && (
                         <SubscriptionBoxManager
-                          key={String(activeSubscription.id)}
-                          subscription={activeSubscription}
+                          key={String(managedSubscription.id)}
+                          subscription={managedSubscription}
                           allProducts={allProducts}
                           capacity={
-                            Number(activeSubscription.cansCount) ||
-                            ACCOUNT_SUB_PLANS.find(t => t.id === getPlanSlug(activeSubscription.planName))?.cans ||
+                            Number(managedSubscription.cansCount) ||
+                            ACCOUNT_SUB_PLANS.find(t => t.id === getPlanSlug(managedSubscription.planName))?.cans ||
                             Number(custState.subCansCount) ||
                             6
                           }
-                          allowOverCapacity={getPlanSlug(activeSubscription.planName) === 'ultimate'}
+                          allowOverCapacity={getPlanSlug(managedSubscription.planName) === 'ultimate'}
                           disabled={['cancelled', 'canceled', 'inactive'].includes(
-                            String(activeSubscription.status || '').toLowerCase()
+                            String(managedSubscription.status || '').toLowerCase()
                           )}
                           saving={isSavingBox}
                           onSave={handleSaveSubscriptionBox}
                         />
-                      ) : (
-                        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs text-center space-y-2">
-                          <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">
-                            No Subscription To Manage
-                          </h3>
-                          <p className="text-xs text-slate-500 max-w-md mx-auto">
-                            Your box contents appear here once a subscription order has been placed. Build a plan to
-                            start choosing flavours.
-                          </p>
-                        </div>
                       )}
                     </>
                   )}
