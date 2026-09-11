@@ -3866,13 +3866,69 @@ export default function CustomerAccount({
                         rather than showing an editor with nothing behind it.
                       */}
                       {visibleAccountSubscriptions.length === 0 && (
-                        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs text-center space-y-2">
-                          <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">No Plan Records Found</h3>
-                          <p className="text-xs text-slate-500 max-w-md mx-auto">
-                            Your account is marked as subscribed but we could not load a plan for it. If you have just
-                            subscribed, refresh in a moment — otherwise contact support and we will restore it.
-                          </p>
-                        </div>
+                        deletedSubscriptions.length > 0 ? (
+                          /*
+                            The plans are not lost — they were removed from this
+                            list, which is why nothing shows. Saying so, and
+                            offering them back, beats a blank list the customer
+                            has to guess at.
+                          */
+                          <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-4">
+                            <div className="pb-3 border-b border-slate-100">
+                              <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">
+                                No Plans On Your List
+                              </h3>
+                              <p className="text-slate-400 text-[11px] mt-0.5">
+                                {deletedSubscriptions.length === 1
+                                  ? 'One plan was removed from this list.'
+                                  : `${deletedSubscriptions.length} plans were removed from this list.`}{' '}
+                                Your orders and invoices are unaffected. You can put a removed plan back below.
+                              </p>
+                            </div>
+
+                            <div className="space-y-2">
+                              {deletedSubscriptions.map(removed => {
+                                const busy = subActionBusyId === String(removed.id);
+                                const when = removed.deletedAt ? new Date(removed.deletedAt) : null;
+                                const whenLabel = when && !isNaN(when.getTime())
+                                  ? when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                                  : null;
+                                return (
+                                  <div
+                                    key={removed.id}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#f4f6f9] border border-slate-100 rounded-2xl p-3"
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="font-black text-xs text-[#071d37] truncate">
+                                        {removed.planName || 'Subscription Plan'}
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 mt-0.5">
+                                        Removed{whenLabel ? ` ${whenLabel}` : ''}
+                                      </p>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() => handleResumeSubscription(String(removed.id))}
+                                      className="shrink-0 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                                    >
+                                      <RefreshCw className={`w-3 h-3 ${busy ? 'animate-spin' : ''}`} />
+                                      {busy ? 'Restoring...' : 'Restore Plan'}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs text-center space-y-2">
+                            <h3 className="font-extrabold text-sm text-[#071d37] uppercase tracking-wider">No Plan Records Found</h3>
+                            <p className="text-xs text-slate-500 max-w-md mx-auto">
+                              Your account is marked as subscribed but we could not load a plan for it. If you have just
+                              subscribed, refresh in a moment — otherwise contact support and we will restore it.
+                            </p>
+                          </div>
+                        )
                       )}
 
                       {/*
