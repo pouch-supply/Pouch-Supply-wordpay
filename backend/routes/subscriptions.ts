@@ -1435,6 +1435,9 @@ router.get(
           .map(s => ({
             id: String(s.id),
             deletedAt: s.deletedAt || s.updatedAt || null,
+            // Lets the account page recognise an order that belonged to this
+            // plan back when orders did not record which plan billed them.
+            planName: s.planName || null,
           })),
       });
     } catch (error: any) {

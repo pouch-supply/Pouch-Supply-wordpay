@@ -47,6 +47,13 @@ export function getAccountPlanLabel(planId?: string): string {
   return tier ? `${tier.name} (${tier.cans} Canisters)` : 'CORE (8 Canisters)';
 }
 
+/** A plan the customer removed. The API reports these separately from live plans. */
+interface DeletedSubscription {
+  id: string;
+  deletedAt: string | null;
+  planName: string | null;
+}
+
 interface CustomerAccountProps {
   customers: Customer[];
   loggedInCustomer: Customer | null;
@@ -230,7 +237,7 @@ export default function CustomerAccount({
   // them from `subscriptions` entirely, so without this a removed plan would be
   // rebuilt from its own orders and reappear — and without the timestamp, an
   // order placed after the removal would be hidden along with it.
-  const [deletedSubscriptions, setDeletedSubscriptions] = useState<Array<{ id: string; deletedAt: string | null }>>([]);
+  const [deletedSubscriptions, setDeletedSubscriptions] = useState<DeletedSubscription[]>([]);
   // Which single subscription a per-plan Resume / Remove button is working on,
   // so one card's spinner does not disable every other card's buttons.
   const [subActionBusyId, setSubActionBusyId] = useState<string | null>(null);
@@ -338,14 +345,18 @@ export default function CustomerAccount({
    * holding a cached bundle against a newer server, or the reverse, still
    * honours removals instead of resurrecting every removed plan.
    */
-  const parseDeletedSubscriptions = (data: any): Array<{ id: string; deletedAt: string | null }> => {
+  const parseDeletedSubscriptions = (data: any): DeletedSubscription[] => {
     if (Array.isArray(data?.deletedSubscriptions)) {
       return data.deletedSubscriptions
         .filter((entry: any) => entry && entry.id)
-        .map((entry: any) => ({ id: String(entry.id), deletedAt: entry.deletedAt || null }));
+        .map((entry: any) => ({
+          id: String(entry.id),
+          deletedAt: entry.deletedAt || null,
+          planName: entry.planName || null
+        }));
     }
     if (Array.isArray(data?.deletedSubscriptionIds)) {
-      return data.deletedSubscriptionIds.map((id: any) => ({ id: String(id), deletedAt: null }));
+      return data.deletedSubscriptionIds.map((id: any) => ({ id: String(id), deletedAt: null, planName: null }));
     }
     return [];
   };
@@ -419,10 +430,14 @@ export default function CustomerAccount({
    * history — which is exactly what a customer who subscribed yesterday sees.
    * Rebuilding a card from the order keeps the plan on screen.
    */
-  const orderDerivedSubscriptions = useMemo(() => {
+  const { plans: orderDerivedSubscriptions, attributedOrderIds } = useMemo(() => {
     const storedIds = new Set(storedAccountSubscriptions.map((s: any) => String(s.id)));
     const removedAt = new Map(deletedSubscriptions.map(entry => [entry.id, entry.deletedAt]));
     const derived = new Map<string, any>();
+    // Orders judged to belong to a plan already on screen even though they do
+    // not name it. They need no card of their own and must not be reported as
+    // unattached either.
+    const attributed = new Set<string>();
 
     /**
      * When an order was actually placed, or null if that cannot be established.
@@ -465,6 +480,25 @@ export default function CustomerAccount({
       return orderTime <= removedTime;
     };
 
+    /**
+     * Plan tiers held by a plan that has no order of its own.
+     *
+     * This is what makes an order with no recorded plan attributable. Orders
+     * written before checkout stamped a subscription id cannot name their plan,
+     * so the only evidence they belong to an existing plan is that the plan has
+     * no other order claiming it. A plan whose own order is already in the
+     * history explains nothing about a further, unattributed order — that order
+     * is something else the customer bought, and it gets its own card.
+     */
+    const claimedPlanIds = new Set(
+      mySubOrders.map(order => getOrderSubscriptionId(order)).filter(Boolean)
+    );
+    const unclaimedPlanTiers = new Set(
+      [...storedAccountSubscriptions, ...deletedSubscriptions]
+        .filter((plan: any) => !claimedPlanIds.has(String(plan.id)))
+        .map((plan: any) => getPlanSlug(plan.planName || ''))
+    );
+
     // mySubOrders is newest-first, so the first order seen for a plan is the
     // one whose price, frequency and box contents are current.
     for (const order of mySubOrders) {
@@ -475,14 +509,19 @@ export default function CustomerAccount({
       // Removing a plan is meant to take it off this list for good. Its orders
       // stay in the history, so rebuilding from them would undo the removal.
       if (linkedId && removalCovers(linkedId, order)) continue;
-      // An order naming no plan cannot be attributed to one, so it is only
-      // rebuilt when the customer holds no plans at all and has removed none:
-      // there is nothing else it could belong to. This mirrors how the server
-      // treats unlinked orders.
-      if (!linkedId && (storedIds.size > 0 || removedAt.size > 0)) continue;
 
       const details = extractSubscriptionDetails(order, allProducts as any);
       const planName = details.planName || 'Subscription Box';
+
+      // An order naming no plan is assumed to belong to a plan of its own tier
+      // that has no order claiming it yet — that is the pre-subscriptionId data
+      // this guard exists for. Once every plan of that tier already has its own
+      // order, an extra unattributed order is a separate purchase and gets its
+      // own card rather than being swallowed.
+      if (!linkedId && unclaimedPlanTiers.has(getPlanSlug(planName))) {
+        attributed.add(String(order.id));
+        continue;
+      }
       // Renewals of one plan collapse onto a single card rather than showing
       // one card per delivery.
       const key = linkedId || `plan:${planName.toLowerCase()}`;
@@ -523,7 +562,7 @@ export default function CustomerAccount({
       });
     }
 
-    return Array.from(derived.values());
+    return { plans: Array.from(derived.values()), attributedOrderIds: attributed };
   }, [mySubOrders, storedAccountSubscriptions, deletedSubscriptions, allProducts]);
 
   const visibleAccountSubscriptions = useMemo(
@@ -569,12 +608,12 @@ export default function CustomerAccount({
    * of vanishing.
    */
   const unlistedSubscriptionOrders = useMemo(() => {
-    const accounted = new Set<string>();
+    const accounted = new Set<string>(attributedOrderIds);
     for (const subscription of visibleAccountSubscriptions) {
       for (const id of subscriptionOrderIds(subscription)) accounted.add(id);
     }
     return mySubOrders.filter(order => !accounted.has(String(order.id)));
-  }, [mySubOrders, visibleAccountSubscriptions, subscriptionOrderIds]);
+  }, [mySubOrders, visibleAccountSubscriptions, subscriptionOrderIds, attributedOrderIds]);
 
   /**
    * The plan the management screen is editing.
