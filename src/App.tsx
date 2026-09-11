@@ -354,6 +354,9 @@ export default function App() {
   const [isInitialLoadDone, setIsInitialLoadDone] = useState(false);
   const [isDbOffline, setIsDbOffline] = useState<boolean>(false);
   const lastSyncedHash = useRef<Record<string, string>>({});
+  // Per-order copy of what the server last held, keyed by order id. The order
+  // sync sends only orders whose current state differs from this.
+  const syncedOrderSnapshots = useRef<Map<string, string>>(new Map());
 
   // Reusable, highly robust sync engine that checks database connectivity headers and avoids redundant syncs
   const syncToApi = async (resource: string, payload: any[]) => {
@@ -461,6 +464,11 @@ export default function App() {
         if (Array.isArray(ordersRes)) {
           setOrders(ordersRes);
           lastSyncedHash.current['orders'] = JSON.stringify(ordersRes);
+          // The server's copy of each order is the baseline the order sync
+          // compares against, so only orders changed in this tab are sent back.
+          syncedOrderSnapshots.current = new Map(
+            ordersRes.filter((o: any) => o && o.id).map((o: any) => [String(o.id), JSON.stringify(o)])
+          );
           loadedOrdersSuccess.current = true;
         }
         if (Array.isArray(filesRes)) {
@@ -971,6 +979,11 @@ export default function App() {
           const freshOrders = await res.json();
           if (Array.isArray(freshOrders)) {
             const sorted = [...freshOrders].sort((a, b) => parseOrderTime(b) - parseOrderTime(a));
+            // Fresh from the server, so they become the baseline — otherwise the
+            // order sync would treat them as local edits and post them back.
+            syncedOrderSnapshots.current = new Map(
+              sorted.filter((o: any) => o && o.id).map((o: any) => [String(o.id), JSON.stringify(o)])
+            );
             setOrders(sorted);
           }
         }
@@ -1003,10 +1016,44 @@ export default function App() {
     }
   }, [collections, isInitialLoadDone]);
 
+  /**
+   * Sends back only the orders this tab actually changed.
+   *
+   * This used to POST the entire order list from every browser — shoppers
+   * included — whenever anything in it changed, and the server saved that list
+   * as the new truth. A tab holding an out-of-date or damaged copy therefore
+   * overwrote every order in the store, reverting other people's changes and
+   * deleting orders it had never seen. Now each order is compared with the
+   * server's copy loaded into this tab, and only the ones that differ are sent.
+   * Nothing is sent at all until the server's orders have loaded, so a copy
+   * restored from localStorage can never be pushed back as if it were current.
+   */
   useEffect(() => {
     safeSaveToLocalStorage('ps_orders', orders);
-    if (isInitialLoadDone) {
-      syncToApi('orders', orders);
+    if (!isInitialLoadDone || !loadedOrdersSuccess.current) return;
+
+    const baseline = syncedOrderSnapshots.current;
+    const present = new Set<string>();
+    const changed: Order[] = [];
+    for (const order of orders) {
+      if (!order || !order.id) continue;
+      const id = String(order.id);
+      present.add(id);
+      const serialized = JSON.stringify(order);
+      if (baseline.get(id) !== serialized) {
+        changed.push(order);
+        baseline.set(id, serialized);
+      }
+    }
+    // An order removed here (the admin's delete, which calls DELETE itself)
+    // leaves the baseline, so restoring it with Undo counts as a change.
+    for (const id of Array.from(baseline.keys())) {
+      if (!present.has(id)) baseline.delete(id);
+    }
+
+    if (changed.length > 0) {
+      lastSyncedHash.current['orders'] = '';
+      syncToApi('orders', changed);
     }
   }, [orders, isInitialLoadDone]);
 

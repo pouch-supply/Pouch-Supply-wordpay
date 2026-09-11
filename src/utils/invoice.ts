@@ -1,5 +1,10 @@
 import { Order, Product } from '../types';
-import { parseSubscriptionProducts, formatSubscriptionItemDisplay, isSubscriptionLineItem } from './subscriptionParser';
+import {
+  parseSubscriptionProducts,
+  formatSubscriptionItemDisplay,
+  isSubscriptionLineItem,
+  extractSubscriptionDetails
+} from './subscriptionParser';
 
 /**
  * Printable / downloadable invoices for the customer portal.
@@ -82,13 +87,18 @@ export function buildInvoiceHtml(
   const totals = buildInvoiceTotals(order);
   const invoiceNo = getInvoiceNumber(order);
   const tracking = order.trackingNumber || order.trackingId || order.data?.royalMail?.trackingNumber || '';
-  const subDetails: any = (order as any).subscriptionDetails;
+  // The plan this order was bought as, resolved the same way the admin and the
+  // account page resolve it. The raw stored planName can name another tier on
+  // orders the old plan sync rewrote, and an invoice must describe the sale.
+  const subDetails: any = (order.items || []).some(isSubscriptionLineItem)
+    ? extractSubscriptionDetails(order, catalog as any)
+    : null;
 
   const rows = (order.items || [])
     .map(item => {
       const isSub = isSubscriptionLineItem(item);
       const title = isSub
-        ? subDetails?.planName || (item as any).subscriptionPlan || item.productTitle
+        ? subDetails?.planName || item.productTitle
         : item.productTitle;
       const qty = Number(item.quantity) || 0;
       const unit = Number(item.price) || 0;

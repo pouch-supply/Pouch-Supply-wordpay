@@ -318,8 +318,24 @@ router.post("/update-schedule", async (req: Request, res: Response) => {
 });
 
 /**
- * Update complete subscription plan, products/flavors, and box items for an active customer.
- * Persists updates to Neon PostgreSQL, StoreResource, Customer profile, and recent subscription orders.
+ * Update one subscription plan — its tier, price, frequency, box contents or
+ * status — at the customer's request.
+ *
+ * Three rules this endpoint used to break, each of which rewrote real data:
+ *
+ * - It never touches orders. An order is the record of what the customer
+ *   bought and paid for. This endpoint used to rewrite the plan name, box
+ *   contents, line price and total of EVERY subscription order the customer had
+ *   ever placed, so switching tier (or anything that triggered this call)
+ *   turned a paid LITE order into a PRO one in the admin. A plan change affects
+ *   future renewals only; the renewal worker builds those from the plan.
+ *
+ * - It only writes the fields the caller sent. Missing fields used to be filled
+ *   with defaults — "Custom Box", £0, an empty box, "active" — so a request that
+ *   only meant to change the status wiped the rest of the plan.
+ *
+ * - It never creates a plan. An id that matches nothing used to be inserted as
+ *   a brand-new subscription, which is how stray plans appeared on accounts.
  */
 router.post("/update-plan", async (req: Request, res: Response) => {
   try {
@@ -349,220 +365,155 @@ router.post("/update-plan", async (req: Request, res: Response) => {
     }
 
     const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
-    const finalPlanName = subPlan || planName || (planId ? planId.toUpperCase() : "Custom Box");
-    const finalPlanId = planId || (subPlan ? subPlan.toLowerCase().split(" ")[0] : "custom");
-    const finalAmount = Number(subPrice ?? amount ?? 0);
-    // Store the canonical interval so the renewal worker schedules the plan the
-    // admin actually picked, whatever wording the UI sent.
-    const finalInterval = normalizeBillingInterval(subFrequency || billingInterval || "Bi-Weekly");
-    const finalItems = subItems || items || [];
-    const finalCans = subCansCount ?? cansCount ?? (Array.isArray(finalItems) ? finalItems.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0) : 6);
-    const finalStatus = (subStatus || status || "active").toLowerCase();
+    const given = (v: any) => v !== undefined && v !== null && String(v).trim() !== "";
 
-    // The box contents belong in Postgres too. They were only ever written to
-    // the JSON store, so a renewal reading the subscription from Prisma could
-    // not reproduce the box the customer had just edited.
-    const planFields = {
-      planId: finalPlanId,
-      planName: finalPlanName,
-      amount: finalAmount,
-      billingInterval: finalInterval,
-      status: finalStatus,
-      ...(Array.isArray(finalItems) ? { items: finalItems } : {}),
-      ...(Number.isFinite(Number(finalCans)) ? { cansCount: Number(finalCans) } : {}),
-      ...(nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {})
-    };
-
-    // 1. Update Prisma subscription record if exists
-    if (subscriptionId) {
-      try {
-        await prisma.subscription.update({
-          where: { id: subscriptionId },
-          data: planFields
-        });
-      } catch (_e) {}
-    } else if (emailClean) {
-      try {
-        const existingSub = await prisma.subscription.findFirst({
-          where: { customerEmail: emailClean }
-        });
-        if (existingSub) {
-          await prisma.subscription.update({
-            where: { id: existingSub.id },
-            data: planFields
-          });
-        }
-      } catch (_e) {}
-    }
-
-    // 2. Update StoreResource 'subscriptions'
-    try {
-      const storedSubs: any[] = (await fetchResource("subscriptions")) || [];
-      let foundSub = false;
-      const updatedSubs = storedSubs.map((s: any) => {
-        // A named subscription is the only one touched. Matching on the email as
-        // well meant editing one plan rewrote every plan the customer had — a
-        // customer with two boxes saw both change when they edited either.
-        const match = subscriptionId
-          ? String(s.id) === String(subscriptionId)
-          : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean && !isDeletedStatus(s.status));
-        if (match) {
-          foundSub = true;
-          return {
-            ...s,
-            planId: finalPlanId,
-            planName: finalPlanName,
-            amount: finalAmount,
-            billingInterval: finalInterval,
-            items: finalItems,
-            cansCount: finalCans,
-            status: finalStatus,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return s;
-      });
-
-      if (!foundSub && emailClean) {
-        updatedSubs.push({
-          id: subscriptionId || `sub_${Date.now()}`,
-          customerEmail: emailClean,
-          planId: finalPlanId,
-          planName: finalPlanName,
-          amount: finalAmount,
-          billingInterval: finalInterval,
-          items: finalItems,
-          cansCount: finalCans,
-          status: finalStatus,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+    // Which plan is being changed. Named by id, or — only when the customer
+    // holds exactly one plan — by email. With several plans an unnamed request
+    // is refused: there is no telling which plan the customer meant, and
+    // guessing is how one plan's settings ended up on another.
+    const ownPlans = emailClean
+      ? (await loadCustomerSubscriptions(emailClean)).filter(s => !isDeletedStatus(s.status))
+      : [];
+    let targetId = subscriptionId ? String(subscriptionId) : null;
+    if (!targetId) {
+      if (ownPlans.length !== 1) {
+        return res.status(400).json({
+          success: false,
+          message: ownPlans.length === 0
+            ? "No subscription found for this customer."
+            : "subscriptionId is required: this customer has more than one plan."
         });
       }
-      await saveResource("subscriptions", updatedSubs);
+      targetId = String(ownPlans[0].id);
+    }
+
+    // Fields the caller actually sent, and nothing else. `planName` is the
+    // plan's real name; `subPlan` is only a tier slug ("pro"), so it is used for
+    // the name only as a last resort.
+    const itemsIn = Array.isArray(subItems) ? subItems : Array.isArray(items) ? items : undefined;
+    const amountIn = given(subPrice) ? Number(subPrice) : given(amount) ? Number(amount) : undefined;
+    const cansIn = given(subCansCount)
+      ? Number(subCansCount)
+      : given(cansCount)
+        ? Number(cansCount)
+        : itemsIn
+          ? itemsIn.reduce((sum: number, it: any) => sum + (Number(it?.quantity) || 1), 0)
+          : undefined;
+
+    const patch: Record<string, any> = {};
+    if (given(planName)) patch.planName = String(planName);
+    else if (given(subPlan)) patch.planName = String(subPlan);
+    if (given(planId)) patch.planId = String(planId);
+    else if (given(subPlan)) patch.planId = String(subPlan).toLowerCase().split(" ")[0];
+    // A price of zero is never a real plan price; it is what a missing field
+    // used to turn into, and writing it would make the next renewal free.
+    if (amountIn !== undefined && Number.isFinite(amountIn) && amountIn > 0) patch.amount = amountIn;
+    // Stored in canonical form so the renewal worker schedules what was picked.
+    if (given(subFrequency) || given(billingInterval)) {
+      patch.billingInterval = normalizeBillingInterval(subFrequency || billingInterval);
+    }
+    if (itemsIn) patch.items = itemsIn;
+    if (cansIn !== undefined && Number.isFinite(cansIn)) patch.cansCount = cansIn;
+    if (given(subStatus) || given(status)) patch.status = String(subStatus || status).toLowerCase();
+    if (given(nextBillingDate)) patch.nextBillingDate = new Date(nextBillingDate);
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ success: false, message: "Nothing to update." });
+    }
+
+    // 1. The file store — the source the account page reads.
+    let updatedPlan: any = null;
+    try {
+      const storedSubs: any[] = (await fetchResource("subscriptions")) || [];
+      const updatedSubs = storedSubs.map((s: any) => {
+        if (String(s.id) !== targetId) return s;
+        // A customer may only change their own plan.
+        if (emailClean && String(s.customerEmail || "").toLowerCase().trim() !== emailClean) return s;
+        updatedPlan = {
+          ...s,
+          ...patch,
+          ...(patch.nextBillingDate ? { nextBillingDate: patch.nextBillingDate.toISOString() } : {}),
+          updatedAt: new Date().toISOString()
+        };
+        return updatedPlan;
+      });
+      if (updatedPlan) await saveResource("subscriptions", updatedSubs);
     } catch (_e) {}
 
-    // 3. Update StoreResource 'customers' & Prisma Customer
-    let updatedCustomerRecord: any = null;
+    // 2. Postgres, when the plan lives there.
+    try {
+      const existing = await prisma.subscription.findUnique({ where: { id: targetId } });
+      if (existing && (!emailClean || String(existing.customerEmail || "").toLowerCase().trim() === emailClean)) {
+        const row = await prisma.subscription.update({ where: { id: targetId }, data: patch });
+        updatedPlan = updatedPlan || row;
+      }
+    } catch (_e) {}
+
+    if (!updatedPlan) {
+      return res.status(404).json({ success: false, message: "Subscription plan not found for this customer." });
+    }
+
+    // 3. The customer profile mirrors a plan's settings for the storefront. Only
+    //    what changed is copied across, and the account-level status says
+    //    "cancelled" only when no plan at all is left running.
     if (emailClean) {
-      try {
-        const storedCustomers: any[] = (await fetchResource("customers")) || [];
-        const updatedCustList = storedCustomers.map((c: any) => {
-          if (String(c.email || "").toLowerCase().trim() === emailClean) {
-            const updatedC = {
-              ...c,
-              subscriptionStatus: finalStatus === "active" ? "Subscribed" : (finalStatus === "paused" ? "Paused" : "Not subscribed"),
-              subStatus: finalStatus === "active" ? "Active" : (finalStatus === "paused" ? "Paused" : "Cancelled"),
-              subPlan: finalPlanName,
-              subPrice: finalAmount,
-              subFrequency: finalInterval,
-              subCansCount: finalCans,
-              subItems: finalItems,
-              subPlanManuallyConfigured: true,
-              ...(nextPayment ? { nextPayment } : {}),
-              ...(nextDelivery ? { nextDelivery } : {}),
-              data: {
-                ...(c.data || {}),
-                subPlan: finalPlanName,
-                subPrice: finalAmount,
-                subFrequency: finalInterval,
-                subCansCount: finalCans,
-                subItems: finalItems,
-                subPlanManuallyConfigured: true
-              }
-            };
-            updatedCustomerRecord = updatedC;
-            return updatedC;
-          }
-          return c;
-        });
+      const liveStatuses = ["active", "subscribed", "paused"];
+      const planStatus = String(updatedPlan.status || "").toLowerCase();
+      const anotherLive = await customerHasOtherLiveSubscription(emailClean, targetId);
+      const profileStatus = patch.status === undefined
+        ? undefined
+        : liveStatuses.includes(planStatus)
+          ? (planStatus === "paused" && !anotherLive ? "Paused" : "Active")
+          : (anotherLive ? "Active" : "Cancelled");
 
-        await saveResource("customers", updatedCustList);
+      const profilePatch: Record<string, any> = {
+        ...(patch.planName !== undefined ? { subPlan: patch.planName } : {}),
+        ...(patch.amount !== undefined ? { subPrice: patch.amount } : {}),
+        ...(patch.billingInterval !== undefined ? { subFrequency: patch.billingInterval } : {}),
+        ...(patch.cansCount !== undefined ? { subCansCount: patch.cansCount } : {}),
+        ...(profileStatus
+          ? {
+              subStatus: profileStatus,
+              subscriptionStatus: profileStatus === "Active" ? "Subscribed" : profileStatus === "Paused" ? "Paused" : "Not subscribed"
+            }
+          : {}),
+        ...(given(nextPayment) ? { nextPayment } : {}),
+        ...(given(nextDelivery) ? { nextDelivery } : {})
+      };
 
-        // Update Prisma customer table
+      if (Object.keys(profilePatch).length > 0 || patch.items) {
         try {
-          await prisma.customer.updateMany({
-            where: { email: emailClean },
-            data: {
-              subscriptionStatus: finalStatus === "active" ? "Subscribed" : (finalStatus === "paused" ? "Paused" : "Not subscribed"),
-              subStatus: finalStatus === "active" ? "Active" : (finalStatus === "paused" ? "Paused" : "Cancelled"),
-              subPlan: finalPlanName,
-              subPrice: finalAmount,
-              subFrequency: finalInterval,
-              subCansCount: finalCans,
-              ...(nextPayment ? { nextPayment } : {}),
-              ...(nextDelivery ? { nextDelivery } : {})
-            }
+          const storedCustomers: any[] = (await fetchResource("customers")) || [];
+          let changed = false;
+          const updatedCustList = storedCustomers.map((c: any) => {
+            if (String(c.email || "").toLowerCase().trim() !== emailClean) return c;
+            changed = true;
+            return {
+              ...c,
+              ...profilePatch,
+              ...(patch.items ? { subItems: patch.items } : {}),
+              data: { ...(c.data || {}), ...profilePatch, ...(patch.items ? { subItems: patch.items } : {}) }
+            };
           });
-        } catch (_prErr) {}
-      } catch (_e) {}
-    }
+          if (changed) await saveResource("customers", updatedCustList);
+        } catch (_e) {}
 
-    // 4. Update the most recent subscription order in StoreResource 'orders' if available
-    if (emailClean) {
-      try {
-        const storedOrders: any[] = (await fetchResource("orders")) || [];
-        const updatedOrders = storedOrders.map((o: any) => {
-          const isCustomerOrder = String(o.customerEmail || "").toLowerCase().trim() === emailClean;
-          if (isCustomerOrder && Array.isArray(o.items)) {
-            const hasSubItem = o.items.some((i: any) => i.isSubscription || i.subscriptionPlan) ||
-              Boolean(o.subscriptionDetails) ||
-              (Array.isArray(o.tags) && o.tags.some((t: any) => String(t).toLowerCase().includes('subscription')));
-
-            if (hasSubItem) {
-              const updatedItems = o.items.map((i: any) => {
-                const isSub = i.isSubscription || i.subscriptionPlan || (Array.isArray(o.tags) && o.tags.some((t: any) => String(t).toLowerCase().includes('subscription')));
-                if (isSub) {
-                  return {
-                    ...i,
-                    subscriptionPlan: finalPlanName,
-                    subscriptionFrequency: finalInterval,
-                    price: finalAmount > 0 ? finalAmount : i.price,
-                    selectedProducts: finalItems,
-                    selectedFlavors: finalItems,
-                    subscriptionItems: finalItems,
-                    items: finalItems
-                  };
-                }
-                return i;
-              });
-
-              return {
-                ...o,
-                items: updatedItems,
-                subscriptionDetails: {
-                  ...(o.subscriptionDetails || {}),
-                  planName: finalPlanName,
-                  frequency: finalInterval,
-                  items: finalItems,
-                  selectedProducts: finalItems,
-                  subItems: finalItems,
-                  lastSwappedAt: new Date().toISOString()
-                },
-                total: finalAmount > 0 ? finalAmount : o.total
-              };
-            }
+        try {
+          if (Object.keys(profilePatch).length > 0) {
+            await prisma.customer.updateMany({ where: { email: emailClean }, data: profilePatch });
           }
-          return o;
-        });
-        await saveResource("orders", updatedOrders);
-      } catch (_ordErr) {}
+        } catch (_prErr) {}
+      }
     }
 
-    console.log(`[Subscription Plan Update] Successfully updated subscription for ${emailClean || subscriptionId}: ${finalPlanName} (£${finalAmount})`);
+    console.log(
+      `[Subscription Plan Update] ${targetId} updated for ${emailClean || "unknown"}: ${Object.keys(patch).join(", ")}`
+    );
 
     return res.json({
       success: true,
-      message: `Subscription plan updated to ${finalPlanName} successfully!`,
-      plan: {
-        planId: finalPlanId,
-        planName: finalPlanName,
-        amount: finalAmount,
-        billingInterval: finalInterval,
-        cansCount: finalCans,
-        items: finalItems,
-        status: finalStatus
-      },
-      customer: updatedCustomerRecord
+      message: "Subscription plan updated.",
+      plan: toCustomerSubscription(updatedPlan)
     });
   } catch (error: any) {
     console.error("[Subscription Plan Update] Error:", error);

@@ -10,6 +10,27 @@ export const PLAN_IMAGES: Record<string, string> = {
   ultimate: ultimatePlanImg,
 };
 
+export type PlanTier = 'lite' | 'core' | 'pro' | 'ultimate';
+
+/**
+ * The tier a plan name or title names, or null when it names none.
+ *
+ * Reads only the heading — the part before " - ", "[" or "(" — because
+ * everything after it is the box's product list, and product names can contain
+ * "pro" or "core". Matching the whole string with `includes('pro')`, checked
+ * before 'lite', is how a LITE plan got read as PRO.
+ *
+ * Unlike getPlanSlug this never guesses. getPlanSlug falls back to 'pro' so a
+ * picture can always be chosen; a fallback is fine for a picture but not for
+ * deciding what a customer bought or what to write back to their plan.
+ */
+export function detectPlanTier(text?: string | null): PlanTier | null {
+  if (!text) return null;
+  const heading = String(text).toLowerCase().split(/\s+-\s+|\[|\(/)[0];
+  const match = heading.match(/\b(ultimate|core|lite|pro)\b/);
+  return match ? (match[1] as PlanTier) : null;
+}
+
 export function getPlanSlug(planNameOrTitle?: string): 'lite' | 'core' | 'pro' | 'ultimate' {
   if (!planNameOrTitle) return 'pro';
   const str = String(planNameOrTitle).trim();

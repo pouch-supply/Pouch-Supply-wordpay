@@ -105,18 +105,24 @@ export async function saveSingleOrder(orderData: any) {
     const title = (subItem?.productTitle || '').toLowerCase();
     const prodId = (subItem?.productId || '').toLowerCase();
 
-    if (rawPlan.includes('ultimate') || title.startsWith('ultimate') || title.includes('ultimate plan') || prodId.includes('ultimate')) {
-      planName = 'ULTIMATE Plan';
-    } else if (rawPlan.includes('pro') || title.startsWith('pro') || title.includes('pro plan') || prodId.includes('pro')) {
-      planName = 'PRO Plan';
-    } else if (rawPlan.includes('core') || title.startsWith('core') || title.includes('core plan') || prodId.includes('core')) {
-      planName = 'CORE Plan';
-    } else if (rawPlan.includes('lite') || title.startsWith('lite') || title.includes('lite plan') || prodId.includes('lite')) {
-      planName = 'LITE Plan';
+    // The tier comes from the heading of the title the order was sold under —
+    // the part before " - ", "[" or "(" — as a whole word. This used to test
+    // substrings of the full plan string and of the product id ("product-…"
+    // contains "pro"), checking PRO before LITE, and fell back to 'PRO Plan'
+    // when nothing matched. So LITE orders were recorded as PRO.
+    const tierIn = (text: any): string | null => {
+      const heading = String(text || '').toLowerCase().split(/\s+-\s+|\[|\(/)[0];
+      const m = heading.match(/\b(ultimate|core|lite|pro)\b/);
+      return m ? m[1] : null;
+    };
+    const tier = tierIn(subItem?.productTitle) || tierIn(subItem?.subscriptionSummary) || tierIn(rawPlan) || tierIn(prodId);
+    if (tier) {
+      planName = `${tier.toUpperCase()} Plan`;
     } else if (subItem?.subscriptionPlan) {
       planName = subItem.subscriptionPlan;
     } else {
-      planName = 'PRO Plan';
+      // Unknown tier: keep the title the customer bought rather than guessing.
+      planName = subItem?.productTitle || 'Subscription Plan';
     }
 
     let frequency = subItem?.subscriptionFrequency || (orderData as any).subscriptionFrequency || '';
@@ -562,36 +568,42 @@ router.post("/", async (req: Request, res: Response) => {
     const payload = req.body;
 
     if (Array.isArray(payload)) {
-      const formattedOrders = payload.map((orderData: any) => {
-        const id = String(orderData.id || orderData.orderId || `PS${Math.floor(Math.random() * 90000 + 10000)}`);
-        return {
-          id,
-          customerName: orderData.customerName || 'Valued Customer',
-          customerEmail: orderData.customerEmail || 'customer@pouch-supply.com',
-          tags: Array.isArray(orderData.tags) ? orderData.tags : ['Storefront', 'Online Order'],
-          fulfillmentStatus: orderData.fulfillmentStatus || 'Unfulfilled',
-          paymentStatus: orderData.paymentStatus || (orderData.total === 0 ? 'Paid' : 'Pending'),
-          worldpayTxId: orderData.worldpayTxId || orderData.gatewayTxId || null,
-          worldpayAuthCode: orderData.worldpayAuthCode || orderData.gatewayAuthCode || null,
-          gatewayTxId: orderData.gatewayTxId || orderData.worldpayTxId || null,
-          gatewayAuthCode: orderData.gatewayAuthCode || orderData.worldpayAuthCode || null,
-          cardBrand: orderData.cardBrand || 'Card',
-          total: typeof orderData.total === 'number' ? orderData.total : parseFloat(orderData.total) || 0,
-          storeCreditApplied: typeof orderData.storeCreditApplied === 'number' ? orderData.storeCreditApplied : parseFloat(orderData.storeCreditApplied) || 0,
-          destination: orderData.destination || orderData.address || 'United Kingdom',
-          date: orderData.date || (new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
-          deliveryMethod: orderData.deliveryMethod || 'Royal Mail Tracked 24/48',
-          items: orderData.items || [],
-          discountApplied: orderData.discountApplied || null,
-          trackingNumber: orderData.trackingNumber || null,
-          carrier: orderData.carrier || null,
-          data: orderData.data || {}
-        };
-      });
+      /*
+        Merge, never replace.
 
-      const savedOrders = await saveResource('orders', formattedOrders);
+        This used to save the posted array AS the order list. Any browser could
+        post it — the storefront syncs its in-memory orders here — so a tab
+        holding a stale or damaged copy overwrote every order in the store, and
+        orders it did not know about were deleted. Each posted order is now
+        upserted by id onto the stored list; orders not in the payload are left
+        alone. Deleting an order goes through DELETE /api/orders/:id.
+
+        Each order also used to be rebuilt from a fixed whitelist of fields, so
+        every sync silently stripped subscriptionId, subscriptionDetails,
+        isSubscription, createdAt, returnRequest and trackingHistory from every
+        order. The stored order is now the base and the posted one is laid over
+        it, so nothing the payload omits is lost.
+      */
+      const currentOrders: any[] = (await fetchResource('orders')) || [];
+      const byId = new Map<string, any>();
+      currentOrders.forEach((o: any) => { if (o && o.id) byId.set(String(o.id), o); });
+
+      for (const orderData of payload) {
+        if (!orderData || typeof orderData !== 'object') continue;
+        const id = String(orderData.id || orderData.orderId || '');
+        if (!id) continue; // An order with no id cannot be matched, so it is not invented.
+        const existing = byId.get(id);
+        const merged: any = { ...(existing || {}), ...orderData, id };
+        if (typeof merged.total !== 'number') merged.total = parseFloat(merged.total) || 0;
+        if (!Array.isArray(merged.tags)) merged.tags = ['Storefront', 'Online Order'];
+        if (!Array.isArray(merged.items)) merged.items = [];
+        byId.set(id, merged);
+      }
+
+      const savedOrders = await saveResource('orders', Array.from(byId.values()));
       return res.json(savedOrders);
-    } else if (payload && typeof payload === 'object') {
+    }
+    if (payload && typeof payload === 'object') {
       const savedOrder = await saveSingleOrder(payload);
       return res.json({ success: true, order: savedOrder });
     } else {

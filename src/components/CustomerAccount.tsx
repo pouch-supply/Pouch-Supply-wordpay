@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
 import SubscriptionIcon from './SubscriptionIcon';
 import { useRecaptcha } from '../hooks/useRecaptcha';
-import { getPlanImage, getPlanSlug } from '../utils/planImages';
+import { getPlanImage, getPlanSlug, detectPlanTier } from '../utils/planImages';
 import {
   parseSubscriptionProducts,
   formatSubscriptionItemDisplay,
@@ -45,6 +45,23 @@ export const STANDARD_DELIVERY_COST = 2.99;
 export function getAccountPlanLabel(planId?: string): string {
   const tier = ACCOUNT_SUB_PLANS.find(p => p.id === planId);
   return tier ? `${tier.name} (${tier.cans} Canisters)` : 'CORE (8 Canisters)';
+}
+
+/**
+ * The frequency option the plan console shows for a stored billing interval.
+ *
+ * Plans store a canonical interval ("bi-weekly", "month", "1day"); the console
+ * offers "Weekly" / "Bi-Weekly" / "One Month". Anything else ("1day" for the
+ * Next Day test plans) is returned unchanged and shown as its own option, so
+ * opening a plan never quietly swaps its schedule for the first option.
+ */
+export function billingIntervalToFrequencyOption(interval?: string | null): string {
+  const s = String(interval || '').toLowerCase().trim();
+  if (!s) return '';
+  if (/bi[\s_-]*week|fortnight|14/.test(s)) return 'Bi-Weekly';
+  if (/month|30/.test(s)) return 'One Month';
+  if (/week|\b7\b/.test(s)) return 'Weekly';
+  return String(interval);
 }
 
 /** A plan the customer removed. The API reports these separately from live plans. */
@@ -433,14 +450,14 @@ export default function CustomerAccount({
    * history — which is exactly what a customer who subscribed yesterday sees.
    * Rebuilding a card from the order keeps the plan on screen.
    */
-  const { plans: orderDerivedSubscriptions, attributedOrderIds } = useMemo(() => {
+  const { plans: orderDerivedSubscriptions, attributedOrderIdsByPlan } = useMemo(() => {
     const storedIds = new Set(storedAccountSubscriptions.map((s: any) => String(s.id)));
     const removedAt = new Map(deletedSubscriptions.map(entry => [entry.id, entry.deletedAt]));
     const derived = new Map<string, any>();
-    // Orders judged to belong to a plan already on screen even though they do
-    // not name it. They need no card of their own and must not be reported as
-    // unattached either.
-    const attributed = new Set<string>();
+    // Orders that do not name a plan, attached to the plan on screen they most
+    // plausibly belong to. They are shown on that plan's card, so they need no
+    // card of their own and are not reported as unattached.
+    const attributed = new Map<string, string[]>();
 
     /**
      * When an order was actually placed, or null if that cannot be established.
@@ -484,7 +501,7 @@ export default function CustomerAccount({
     };
 
     /**
-     * Plan tiers held by a plan that has no order of its own.
+     * Plans on screen that no order claims yet, by tier.
      *
      * This is what makes an order with no recorded plan attributable. Orders
      * written before checkout stamped a subscription id cannot name their plan,
@@ -492,15 +509,21 @@ export default function CustomerAccount({
      * no other order claiming it. A plan whose own order is already in the
      * history explains nothing about a further, unattributed order — that order
      * is something else the customer bought, and it gets its own card.
+     *
+     * Only plans actually shown count. Removed plans used to count too, so an
+     * order was "attributed" to a plan the customer could not see and vanished
+     * from the page entirely.
      */
     const claimedPlanIds = new Set(
       mySubOrders.map(order => getOrderSubscriptionId(order)).filter(Boolean)
     );
-    const unclaimedPlanTiers = new Set(
-      [...storedAccountSubscriptions, ...deletedSubscriptions]
-        .filter((plan: any) => !claimedPlanIds.has(String(plan.id)))
-        .map((plan: any) => getPlanSlug(plan.planName || ''))
-    );
+    const unclaimedPlansByTier = new Map<string, string[]>();
+    for (const plan of storedAccountSubscriptions as any[]) {
+      if (claimedPlanIds.has(String(plan.id))) continue;
+      const tier = detectPlanTier(plan.planName);
+      if (!tier) continue;
+      unclaimedPlansByTier.set(tier, [...(unclaimedPlansByTier.get(tier) || []), String(plan.id)]);
+    }
 
     // mySubOrders is newest-first, so the first order seen for a plan is the
     // one whose price, frequency and box contents are current.
@@ -521,8 +544,11 @@ export default function CustomerAccount({
       // this guard exists for. Once every plan of that tier already has its own
       // order, an extra unattributed order is a separate purchase and gets its
       // own card rather than being swallowed.
-      if (!linkedId && unclaimedPlanTiers.has(getPlanSlug(planName))) {
-        attributed.add(String(order.id));
+      const orderTier = detectPlanTier(planName);
+      const ownerCandidates = !linkedId && orderTier ? unclaimedPlansByTier.get(orderTier) : undefined;
+      if (ownerCandidates && ownerCandidates.length > 0) {
+        const ownerId = ownerCandidates[0];
+        attributed.set(ownerId, [...(attributed.get(ownerId) || []), String(order.id)]);
         continue;
       }
       // Renewals of one plan collapse onto a single card rather than showing
@@ -565,7 +591,7 @@ export default function CustomerAccount({
       });
     }
 
-    return { plans: Array.from(derived.values()), attributedOrderIds: attributed };
+    return { plans: Array.from(derived.values()), attributedOrderIdsByPlan: attributed };
   }, [mySubOrders, storedAccountSubscriptions, deletedSubscriptions, allProducts]);
 
   const visibleAccountSubscriptions = useMemo(
@@ -594,11 +620,16 @@ export default function CustomerAccount({
       if (planId && getOrderSubscriptionId(order) === planId) ids.push(String(order.id));
     }
 
+    // Orders that name no plan but were attached to this one.
+    for (const id of attributedOrderIdsByPlan.get(planId) || []) {
+      if (!ids.includes(id)) ids.push(id);
+    }
+
     const stamped = String(subscription?.sourceOrderId || '').trim();
     if (stamped && !ids.includes(stamped)) ids.push(stamped);
 
     return ids;
-  }, [mySubOrders]);
+  }, [mySubOrders, attributedOrderIdsByPlan]);
 
   /**
    * Subscription orders that no plan card accounts for.
@@ -611,12 +642,15 @@ export default function CustomerAccount({
    * of vanishing.
    */
   const unlistedSubscriptionOrders = useMemo(() => {
-    const accounted = new Set<string>(attributedOrderIds);
+    // Only what is actually on a card counts as accounted for — so every
+    // subscription order appears on this page exactly once, either on its
+    // plan's card or in this list, and none can disappear.
+    const accounted = new Set<string>();
     for (const subscription of visibleAccountSubscriptions) {
       for (const id of subscriptionOrderIds(subscription)) accounted.add(id);
     }
     return mySubOrders.filter(order => !accounted.has(String(order.id)));
-  }, [mySubOrders, visibleAccountSubscriptions, subscriptionOrderIds, attributedOrderIds]);
+  }, [mySubOrders, visibleAccountSubscriptions, subscriptionOrderIds]);
 
   /**
    * The plan the management screen is editing.
@@ -918,24 +952,20 @@ export default function CustomerAccount({
 
       realBoxItems = parseSubscriptionProducts(latestSubOrder, subItem, allProducts as any);
 
-      const titleLower = ((subItem as any)?.subscriptionPlan || subItem?.productTitle || '').toLowerCase();
-      if (titleLower.includes('ultimate')) {
-        realPlanName = 'ultimate';
-        realCansCount = 12;
-        realPriceVal = 46.99;
-      } else if (titleLower.includes('pro')) {
-        realPlanName = 'pro';
-        realCansCount = 10;
-        realPriceVal = 40.99;
-      } else if (titleLower.includes('core')) {
-        realPlanName = 'core';
-        realCansCount = 8;
-        realPriceVal = 35.99;
-      } else {
-        realPlanName = 'lite';
-        realCansCount = 6;
-        realPriceVal = 27.99;
-      }
+      const titleLower = ((subItem as any)?.subscriptionSummary || subItem?.productTitle || '').toLowerCase();
+      // The tier is read from the title the order was bought under, and only
+      // from its heading. This used to test `includes('pro')` on the whole
+      // plan string — which lists the box's products — before testing 'lite',
+      // so a LITE plan could come out as PRO and then be saved back as PRO.
+      const tier =
+        detectPlanTier(subItem?.productTitle) ||
+        detectPlanTier((subItem as any)?.subscriptionSummary) ||
+        detectPlanTier((subItem as any)?.subscriptionPlan) ||
+        'lite';
+      const tierInfo = ACCOUNT_SUB_PLANS.find(t => t.id === tier);
+      realPlanName = tier;
+      realCansCount = tierInfo?.cans ?? 6;
+      realPriceVal = tierInfo?.price ?? 27.99;
 
       if (subItem?.price) {
         realPriceVal = subItem.price;
@@ -1084,6 +1114,49 @@ export default function CustomerAccount({
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   })();
 
+  /**
+   * The tier and frequency the opened plan actually has, captured when the
+   * console opens. Save compares against this so it sends only what the
+   * customer changed — nothing they did not touch is ever written back.
+   */
+  const [planDraftSeed, setPlanDraftSeed] = useState<{ planId: string; tier: string; frequency: string } | null>(null);
+
+  /**
+   * Seeds the console's editable fields from the plan being opened.
+   *
+   * The console edits `custState`, which is account-wide. It used to show
+   * whatever that held — PRO, on this account — while a LITE plan was open,
+   * and Save then wrote PRO over the LITE plan. It now starts from the plan
+   * itself. Local state only: opening a plan writes nothing anywhere.
+   */
+  useEffect(() => {
+    if (!managedSubscription) {
+      setPlanDraftSeed(null);
+      return;
+    }
+    // Strict: a plan whose name names no tier leaves the tier cards alone
+    // rather than being taken for PRO, which is what getPlanSlug falls back to.
+    const tierId = detectPlanTier(managedSubscription.planName) || detectPlanTier(managedSubscription.planId);
+    const tier = tierId ? ACCOUNT_SUB_PLANS.find(t => t.id === tierId) : undefined;
+    const frequency = billingIntervalToFrequencyOption(managedSubscription.billingInterval);
+    const planItems = Array.isArray(managedSubscription.items) ? managedSubscription.items : null;
+
+    // With no recognisable tier the baseline is whatever the cards already
+    // show, so Save sends a tier only if the customer actually picks one.
+    setPlanDraftSeed({ planId: String(managedSubscription.id), tier: tier?.id || custState?.subPlan || '', frequency });
+    setCustState((prev: any) => prev ? {
+      ...prev,
+      ...(tier ? { subPlan: tier.id } : {}),
+      subPrice: Number(managedSubscription.amount) || tier?.price || prev.subPrice,
+      subCansCount: Number(managedSubscription.cansCount) || tier?.cans || prev.subCansCount,
+      subFrequency: frequency || prev.subFrequency,
+      ...(planItems && planItems.length > 0 ? { subItems: planItems } : {})
+    } : prev);
+    // Re-seed only when a different plan is opened, so edits in progress are
+    // not reset by an unrelated re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [managedSubscription?.id]);
+
   const updateCustState = (newVal: any) => {
     const enrichedVal = {
       ...newVal,
@@ -1098,35 +1171,13 @@ export default function CustomerAccount({
       });
     }
 
-    // Auto sync subscription plan & items with backend in background
-    if (loggedInCustomer?.email) {
-      fetch('/api/subscriptions/update-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // Always name the plan being managed. Without it the server matches on
-          // the email and rewrites every plan the customer holds, so editing one
-          // box silently changed the other.
-          ...(activeSubscription?.id ? { subscriptionId: activeSubscription.id } : {}),
-          customerEmail: loggedInCustomer.email,
-          subPlan: enrichedVal.subPlan,
-          planName: enrichedVal.subPlan === 'lite' ? 'LITE (6 Canisters)' : enrichedVal.subPlan === 'core' ? 'CORE (8 Canisters)' : enrichedVal.subPlan === 'pro' ? 'PRO (10 Canisters)' : enrichedVal.subPlan === 'ultimate' ? 'ULTIMATE (12 Canisters)' : (enrichedVal.subPlan || 'CORE (8 Canisters)'),
-          subPrice: enrichedVal.subPrice,
-          amount: enrichedVal.subPrice,
-          subFrequency: enrichedVal.subFrequency,
-          billingInterval: enrichedVal.subFrequency,
-          subCansCount: enrichedVal.subCansCount,
-          cansCount: enrichedVal.subCansCount,
-          subItems: enrichedVal.subItems,
-          items: enrichedVal.subItems,
-          subStatus: enrichedVal.subStatus,
-          status: enrichedVal.subStatus?.toLowerCase(),
-          nextPayment: enrichedVal.nextPayment,
-          nextDelivery: enrichedVal.nextDelivery,
-          subPlanManuallyConfigured: true
-        })
-      }).catch(err => console.warn('[updateCustState] background update-plan sync notice:', err));
-    }
+    // Deliberately no server write here. This used to POST the whole account
+    // state to /api/subscriptions/update-plan on EVERY call — adding a saved
+    // card, pausing, changing frequency — aimed at whichever plan happened to
+    // be first, so an unrelated click rewrote a LITE plan (and, server-side,
+    // every one of the customer's past orders) to the account's default tier.
+    // Plan changes are written only by the explicit Save / Pause / Cancel
+    // actions, each of which names the plan it changes.
   };
 
   const handlePlanTierChange = (plan: string) => {
@@ -1173,10 +1224,13 @@ export default function CustomerAccount({
       subItems: currentSubItems,
       subPlanManuallyConfigured: true
     };
-    updateCustState(updated);
+    // A draft only. Picking a tier card used to save it on the spot — to the
+    // customer profile and, through the old background sync, onto the plan and
+    // every past order. Nothing is written until the customer presses Save Plan.
+    setCustState(updated);
     setSubActionToast({
-      type: 'success',
-      message: `Switched plan to ${plan.toUpperCase()} (${cans} Canisters - £${price.toFixed(2)} / delivery).`
+      type: 'info',
+      message: `${plan.toUpperCase()} selected (${cans} canisters, £${price.toFixed(2)} per delivery). Press Save Plan to apply it from your next delivery.`
     });
   };
 
@@ -1343,32 +1397,35 @@ export default function CustomerAccount({
   };
 
   const handleSaveSubscriptionPlan = async () => {
-    if (!loggedInCustomer?.email || !custState) return;
+    if (!loggedInCustomer?.email || !custState || !managedSubscription) return;
+
+    // Only what the customer changed in this console. Every other field — the
+    // plan's full name, its box, its status — is left exactly as it is; the box
+    // has its own Save, and status changes go through Pause / Cancel.
+    const changes: Record<string, any> = {};
+    if (custState.subPlan && custState.subPlan !== planDraftSeed?.tier) {
+      const tier = ACCOUNT_SUB_PLANS.find(t => t.id === custState.subPlan);
+      changes.planName = getAccountPlanLabel(custState.subPlan);
+      changes.planId = custState.subPlan;
+      changes.amount = tier?.price ?? custState.subPrice;
+      changes.cansCount = tier?.cans ?? custState.subCansCount;
+    }
+    if (custState.subFrequency && custState.subFrequency !== planDraftSeed?.frequency) {
+      changes.billingInterval = custState.subFrequency;
+    }
+
+    if (Object.keys(changes).length === 0) {
+      setSubActionToast({ type: 'info', message: 'Nothing has changed on this plan, so there was nothing to save.' });
+      return;
+    }
+
     setIsSavingPlan(true);
     setPlanSaveFeedback(null);
     try {
       const payload = {
-        // Scoped to the plan on screen, so saving one plan cannot overwrite another.
-        ...(activeSubscription?.id ? { subscriptionId: activeSubscription.id } : {}),
+        subscriptionId: String(managedSubscription.id),
         customerEmail: loggedInCustomer.email,
-        subPlan: custState.subPlan,
-        planName: getAccountPlanLabel(custState.subPlan),
-        subPrice: custState.subPrice,
-        amount: custState.subPrice,
-        subFrequency: custState.subFrequency,
-        billingInterval: custState.subFrequency,
-        subCansCount: custState.subCansCount,
-        cansCount: custState.subCansCount,
-        subItems: custState.subItems,
-        items: custState.subItems,
-        // The payload is scoped to one plan, so it carries that plan's status.
-        // Sending the account-wide flag here wrote a stale "cancelled" onto a
-        // live plan whenever the profile disagreed with it.
-        subStatus: managedPlanStatus,
-        status: managedPlanStatus.toLowerCase(),
-        nextPayment: custState.nextPayment,
-        nextDelivery: custState.nextDelivery,
-        subPlanManuallyConfigured: true
+        ...changes
       };
 
       const res = await fetch('/api/subscriptions/update-plan', {
@@ -1384,10 +1441,23 @@ export default function CustomerAccount({
         throw new Error(data?.message || `Save failed (${res.status})`);
       }
 
-      setPlanSaveFeedback('Subscription plan & box updated successfully!');
+      // Reflect the saved plan straight away, and treat it as the new baseline
+      // so a second Save with no further edits sends nothing.
+      if (data?.plan) {
+        setAccountSubscriptions(previous => previous.map((s: any) =>
+          String(s.id) === String(managedSubscription.id) ? { ...s, ...data.plan } : s
+        ));
+      }
+      setPlanDraftSeed(prev => prev ? {
+        ...prev,
+        tier: custState.subPlan || prev.tier,
+        frequency: custState.subFrequency || prev.frequency
+      } : prev);
+
+      setPlanSaveFeedback('Subscription plan updated. Your past orders are unchanged.');
       setSubActionToast({
         type: 'success',
-        message: 'Your subscription plan, delivery schedule and box flavors have been saved!'
+        message: 'Plan saved. The change applies from your next delivery — past orders are not affected.'
       });
       setTimeout(() => setPlanSaveFeedback(null), 4000);
     } catch (err: any) {
@@ -1397,6 +1467,48 @@ export default function CustomerAccount({
         message: err?.message
           ? `Could not save your subscription plan: ${err.message}`
           : 'Could not save your subscription plan. Please try again.'
+      });
+    } finally {
+      setIsSavingPlan(false);
+    }
+  };
+
+  /**
+   * Pauses or resumes the opened plan. Sends the status and nothing else, to
+   * that plan only — the plan's tier, price and box are left untouched.
+   */
+  const handleTogglePausePlan = async () => {
+    if (!loggedInCustomer?.email || !managedSubscription?.id) return;
+    const nextStatus = managedPlanStatus === 'Active' ? 'paused' : 'active';
+    setIsSavingPlan(true);
+    setSubActionToast(null);
+    try {
+      const res = await fetch('/api/subscriptions/update-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptionId: String(managedSubscription.id),
+          customerEmail: loggedInCustomer.email,
+          status: nextStatus
+        })
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || `Request failed (${res.status})`);
+      }
+      setAccountSubscriptions(previous => previous.map((s: any) =>
+        String(s.id) === String(managedSubscription.id) ? { ...s, status: nextStatus } : s
+      ));
+      setSubActionToast({
+        type: 'success',
+        message: nextStatus === 'paused'
+          ? 'Deliveries for this plan are paused. You can resume anytime.'
+          : 'Deliveries for this plan have resumed.'
+      });
+    } catch (err: any) {
+      setSubActionToast({
+        type: 'error',
+        message: err?.message ? `Could not update this plan: ${err.message}` : 'Could not update this plan. Please try again.'
       });
     } finally {
       setIsSavingPlan(false);
@@ -1839,17 +1951,12 @@ export default function CustomerAccount({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // The box and its can count only. The plan's name, price, schedule
+          // and status are not this editor's to change, so they are not sent.
           subscriptionId: managedSubscription.id,
           customerEmail: loggedInCustomer.email,
-          planName: managedSubscription.planName,
-          planId: managedSubscription.planId,
-          amount: managedSubscription.amount,
-          billingInterval: managedSubscription.billingInterval,
-          status: managedSubscription.status,
           items,
-          subItems: items,
-          cansCount: totalCans,
-          subCansCount: totalCans
+          cansCount: totalCans
         })
       });
       const data = await res.json().catch(() => ({} as any));
@@ -2819,11 +2926,11 @@ export default function CustomerAccount({
 
                           <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t border-slate-100 mt-4">
                             {myOrders.length > 0 && (
-                              <button 
-                                onClick={() => { setSelectedOrderDetails(myOrders[0] || null); }}
+                              <button
+                                onClick={() => setActiveTab('orders')}
                                 className="flex-1 bg-[#071d37] hover:bg-[#0c2e56] text-white font-bold text-xs uppercase tracking-wider py-2.5 rounded-xl transition-colors cursor-pointer text-center"
                               >
-                                View Order Details
+                                View Order
                               </button>
                             )}
                             <button 
@@ -2871,11 +2978,11 @@ export default function CustomerAccount({
                           </div>
 
                           <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t border-slate-100 mt-4">
-                            <button 
-                              onClick={() => { setSelectedOrderDetails(myOrders[0]); }}
+                            <button
+                              onClick={() => setActiveTab('orders')}
                               className="flex-1 bg-[#071d37] hover:bg-[#0c2e56] text-white font-bold text-xs uppercase tracking-wider py-2.5 rounded-xl transition-colors cursor-pointer text-center"
                             >
-                              View Order Details
+                              View Order
                             </button>
                             <button 
                               onClick={() => {
@@ -3700,13 +3807,14 @@ export default function CustomerAccount({
                                     <p className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
                                       <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px text-slate-400" />
                                       <span>
-                                        We could not load this plan's live record, so the details shown are rebuilt
-                                        from the order above.
+                                        This order has no subscription record behind it, so it will not renew and there
+                                        is nothing to change or cancel here. The details shown come from the order
+                                        above. Contact support if you expected this plan to keep delivering.
                                       </span>
                                     </p>
                                   )}
 
-                                  {isCancelledPlan && (
+                                  {isCancelledPlan && !subscription.isDerivedFromOrder && (
                                     confirmingDelete ? (
                                       <div className="bg-white border border-rose-200 rounded-xl p-3 space-y-2">
                                         <p className="text-[11px] font-bold text-rose-900">
@@ -3761,7 +3869,12 @@ export default function CustomerAccount({
                                     on. Without it a customer with two plans has
                                     no way to reach the second one's box.
                                   */}
-                                  {!isCancelledPlan && (
+                                  {/*
+                                    A card rebuilt from an order has no plan record
+                                    for Manage or Cancel to act on — the server
+                                    refuses both — so it offers neither.
+                                  */}
+                                  {!isCancelledPlan && !subscription.isDerivedFromOrder && (
                                     <div className="flex items-center gap-2">
                                       {isManaged ? (
                                         <p className="flex-1 flex items-center justify-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl py-2.5">
@@ -3990,24 +4103,8 @@ export default function CustomerAccount({
                             {!isManagedPlanCancelled && (
                               <button
                                 type="button"
-                                onClick={() => {
-                                  const toggleStatus = managedPlanStatus === 'Active' ? 'Paused' : 'Active';
-                                  updateCustState({ ...custState, subStatus: toggleStatus });
-                                  // The console reads its status from the plan, so the
-                                  // plan is what has to change for the button to
-                                  // reflect the click before the next reload.
-                                  if (managedSubscription?.id) {
-                                    setAccountSubscriptions(previous => previous.map((s: any) =>
-                                      String(s.id) === String(managedSubscription.id)
-                                        ? { ...s, status: toggleStatus.toLowerCase() }
-                                        : s
-                                    ));
-                                  }
-                                  setSubActionToast({
-                                    type: 'info',
-                                    message: toggleStatus === 'Paused' ? 'Subscription deliveries paused. You can resume anytime.' : 'Subscription deliveries resumed.'
-                                  });
-                                }}
+                                disabled={isSavingPlan}
+                                onClick={() => handleTogglePausePlan()}
                                 className={`font-bold text-xs uppercase py-2.5 px-3 rounded-xl border transition-all cursor-pointer whitespace-nowrap ${
                                   managedPlanStatus === 'Active'
                                     ? 'bg-slate-50 border-slate-200 text-[#071d37] hover:bg-slate-100'
@@ -4207,18 +4304,28 @@ export default function CustomerAccount({
                           <div>
                             <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Delivery Frequency</label>
                             <select 
-                              value={custState.subFrequency || 'Bi-Weekly'} 
+                              value={custState.subFrequency || 'Bi-Weekly'}
                               disabled={isManagedPlanCancelled}
                               onChange={(e) => {
+                                // A draft until Save Plan, like the tier cards.
                                 const newFreq = e.target.value;
-                                updateCustState({ ...custState, subFrequency: newFreq });
+                                setCustState((prev: any) => ({ ...prev, subFrequency: newFreq }));
                                 setSubActionToast({
-                                  type: 'success',
-                                  message: `Delivery schedule updated to ${newFreq}.`
+                                  type: 'info',
+                                  message: `${newFreq} selected. Press Save Plan to apply it.`
                                 });
                               }}
                               className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-xl focus:ring-2 focus:ring-[#071d37] bg-white outline-none disabled:bg-slate-50 disabled:text-slate-400 cursor-pointer"
                             >
+                              {/*
+                                A schedule outside the three standard options
+                                (the Next Day test plans) is listed as itself, so
+                                the dropdown shows the plan's real schedule
+                                instead of silently displaying "Weekly".
+                              */}
+                              {custState.subFrequency && !['Weekly', 'Bi-Weekly', 'One Month'].includes(custState.subFrequency) && (
+                                <option value={custState.subFrequency}>Current: {custState.subFrequency}</option>
+                              )}
                               <option value="Weekly">Weekly (Every 7 Days)</option>
                               <option value="Bi-Weekly">Bi-Weekly (Every 14 Days - Recommended)</option>
                               <option value="One Month">Every Month (Every 30 Days)</option>
@@ -5172,10 +5279,15 @@ export default function CustomerAccount({
                       (item as any).vendor === 'Subscription Pack'
                     );
 
-                    const subDetails = (selectedOrderDetails as any).subscriptionDetails;
-                    const planSlug = getPlanSlug(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan);
-                    const planImg = getPlanImage(subDetails?.planName || item.productTitle || (item as any).subscriptionPlan, prodImage);
-                    const displayTitle = subDetails?.planName || (item as any).subscriptionPlan || item.productTitle;
+                    // Resolved the same way as the admin's order view, so both show
+                    // the plan the order was bought as. The raw stored planName can
+                    // name a different tier on orders the old plan sync rewrote.
+                    const subDetails: any = isSubscriptionItem
+                      ? extractSubscriptionDetails(selectedOrderDetails, allProducts as any)
+                      : (selectedOrderDetails as any).subscriptionDetails;
+                    const planSlug = subDetails?.planSlug || getPlanSlug(item.productTitle);
+                    const planImg = getPlanImage(subDetails?.planName || item.productTitle, prodImage);
+                    const displayTitle = subDetails?.planName || item.productTitle;
                     // Resolved against the live catalogue so each line shows the
                     // exact product and variant the customer selected. The order
                     // itself is passed in, not just its subscription block, so

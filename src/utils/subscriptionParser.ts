@@ -1,4 +1,4 @@
-import { getPlanSlug, getPlanImage } from './planImages';
+import { getPlanSlug, getPlanImage, detectPlanTier } from './planImages';
 
 export interface SubscriptionProductItem {
   productId?: string;
@@ -438,6 +438,20 @@ function reconstructFromSummary(rawTitle: string): SubscriptionProductItem[] {
  * is matched back against `catalog` so the customer and the admin see the real
  * catalogue title and variant rather than a fragment of a display string.
  */
+/**
+ * Was this order rewritten by the old plan sync?
+ *
+ * `/api/subscriptions/update-plan` used to overwrite every subscription order a
+ * customer had with the plan's current tier and box, stamping
+ * `subscriptionDetails.lastSwappedAt` as it did. That stamp is the only thing
+ * that ever wrote it, so its presence means the order's `subscriptionPlan`,
+ * `subscriptionDetails.planName` and box fields no longer describe what was
+ * bought. `productTitle` and `subscriptionSummary` were never touched and still do.
+ */
+export function wasRewrittenByPlanSync(order: any): boolean {
+  return Boolean(order?.subscriptionDetails?.lastSwappedAt);
+}
+
 export function parseSubscriptionProducts(
   order: any,
   subItem?: any,
@@ -445,7 +459,11 @@ export function parseSubscriptionProducts(
 ): SubscriptionProductItem[] {
   const index = Array.isArray(catalog) && catalog.length > 0 ? buildCatalogIndex(catalog) : null;
 
-  const stored = findStoredItems(order, subItem);
+  // An order the old plan sync rewrote carries some other plan's box in its
+  // structured fields. Its untouched summary is what was actually bought, so
+  // the structured fields are skipped for it.
+  const summaryIsTruth = wasRewrittenByPlanSync(order) && Boolean(subItem?.subscriptionSummary || order?.subscriptionSummary);
+  const stored = summaryIsTruth ? null : findStoredItems(order, subItem);
   if (stored) {
     const normalized = stored
       .map(normalizeStoredItem)
@@ -551,9 +569,22 @@ export function extractSubscriptionDetails(order: any, catalog?: CatalogProductL
 
   const subItem = findSubscriptionItem(order);
 
-  // 1. Resolve plan name and slug accurately
+  // 1. Resolve the plan the order was actually for.
+  //
+  // `productTitle` and `subscriptionSummary` are written once at purchase and
+  // never changed, so they are read first. `subscriptionDetails.planName` and
+  // `subscriptionPlan` come after: the old plan sync overwrote both on every
+  // past order (with "pro", on the account that reported it), which is why the
+  // admin showed PRO for orders that were bought as LITE. On an order that sync
+  // rewrote they are not consulted at all.
+  const rewritten = wasRewrittenByPlanSync(order);
   const rawPlanString = details.planName || subItem?.subscriptionPlan || subItem?.productTitle || order.subPlan || order.subscriptionPlan || '';
-  const planSlug = getPlanSlug(rawPlanString);
+  const planSlug =
+    detectPlanTier(subItem?.productTitle) ||
+    detectPlanTier(subItem?.subscriptionSummary) ||
+    detectPlanTier(order.subscriptionSummary) ||
+    (rewritten ? null : detectPlanTier(details.planName) || detectPlanTier(subItem?.subscriptionPlan) || detectPlanTier(order.subscriptionPlan)) ||
+    getPlanSlug(rawPlanString);
 
   let planName = 'PRO Plan';
   if (planSlug === 'ultimate') planName = 'ULTIMATE Plan';

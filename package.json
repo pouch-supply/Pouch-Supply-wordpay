@@ -9,7 +9,8 @@
     "postinstall": "prisma generate || true",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "repair:plan-sync": "esbuild scripts/repairPlanSyncDamage.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/repairPlanSyncDamage.cjs --log-level=warning && node dist/repairPlanSyncDamage.cjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
