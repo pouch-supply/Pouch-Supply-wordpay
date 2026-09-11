@@ -1423,11 +1423,19 @@ router.get(
       return res.json({
         success: true,
         subscriptions: subscriptions.map(s => toCustomerSubscription(s, now)),
-        // Ids only, no plan detail. The account page rebuilds a plan card from
-        // a subscription order when this endpoint has no record for it, so it
-        // needs to tell "never stored" apart from "the customer removed it" —
-        // otherwise removing a plan would resurrect it from its own orders.
-        deletedSubscriptionIds: all.filter(s => isDeletedStatus(s.status)).map(s => String(s.id)),
+        // Ids and removal times, no plan detail. The account page rebuilds a
+        // plan card from a subscription order when this endpoint has no record
+        // for it, so it needs to tell "never stored" apart from "the customer
+        // removed it" — otherwise removing a plan would resurrect it from its
+        // own orders. The timestamp matters too: an order placed after the
+        // removal is new activity the removal cannot account for, and hiding it
+        // would lose a paid order from the customer's view.
+        deletedSubscriptions: all
+          .filter(s => isDeletedStatus(s.status))
+          .map(s => ({
+            id: String(s.id),
+            deletedAt: s.deletedAt || s.updatedAt || null,
+          })),
       });
     } catch (error: any) {
       return res.status(500).json({

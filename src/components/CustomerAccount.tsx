@@ -226,10 +226,11 @@ export default function CustomerAccount({
     setActiveTab('subscriptions', subscriptionId ? String(subscriptionId) : null);
   };
   const [accountSubscriptions, setAccountSubscriptions] = useState<any[]>([]);
-  // Plans the customer removed. The API strips them from `subscriptions`
-  // entirely, so without their ids a removed plan would be rebuilt from its own
-  // orders and reappear.
-  const [deletedSubscriptionIds, setDeletedSubscriptionIds] = useState<string[]>([]);
+  // Plans the customer removed, with when they were removed. The API strips
+  // them from `subscriptions` entirely, so without this a removed plan would be
+  // rebuilt from its own orders and reappear — and without the timestamp, an
+  // order placed after the removal would be hidden along with it.
+  const [deletedSubscriptions, setDeletedSubscriptions] = useState<Array<{ id: string; deletedAt: string | null }>>([]);
   // Which single subscription a per-plan Resume / Remove button is working on,
   // so one card's spinner does not disable every other card's buttons.
   const [subActionBusyId, setSubActionBusyId] = useState<string | null>(null);
@@ -331,6 +332,25 @@ export default function CustomerAccount({
   const mySubOrders = myOrders.filter(isSubscriptionOrder);
 
   /**
+   * Reads the removed-plan list off the subscriptions response.
+   *
+   * Tolerates the older `deletedSubscriptionIds: string[]` shape so a browser
+   * holding a cached bundle against a newer server, or the reverse, still
+   * honours removals instead of resurrecting every removed plan.
+   */
+  const parseDeletedSubscriptions = (data: any): Array<{ id: string; deletedAt: string | null }> => {
+    if (Array.isArray(data?.deletedSubscriptions)) {
+      return data.deletedSubscriptions
+        .filter((entry: any) => entry && entry.id)
+        .map((entry: any) => ({ id: String(entry.id), deletedAt: entry.deletedAt || null }));
+    }
+    if (Array.isArray(data?.deletedSubscriptionIds)) {
+      return data.deletedSubscriptionIds.map((id: any) => ({ id: String(id), deletedAt: null }));
+    }
+    return [];
+  };
+
+  /**
    * Loads this customer's own subscriptions.
    *
    * Deliberately the per-customer endpoint, not /status: that one returns every
@@ -350,7 +370,7 @@ export default function CustomerAccount({
       const data = await res.json();
       const subs = Array.isArray(data?.subscriptions) ? data.subscriptions : [];
       setAccountSubscriptions(subs);
-      setDeletedSubscriptionIds(Array.isArray(data?.deletedSubscriptionIds) ? data.deletedSubscriptionIds.map(String) : []);
+      setDeletedSubscriptions(parseDeletedSubscriptions(data));
       return subs;
     } catch {
       return [];
@@ -362,7 +382,7 @@ export default function CustomerAccount({
     const email = loggedInCustomer?.email?.trim();
     if (!email) {
       setAccountSubscriptions([]);
-      setDeletedSubscriptionIds([]);
+      setDeletedSubscriptions([]);
       return () => { cancelled = true; };
     }
 
@@ -371,12 +391,12 @@ export default function CustomerAccount({
       .then(data => {
         if (cancelled) return;
         setAccountSubscriptions(Array.isArray(data?.subscriptions) ? data.subscriptions : []);
-        setDeletedSubscriptionIds(Array.isArray(data?.deletedSubscriptionIds) ? data.deletedSubscriptionIds.map(String) : []);
+        setDeletedSubscriptions(parseDeletedSubscriptions(data));
       })
       .catch(() => {
         if (!cancelled) {
           setAccountSubscriptions([]);
-          setDeletedSubscriptionIds([]);
+          setDeletedSubscriptions([]);
         }
       });
 
@@ -401,8 +421,24 @@ export default function CustomerAccount({
    */
   const orderDerivedSubscriptions = useMemo(() => {
     const storedIds = new Set(storedAccountSubscriptions.map((s: any) => String(s.id)));
-    const removedIds = new Set(deletedSubscriptionIds);
+    const removedAt = new Map(deletedSubscriptions.map(entry => [entry.id, entry.deletedAt]));
     const derived = new Map<string, any>();
+
+    /**
+     * Does removing this plan account for this order?
+     *
+     * Only if the order came first. An order placed after the plan was removed
+     * is activity the removal cannot explain — a paid order the customer needs
+     * to see — so it is shown rather than swallowed by a stale removal.
+     */
+    const removalCovers = (planId: string, order: Order): boolean => {
+      if (!removedAt.has(planId)) return false;
+      const deletedAt = removedAt.get(planId);
+      if (!deletedAt) return true; // No timestamp recorded: honour the removal.
+      const removedTime = new Date(deletedAt).getTime();
+      if (isNaN(removedTime)) return true;
+      return parseOrderTime(order) <= removedTime;
+    };
 
     // mySubOrders is newest-first, so the first order seen for a plan is the
     // one whose price, frequency and box contents are current.
@@ -413,12 +449,12 @@ export default function CustomerAccount({
       if (linkedId && storedIds.has(linkedId)) continue;
       // Removing a plan is meant to take it off this list for good. Its orders
       // stay in the history, so rebuilding from them would undo the removal.
-      if (linkedId && removedIds.has(linkedId)) continue;
+      if (linkedId && removalCovers(linkedId, order)) continue;
       // An order naming no plan cannot be attributed to one, so it is only
       // rebuilt when the customer holds no plans at all and has removed none:
       // there is nothing else it could belong to. This mirrors how the server
       // treats unlinked orders.
-      if (!linkedId && (storedIds.size > 0 || removedIds.size > 0)) continue;
+      if (!linkedId && (storedIds.size > 0 || removedAt.size > 0)) continue;
 
       const details = extractSubscriptionDetails(order, allProducts as any);
       const planName = details.planName || 'Subscription Box';
@@ -463,7 +499,7 @@ export default function CustomerAccount({
     }
 
     return Array.from(derived.values());
-  }, [mySubOrders, storedAccountSubscriptions, deletedSubscriptionIds, allProducts]);
+  }, [mySubOrders, storedAccountSubscriptions, deletedSubscriptions, allProducts]);
 
   const visibleAccountSubscriptions = useMemo(
     () => [...storedAccountSubscriptions, ...orderDerivedSubscriptions],
@@ -471,24 +507,49 @@ export default function CustomerAccount({
   );
 
   /**
-   * The order a plan was bought on, for display on its card.
+   * Every order booked against a plan, newest first.
    *
-   * Prefers the `sourceOrderId` the checkout stamped onto the subscription.
-   * Plans created before that was recorded have none, so the customer's own
-   * order history is searched for the oldest order booked against the plan —
-   * the oldest, because that is the one that started it; the later ones are its
-   * renewals.
+   * One plan bills repeatedly, so the customer can hold three subscription
+   * orders across two plans: the renewal shares its plan with the order that
+   * started it. Showing only one order per card made that third order look
+   * missing, so all of them are listed and every order number the customer has
+   * is accounted for on this page.
+   *
+   * `sourceOrderId` — the order the checkout recorded against the plan — is
+   * included even when that order is not in the loaded history.
    */
-  const subscriptionOrderId = useCallback((subscription: any): string => {
-    const stamped = String(subscription?.sourceOrderId || '').trim();
-    if (stamped) return stamped;
-
+  const subscriptionOrderIds = useCallback((subscription: any): string[] => {
     const planId = String(subscription?.id || '');
-    if (!planId) return '';
-    // mySubOrders is newest-first, so the last match is the earliest order.
-    const matches = mySubOrders.filter(order => getOrderSubscriptionId(order) === planId);
-    return matches.length > 0 ? String(matches[matches.length - 1].id) : '';
+    const ids: string[] = [];
+
+    // mySubOrders is newest-first, so this list is too.
+    for (const order of mySubOrders) {
+      if (planId && getOrderSubscriptionId(order) === planId) ids.push(String(order.id));
+    }
+
+    const stamped = String(subscription?.sourceOrderId || '').trim();
+    if (stamped && !ids.includes(stamped)) ids.push(stamped);
+
+    return ids;
   }, [mySubOrders]);
+
+  /**
+   * Subscription orders that no plan card accounts for.
+   *
+   * A plan can legitimately disappear from the list — the customer removed it
+   * after cancelling — but the orders it billed were still paid, and removal is
+   * explicitly promised not to affect them. Dropping them off this page with
+   * the plan loses a paid order from the customer's view of their
+   * subscriptions, so whatever the plan list cannot show is listed here instead
+   * of vanishing.
+   */
+  const unlistedSubscriptionOrders = useMemo(() => {
+    const accounted = new Set<string>();
+    for (const subscription of visibleAccountSubscriptions) {
+      for (const id of subscriptionOrderIds(subscription)) accounted.add(id);
+    }
+    return mySubOrders.filter(order => !accounted.has(String(order.id)));
+  }, [mySubOrders, visibleAccountSubscriptions, subscriptionOrderIds]);
 
   /**
    * The plan the management screen is editing.
@@ -3379,7 +3440,7 @@ export default function CustomerAccount({
                               // activeSubscription's first-plan fallback — otherwise
                               // the top card claims to be managed with no console below it.
                               const isManaged = String(managedSubscription?.id || '') === String(subscription.id);
-                              const orderId = subscriptionOrderId(subscription);
+                              const planOrderIds = subscriptionOrderIds(subscription);
                               const nextDate = subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null;
                               const cancelledDate = subscription.cancelledAt ? new Date(subscription.cancelledAt) : null;
                               const formatDate = (d: Date | null) =>
@@ -3416,18 +3477,30 @@ export default function CustomerAccount({
                                           {isCancelledPlan ? 'Cancelled' : isPausedPlan ? 'Paused' : 'Active'}
                                         </span>
                                         {/*
-                                          The order this plan was bought on, so the
-                                          customer can quote one reference for both
-                                          the plan and its payment.
+                                          Every order this plan has billed, newest
+                                          first. One plan bills repeatedly, so the
+                                          customer's order numbers outnumber their
+                                          plans — listing them all is what makes a
+                                          renewal traceable to its plan.
                                         */}
-                                        {orderId && (
-                                          <span
-                                            title={`Subscription started on order ${orderId}`}
-                                            className="text-[9px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full font-mono"
+                                        {planOrderIds.map((planOrderId, orderIdx) => (
+                                          <button
+                                            key={planOrderId}
+                                            type="button"
+                                            onClick={() => {
+                                              const match = myOrders.find(o => String(o.id) === planOrderId);
+                                              if (match) setSelectedOrderDetails(match);
+                                            }}
+                                            title={
+                                              orderIdx === planOrderIds.length - 1
+                                                ? `Order ${planOrderId} started this plan`
+                                                : `Renewal order ${planOrderId}`
+                                            }
+                                            className="text-[9px] font-black uppercase tracking-wider text-slate-600 bg-slate-100 border border-slate-200 hover:border-[#dfa047] hover:text-[#071d37] px-2 py-0.5 rounded-full font-mono cursor-pointer transition-colors"
                                           >
-                                            Order {orderId}
-                                          </span>
-                                        )}
+                                            {planOrderId}
+                                          </button>
+                                        ))}
                                         {subscription.billingInterval && !isCancelledPlan && (
                                           <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
                                             Every {subscription.billingInterval}
@@ -3555,6 +3628,66 @@ export default function CustomerAccount({
                                 </div>
                               );
                             })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/*
+                        Subscription orders no plan card accounts for — most
+                        often orders billed by a plan the customer has since
+                        removed. Removal is promised not to affect past orders,
+                        so they are listed here rather than disappearing with
+                        the plan.
+                      */}
+                      {unlistedSubscriptionOrders.length > 0 && (
+                        <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-3">
+                          <div className="pb-3 border-b border-slate-100">
+                            <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">Other Subscription Orders</h3>
+                            <p className="text-slate-400 text-[11px] mt-0.5">
+                              Paid subscription orders that are not attached to any plan above — usually because the
+                              plan that billed them has been removed.
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            {unlistedSubscriptionOrders.map(order => (
+                              <div
+                                key={order.id}
+                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#f4f6f9] border border-slate-100 rounded-2xl p-3"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-black text-xs text-[#071d37] font-mono">{order.id}</span>
+                                    <span className="text-[9px] font-bold bg-white text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full uppercase">
+                                      {order.fulfillmentStatus}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">
+                                    {order.date} • £{(Number(order.total) || 0).toFixed(2)}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedOrderDetails(order)}
+                                    className="text-[10px] font-bold text-white bg-slate-800 hover:bg-slate-700 py-1.5 px-2.5 rounded-lg cursor-pointer flex items-center gap-1 transition-all"
+                                  >
+                                    <Eye className="h-3 w-3" /> View Order
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadInvoice(order)}
+                                    disabled={invoiceBusyId === String(order.id)}
+                                    className="text-[10px] font-bold text-[#071d37] bg-white border border-slate-200 py-1.5 px-2.5 rounded-lg cursor-pointer hover:bg-slate-50 hover:border-[#dfa047] transition-all flex items-center gap-1 disabled:opacity-60 disabled:cursor-wait"
+                                  >
+                                    {invoiceBusyId === String(order.id)
+                                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                                      : <Download className="h-3 w-3" />}
+                                    Invoice
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}
