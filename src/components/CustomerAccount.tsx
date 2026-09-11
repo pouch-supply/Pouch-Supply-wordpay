@@ -10,12 +10,13 @@ import { useRecaptcha } from '../hooks/useRecaptcha';
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
 import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
 import SubscriptionBoxManager, { BoxLine } from './account/SubscriptionBoxManager';
-import { 
-  User, LogIn, Heart, PlusCircle, Trash2, MapPin, Package, ShoppingBag, 
-  Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award, 
-  Copy, Share2, HelpCircle, ShieldAlert, CreditCard, Star, ChevronRight, 
+import { printInvoice, downloadInvoiceFile, getInvoiceNumber } from '../utils/invoice';
+import {
+  User, LogIn, Heart, PlusCircle, Trash2, MapPin, Package, ShoppingBag,
+  Eye, X, Search, Truck, Check, Clock, Calendar, RefreshCw, Award,
+  Copy, Share2, HelpCircle, ShieldAlert, CreditCard, Star, ChevronRight,
   CheckCircle2, AlertTriangle, Play, Pause, ChevronDown, CheckCircle, Tag, LifeBuoy,
-  Layout, LogOut, Plus, RotateCcw, Send, Mail, Loader2, ExternalLink
+  Layout, LogOut, Plus, RotateCcw, Send, Mail, Loader2, ExternalLink, Download
 } from 'lucide-react';
 
 /**
@@ -123,6 +124,28 @@ export default function CustomerAccount({
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState<Order | null>(null);
   const [copiedCouponCode, setCopiedCouponCode] = useState<string | null>(null);
+  // Which order's invoice is being handed to the browser, so the button that
+  // was clicked can show its own progress without freezing the whole list.
+  const [invoiceBusyId, setInvoiceBusyId] = useState<string | null>(null);
+
+  /**
+   * Opens the print dialog for one order's invoice, where the customer chooses
+   * "Save as PDF". If the browser refuses to print (blocked popup, print
+   * unavailable) the invoice is saved as a self-contained HTML file instead so
+   * the customer is never left without a copy.
+   */
+  const handleDownloadInvoice = (order: Order) => {
+    if (!order) return;
+    setInvoiceBusyId(String(order.id));
+    try {
+      const printed = printInvoice(order, { products: allProducts });
+      if (!printed) downloadInvoiceFile(order, { products: allProducts });
+    } catch {
+      downloadInvoiceFile(order, { products: allProducts });
+    } finally {
+      setTimeout(() => setInvoiceBusyId(prev => (prev === String(order.id) ? null : prev)), 1200);
+    }
+  };
 
   const handleCopyCouponCode = (code: string, label = 'Voucher code') => {
     navigator.clipboard.writeText(code);
@@ -168,8 +191,8 @@ export default function CustomerAccount({
   const accountTabPaths: Record<string, string> = {
     dashboard: '/pages/account',
     orders: '/pages/account/orders',
-    wishlist: '/pages/account/wishlist',
     subscriptions: '/pages/account/subscriptions',
+    wishlist: '/pages/account/wishlist',
     loyalty: '/pages/account/loyalty-rewards',
     referrals: '/pages/account/referrals',
     details: '/pages/account/account-details',
@@ -2088,8 +2111,8 @@ export default function CustomerAccount({
   const sidebarItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Layout },
     { id: 'orders', label: 'Orders', icon: Package },
-    { id: 'wishlist', label: 'Wishlist', icon: Heart },
     { id: 'subscriptions', label: 'Subscriptions', icon: RefreshCw },
+    { id: 'wishlist', label: 'Wishlist', icon: Heart },
     { id: 'loyalty', label: 'Loyalty Rewards', icon: Award },
     { id: 'referrals', label: 'Referrals', icon: Share2 },
     { id: 'details', label: 'Account Details', icon: User },
@@ -3021,10 +3044,15 @@ export default function CustomerAccount({
                                 >
                                   <Eye className="h-3 w-3" /> View Order
                                 </button>
-                                <button 
-                                  onClick={() => setSelectedOrderDetails(order)}
-                                  className="text-[10px] font-bold text-[#071d37] bg-white border border-slate-200 py-1 px-2.5 rounded-lg cursor-pointer hover:bg-slate-50 transition-all"
+                                <button
+                                  onClick={() => handleDownloadInvoice(order)}
+                                  disabled={invoiceBusyId === String(order.id)}
+                                  title={`Download invoice ${getInvoiceNumber(order)} (PDF)`}
+                                  className="text-[10px] font-bold text-[#071d37] bg-white border border-slate-200 py-1 px-2.5 rounded-lg cursor-pointer hover:bg-slate-50 hover:border-[#dfa047] transition-all flex items-center gap-1 disabled:opacity-60 disabled:cursor-wait"
                                 >
+                                  {invoiceBusyId === String(order.id)
+                                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                                    : <Download className="h-3 w-3" />}
                                   Invoice
                                 </button>
                                 <button 
@@ -3050,7 +3078,7 @@ export default function CustomerAccount({
                 </div>
               )}
 
-              {/* TAB 3: WISHLIST TAB */}
+              {/* TAB 4: WISHLIST (rendered after Subscriptions in the sidebar order) */}
               {activeTab === 'wishlist' && (
                 <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-6">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-4">
@@ -4601,12 +4629,25 @@ export default function CustomerAccount({
                 <h3 className="font-black text-[#071d37] text-base">Invoice Ref: {selectedOrderDetails.id}</h3>
                 <p className="text-[10px] text-slate-400 font-bold uppercase">{selectedOrderDetails.date}</p>
               </div>
-              <button 
-                onClick={() => setSelectedOrderDetails(null)}
-                className="p-1.5 hover:bg-slate-200 rounded-full text-slate-500 cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDownloadInvoice(selectedOrderDetails)}
+                  disabled={invoiceBusyId === String(selectedOrderDetails.id)}
+                  className="text-[10px] font-bold text-white bg-[#071d37] hover:bg-[#dfa047] py-1.5 px-3 rounded-lg cursor-pointer flex items-center gap-1.5 transition-all disabled:opacity-60 disabled:cursor-wait"
+                >
+                  {invoiceBusyId === String(selectedOrderDetails.id)
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Download className="h-3.5 w-3.5" />}
+                  Download Invoice
+                </button>
+                <button
+                  onClick={() => setSelectedOrderDetails(null)}
+                  className="p-1.5 hover:bg-slate-200 rounded-full text-slate-500 cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
             <div className="p-6 space-y-6 text-xs">
