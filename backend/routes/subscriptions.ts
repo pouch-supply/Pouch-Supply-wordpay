@@ -165,6 +165,11 @@ async function customerHasOtherLiveSubscription(email: string, excludeId?: strin
 function toCustomerSubscription(s: any, now: Date = new Date()) {
   return {
     id: s.id,
+    // The order the plan was bought on. The account page shows it so a customer
+    // can quote one reference to support for both the plan and its first
+    // payment. Records written before checkout recorded it have none, and the
+    // account page falls back to the customer's own order history there.
+    sourceOrderId: s.sourceOrderId || null,
     planId: s.planId,
     planName: s.planName,
     customerEmail: s.customerEmail,

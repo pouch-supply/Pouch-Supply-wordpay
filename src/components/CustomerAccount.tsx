@@ -471,6 +471,26 @@ export default function CustomerAccount({
   );
 
   /**
+   * The order a plan was bought on, for display on its card.
+   *
+   * Prefers the `sourceOrderId` the checkout stamped onto the subscription.
+   * Plans created before that was recorded have none, so the customer's own
+   * order history is searched for the oldest order booked against the plan —
+   * the oldest, because that is the one that started it; the later ones are its
+   * renewals.
+   */
+  const subscriptionOrderId = useCallback((subscription: any): string => {
+    const stamped = String(subscription?.sourceOrderId || '').trim();
+    if (stamped) return stamped;
+
+    const planId = String(subscription?.id || '');
+    if (!planId) return '';
+    // mySubOrders is newest-first, so the last match is the earliest order.
+    const matches = mySubOrders.filter(order => getOrderSubscriptionId(order) === planId);
+    return matches.length > 0 ? String(matches[matches.length - 1].id) : '';
+  }, [mySubOrders]);
+
+  /**
    * The plan the management screen is editing.
    *
    * Falls back to the first live plan so the screen is never empty, but an
@@ -3359,6 +3379,7 @@ export default function CustomerAccount({
                               // activeSubscription's first-plan fallback — otherwise
                               // the top card claims to be managed with no console below it.
                               const isManaged = String(managedSubscription?.id || '') === String(subscription.id);
+                              const orderId = subscriptionOrderId(subscription);
                               const nextDate = subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null;
                               const cancelledDate = subscription.cancelledAt ? new Date(subscription.cancelledAt) : null;
                               const formatDate = (d: Date | null) =>
@@ -3394,6 +3415,19 @@ export default function CustomerAccount({
                                         }`}>
                                           {isCancelledPlan ? 'Cancelled' : isPausedPlan ? 'Paused' : 'Active'}
                                         </span>
+                                        {/*
+                                          The order this plan was bought on, so the
+                                          customer can quote one reference for both
+                                          the plan and its payment.
+                                        */}
+                                        {orderId && (
+                                          <span
+                                            title={`Subscription started on order ${orderId}`}
+                                            className="text-[9px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full font-mono"
+                                          >
+                                            Order {orderId}
+                                          </span>
+                                        )}
                                         {subscription.billingInterval && !isCancelledPlan && (
                                           <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
                                             Every {subscription.billingInterval}
@@ -3441,8 +3475,8 @@ export default function CustomerAccount({
                                     <p className="text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
                                       <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px text-slate-400" />
                                       <span>
-                                        Rebuilt from order {subscription.sourceOrderId}. We could not load this plan's
-                                        live record, so the details shown come from that order.
+                                        We could not load this plan's live record, so the details shown are rebuilt
+                                        from the order above.
                                       </span>
                                     </p>
                                   )}
