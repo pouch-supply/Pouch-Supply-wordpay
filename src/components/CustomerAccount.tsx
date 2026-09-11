@@ -425,11 +425,34 @@ export default function CustomerAccount({
     const derived = new Map<string, any>();
 
     /**
+     * When an order was actually placed, or null if that cannot be established.
+     *
+     * Deliberately NOT parseOrderTime: that falls back to the digits of the
+     * order id so a list can always be sorted, which turns order PS35806 into
+     * 35806ms — 1970. Compared against a removal date every such order looks
+     * older than the removal and gets hidden. A date good enough to sort by is
+     * not good enough to hide a paid order on.
+     */
+    const placedAt = (order: Order): number | null => {
+      for (const raw of [(order as any).createdAt, order.date]) {
+        if (!raw) continue;
+        const direct = new Date(raw).getTime();
+        if (!isNaN(direct) && direct > 0) return direct;
+        // "Aug 8, 2026 at 12:04 AM" — the separator Date cannot read.
+        const cleaned = new Date(String(raw).replace(/ at /i, ' ')).getTime();
+        if (!isNaN(cleaned) && cleaned > 0) return cleaned;
+      }
+      return null;
+    };
+
+    /**
      * Does removing this plan account for this order?
      *
      * Only if the order came first. An order placed after the plan was removed
      * is activity the removal cannot explain — a paid order the customer needs
-     * to see — so it is shown rather than swallowed by a stale removal.
+     * to see — so it is shown rather than swallowed by a stale removal. An
+     * order that cannot be dated is shown for the same reason: a removal may
+     * not hide an order we are unable to place before it.
      */
     const removalCovers = (planId: string, order: Order): boolean => {
       if (!removedAt.has(planId)) return false;
@@ -437,7 +460,9 @@ export default function CustomerAccount({
       if (!deletedAt) return true; // No timestamp recorded: honour the removal.
       const removedTime = new Date(deletedAt).getTime();
       if (isNaN(removedTime)) return true;
-      return parseOrderTime(order) <= removedTime;
+      const orderTime = placedAt(order);
+      if (orderTime === null) return false;
+      return orderTime <= removedTime;
     };
 
     // mySubOrders is newest-first, so the first order seen for a plan is the
