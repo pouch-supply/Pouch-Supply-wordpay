@@ -175,6 +175,9 @@ export default function CustomerAccount({
 
   // Subscription Plan Cancellation Modal States
   const [showSubCancelModal, setShowSubCancelModal] = useState(false);
+  // The plan the cancel dialog is acting on. A customer can hold several plans,
+  // so cancellation has to name the one they picked.
+  const [cancellingSubscriptionId, setCancellingSubscriptionId] = useState<string | null>(null);
   const [subCancelReason, setSubCancelReason] = useState('Taking a break');
   const [subCancelOtherNotes, setSubCancelOtherNotes] = useState('');
   const [isCancellingSub, setIsCancellingSub] = useState(false);
@@ -667,7 +670,18 @@ export default function CustomerAccount({
   const cancelledAccountSubscriptions = visibleAccountSubscriptions.filter((subscription: any) =>
     ['cancelled', 'canceled', 'inactive', 'cancelled_at'].includes(String(subscription.status || '').toLowerCase())
   );
-  const hasCancelledSubscription = cancelledAccountSubscriptions.length > 0 || String((loggedInCustomer as any)?.subStatus || '').toLowerCase() === 'cancelled';
+  /**
+   * Does the customer actually have a cancelled plan?
+   *
+   * The plans decide it. The account-level `subStatus` flag is only consulted
+   * when there are no plans to read, because it goes stale: it stays
+   * "cancelled" after the customer subscribes again, which put a red
+   * "Subscription Plan Cancelled — Billing Halted" banner above three live
+   * plans.
+   */
+  const hasCancelledSubscription = visibleAccountSubscriptions.length > 0
+    ? cancelledAccountSubscriptions.length > 0
+    : String((loggedInCustomer as any)?.subStatus || '').toLowerCase() === 'cancelled';
   const hasRealSubscription = activeAccountSubscriptions.length > 0 || Boolean(
     loggedInCustomer &&
     visibleAccountSubscriptions.length === 0 &&
@@ -1043,6 +1057,33 @@ export default function CustomerAccount({
     localStorage.setItem(custKey, JSON.stringify(state));
   }, [loggedInCustomer, custKey, customers, orders]);
 
+  /**
+   * The status of the plan currently open in the management console.
+   *
+   * The console used to read `custState.subStatus` — a single flag covering the
+   * whole account — so opening a live plan showed "Cancelled", "None
+   * (Cancelled)" and "Paused" whenever any other plan, or a stale profile
+   * field, was cancelled. Status belongs to the plan, so it is read from the
+   * plan; the account flag is only a fallback when no plan is open.
+   */
+  const managedPlanStatus: 'Active' | 'Paused' | 'Cancelled' = (() => {
+    const raw = String(managedSubscription?.status || '').toLowerCase();
+    if (!raw) return (custState?.subStatus as any) || 'Active';
+    if (raw === 'paused') return 'Paused';
+    if (['cancelled', 'canceled', 'inactive'].includes(raw)) return 'Cancelled';
+    return 'Active';
+  })();
+  const isManagedPlanCancelled = managedPlanStatus === 'Cancelled';
+
+  /** The managed plan's own next billing date, formatted, or null. */
+  const managedPlanNextBilling: string | null = (() => {
+    const raw = managedSubscription?.nextBillingDate;
+    if (!raw) return null;
+    const date = new Date(raw);
+    if (isNaN(date.getTime())) return null;
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  })();
+
   const updateCustState = (newVal: any) => {
     const enrichedVal = {
       ...newVal,
@@ -1320,8 +1361,11 @@ export default function CustomerAccount({
         cansCount: custState.subCansCount,
         subItems: custState.subItems,
         items: custState.subItems,
-        subStatus: custState.subStatus,
-        status: custState.subStatus?.toLowerCase(),
+        // The payload is scoped to one plan, so it carries that plan's status.
+        // Sending the account-wide flag here wrote a stale "cancelled" onto a
+        // live plan whenever the profile disagreed with it.
+        subStatus: managedPlanStatus,
+        status: managedPlanStatus.toLowerCase(),
         nextPayment: custState.nextPayment,
         nextDelivery: custState.nextDelivery,
         subPlanManuallyConfigured: true
@@ -1359,6 +1403,19 @@ export default function CustomerAccount({
     }
   };
 
+  /** Opens the cancel dialog for one specific plan. */
+  const openCancelSubscriptionModal = (subscriptionId?: string | null) => {
+    setCancellingSubscriptionId(subscriptionId ? String(subscriptionId) : null);
+    setSubCancelReason('Taking a break');
+    setSubCancelOtherNotes('');
+    setShowSubCancelModal(true);
+  };
+
+  const closeCancelSubscriptionModal = () => {
+    setShowSubCancelModal(false);
+    setCancellingSubscriptionId(null);
+  };
+
   const handleConfirmCancelSubscription = async () => {
     if (!loggedInCustomer?.email) return;
     setIsCancellingSub(true);
@@ -1369,33 +1426,55 @@ export default function CustomerAccount({
       : subCancelReason;
 
     const cancellationTime = new Date().toISOString();
+    // Which plan the customer opened the cancel dialog on. Cancelling used to
+    // name no plan at all, so the server matched on the email and stopped every
+    // plan the customer held — cancelling one of three cancelled all three.
+    const targetId = cancellingSubscriptionId ? String(cancellingSubscriptionId) : null;
+    const targetPlan = targetId
+      ? visibleAccountSubscriptions.find((s: any) => String(s.id) === targetId)
+      : null;
 
     try {
       const res = await fetch('/api/subscriptions/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ...(targetId ? { subscriptionId: targetId } : {}),
           customerEmail: loggedInCustomer.email,
           reason: finalReason
         })
       });
 
       const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || `Cancellation failed (${res.status})`);
+      }
+
+      // Only the cancelled plan changes. Whether the account as a whole counts
+      // as cancelled depends on what is left running.
+      const nextSubscriptions = accountSubscriptions.map((subscription: any) =>
+        !targetId || String(subscription.id) === targetId
+          ? { ...subscription, status: 'cancelled', cancelledAt: cancellationTime, cancellationReason: finalReason }
+          : subscription
+      );
+      setAccountSubscriptions(nextSubscriptions);
+
+      const stillLive = nextSubscriptions.some((s: any) =>
+        ['active', 'subscribed', 'paused'].includes(String(s.status || '').toLowerCase())
+      );
 
       const updatedState = {
         ...custState,
-        subStatus: 'Cancelled',
-        isSubscriptionCancelled: true,
-        subscriptionCancelledAt: cancellationTime,
-        subscriptionCancellationReason: finalReason
+        ...(stillLive ? {} : {
+          subStatus: 'Cancelled',
+          isSubscriptionCancelled: true,
+          subscriptionCancelledAt: cancellationTime,
+          subscriptionCancellationReason: finalReason
+        })
       };
-      setAccountSubscriptions(previous => previous.map(subscription => ({
-        ...subscription,
-        status: 'cancelled'
-      })));
       updateCustState(updatedState);
 
-      if (onUpdateProfile) {
+      if (onUpdateProfile && !stillLive) {
         onUpdateProfile({
           ...loggedInCustomer,
           subStatus: 'Cancelled',
@@ -1411,12 +1490,18 @@ export default function CustomerAccount({
         const emailLower = loggedInCustomer.email.toLowerCase().trim();
         orders.forEach(o => {
           const isMatch = (o.customerEmail && o.customerEmail.toLowerCase().trim() === emailLower);
-          const isSub = Boolean(
-            o.isSubscription ||
-            (Array.isArray(o.tags) && o.tags.some((t: string) => t && t.toLowerCase().includes("subscription"))) ||
-            (Array.isArray(o.items) && o.items.some((i: any) => i.isSubscription || (i.productTitle && i.productTitle.toLowerCase().includes("subscription"))))
-          );
-          if (isMatch && isSub) {
+          const isSub = isSubscriptionOrder(o);
+          // With a plan named, only that plan's own orders are marked
+          // cancelled. Orders that name no plan are only in scope when the
+          // customer holds a single plan — otherwise there is no telling which
+          // plan they belonged to, and guessing would flag the wrong ones.
+          const orderPlanId = getOrderSubscriptionId(o);
+          const inScope = !targetId
+            ? true
+            : orderPlanId
+              ? orderPlanId === targetId
+              : visibleAccountSubscriptions.length <= 1;
+          if (isMatch && isSub && inScope) {
             const tags = Array.isArray(o.tags) ? [...o.tags] : [];
             if (!tags.includes('Subscription Cancelled')) tags.push('Subscription Cancelled');
             const currentDetails = o.subscriptionDetails || {
@@ -1444,25 +1529,23 @@ export default function CustomerAccount({
         });
       }
 
-      setShowSubCancelModal(false);
+      closeCancelSubscriptionModal();
       setSubActionToast({
         type: 'success',
-        message: 'Subscription plan successfully cancelled. Recurring renewals have been halted.'
+        message: targetPlan?.planName
+          ? `${targetPlan.planName} cancelled. Its recurring renewals have been halted.`
+          : 'Subscription plan successfully cancelled. Recurring renewals have been halted.'
       });
     } catch (err: any) {
+      // Previously this reported success and marked the plan cancelled on
+      // screen even though the request had failed, so a customer could believe
+      // billing had stopped while the plan carried on charging them.
       console.warn('[Cancel Subscription Error]', err);
-      const updatedState = {
-        ...custState,
-        subStatus: 'Cancelled',
-        isSubscriptionCancelled: true,
-        subscriptionCancelledAt: cancellationTime,
-        subscriptionCancellationReason: finalReason
-      };
-      updateCustState(updatedState);
-      setShowSubCancelModal(false);
       setSubActionToast({
-        type: 'success',
-        message: 'Subscription plan cancelled successfully.'
+        type: 'error',
+        message: err?.message
+          ? `Could not cancel this plan: ${err.message}`
+          : 'Could not cancel this plan. Please try again, or contact support.'
       });
     } finally {
       setIsCancellingSub(false);
@@ -3425,8 +3508,13 @@ export default function CustomerAccount({
                         </div>
                       )}
 
-                      {/* Cancelled Banner if subscription is cancelled */}
-                      {(custState.subStatus === 'Cancelled' || hasCancelledSubscription) && (
+                      {/*
+                        Cancelled banner. Driven by the plans alone —
+                        hasCancelledSubscription already falls back to the
+                        profile flag when there are no plans — so it no longer
+                        appears above plans that are all live.
+                      */}
+                      {hasCancelledSubscription && (
                         <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                           <div className="flex items-start gap-3.5">
                             <div className="p-2.5 bg-rose-100 border border-rose-300 rounded-2xl text-rose-700 shrink-0 mt-0.5">
@@ -3674,20 +3762,35 @@ export default function CustomerAccount({
                                     no way to reach the second one's box.
                                   */}
                                   {!isCancelledPlan && (
-                                    isManaged ? (
-                                      <p className="flex items-center justify-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl py-2.5">
-                                        <CheckCircle2 className="w-3 h-3" />
-                                        Managing this plan below
-                                      </p>
-                                    ) : (
+                                    <div className="flex items-center gap-2">
+                                      {isManaged ? (
+                                        <p className="flex-1 flex items-center justify-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl py-2.5">
+                                          <CheckCircle2 className="w-3 h-3" />
+                                          Managing this plan below
+                                        </p>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => openSubscriptionManager(String(subscription.id))}
+                                          className="flex-1 bg-[#071d37] hover:bg-[#0c2e56] text-white text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                                        >
+                                          Manage This Plan
+                                        </button>
+                                      )}
+                                      {/*
+                                        Cancels this plan alone. Named explicitly
+                                        so a customer holding several plans stops
+                                        the one they picked and no other.
+                                      */}
                                       <button
                                         type="button"
-                                        onClick={() => openSubscriptionManager(String(subscription.id))}
-                                        className="w-full bg-[#071d37] hover:bg-[#0c2e56] text-white text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl transition-all cursor-pointer"
+                                        onClick={() => openCancelSubscriptionModal(String(subscription.id))}
+                                        title={`Cancel ${planName}`}
+                                        className="bg-white border border-slate-200 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 text-slate-600 text-[10px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl transition-all cursor-pointer whitespace-nowrap"
                                       >
-                                        Manage This Plan
+                                        Cancel Plan
                                       </button>
-                                    )
+                                    </div>
                                   )}
                                 </div>
                               );
@@ -3793,13 +3896,13 @@ export default function CustomerAccount({
                             <div className="flex items-center gap-2">
                               <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">Subscription Plan & Deliveries</h3>
                               <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border ${
-                                custState.subStatus === 'Active' 
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                                  : custState.subStatus === 'Paused'
+                                managedPlanStatus === 'Active'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : managedPlanStatus === 'Paused'
                                   ? 'bg-amber-50 text-amber-700 border-amber-200'
                                   : 'bg-rose-600 text-white border-rose-600 shadow-2xs'
                               }`}>
-                                {custState.subStatus || 'ACTIVE'}
+                                {managedPlanStatus}
                               </span>
                             </div>
                             <p className="text-slate-400 text-[11px] mt-0.5">Switch your plan tier, swap canister flavors, or update delivery frequency anytime.</p>
@@ -3821,31 +3924,41 @@ export default function CustomerAccount({
                             <button
                               type="button"
                               onClick={handleSaveSubscriptionPlan}
-                              disabled={isSavingPlan || custState.subStatus === 'Cancelled'}
+                              disabled={isSavingPlan || isManagedPlanCancelled}
                               className="flex-1 sm:flex-initial bg-[#071d37] hover:bg-[#0c2e56] disabled:opacity-50 text-white font-extrabold text-xs uppercase tracking-wider py-2.5 px-4 rounded-xl transition-all cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
                             >
                               {isSavingPlan ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#dfa047]" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[#dfa047]" />}
                               <span>{isSavingPlan ? 'Saving...' : 'Save Plan'}</span>
                             </button>
 
-                            {custState.subStatus !== 'Cancelled' && (
+                            {!isManagedPlanCancelled && (
                               <button
                                 type="button"
                                 onClick={() => {
-                                  const toggleStatus = custState.subStatus === 'Active' ? 'Paused' : 'Active';
+                                  const toggleStatus = managedPlanStatus === 'Active' ? 'Paused' : 'Active';
                                   updateCustState({ ...custState, subStatus: toggleStatus });
+                                  // The console reads its status from the plan, so the
+                                  // plan is what has to change for the button to
+                                  // reflect the click before the next reload.
+                                  if (managedSubscription?.id) {
+                                    setAccountSubscriptions(previous => previous.map((s: any) =>
+                                      String(s.id) === String(managedSubscription.id)
+                                        ? { ...s, status: toggleStatus.toLowerCase() }
+                                        : s
+                                    ));
+                                  }
                                   setSubActionToast({
                                     type: 'info',
                                     message: toggleStatus === 'Paused' ? 'Subscription deliveries paused. You can resume anytime.' : 'Subscription deliveries resumed.'
                                   });
                                 }}
                                 className={`font-bold text-xs uppercase py-2.5 px-3 rounded-xl border transition-all cursor-pointer whitespace-nowrap ${
-                                  custState.subStatus === 'Active' 
-                                    ? 'bg-slate-50 border-slate-200 text-[#071d37] hover:bg-slate-100' 
+                                  managedPlanStatus === 'Active'
+                                    ? 'bg-slate-50 border-slate-200 text-[#071d37] hover:bg-slate-100'
                                     : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
                                 }`}
                               >
-                                {custState.subStatus === 'Active' ? 'Pause' : 'Resume'}
+                                {managedPlanStatus === 'Active' ? 'Pause' : 'Resume'}
                               </button>
                             )}
                           </div>
@@ -3871,7 +3984,7 @@ export default function CustomerAccount({
                                 <div
                                   key={tier.id}
                                   onClick={() => {
-                                    if (custState.subStatus !== 'Cancelled') {
+                                    if (!isManagedPlanCancelled) {
                                       handlePlanTierChange(tier.id);
                                     }
                                   }}
@@ -3879,7 +3992,7 @@ export default function CustomerAccount({
                                     isSelected
                                       ? 'bg-amber-50/40 border-[#dfa047] shadow-sm ring-1 ring-[#dfa047]'
                                       : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/60'
-                                  } ${custState.subStatus === 'Cancelled' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                  } ${isManagedPlanCancelled ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 >
                                   {tier.badge && (
                                     <span className={`absolute -top-2.5 right-3 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-2xs ${
@@ -3915,7 +4028,7 @@ export default function CustomerAccount({
                         </div>
 
                         {/* Promo / Referral Code + Subscribe & Pay */}
-                        {custState.subStatus !== 'Cancelled' && (
+                        {!isManagedPlanCancelled && (
                           <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 space-y-4">
                             <div className="space-y-2">
                               <label className="block text-[11px] font-black text-[#071d37] uppercase tracking-wider">
@@ -4039,7 +4152,7 @@ export default function CustomerAccount({
                             <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Delivery Frequency</label>
                             <select 
                               value={custState.subFrequency || 'Bi-Weekly'} 
-                              disabled={custState.subStatus === 'Cancelled'}
+                              disabled={isManagedPlanCancelled}
                               onChange={(e) => {
                                 const newFreq = e.target.value;
                                 updateCustState({ ...custState, subFrequency: newFreq });
@@ -4060,7 +4173,9 @@ export default function CustomerAccount({
                             <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Next Payment</span>
                             <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
                               <p className="font-extrabold text-xs text-[#071d37]">
-                                {custState.subStatus === 'Cancelled' ? <span className="text-rose-600">None (Cancelled)</span> : (custState.nextPayment || 'Upcoming renewal')}
+                                {isManagedPlanCancelled
+                                  ? <span className="text-rose-600">None (Cancelled)</span>
+                                  : (managedPlanNextBilling || custState.nextPayment || 'Upcoming renewal')}
                               </p>
                             </div>
                           </div>
@@ -4069,17 +4184,17 @@ export default function CustomerAccount({
                             <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Estimated Delivery</span>
                             <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
                               <p className="font-extrabold text-xs text-[#071d37]">
-                                {custState.subStatus === 'Cancelled' ? <span className="text-rose-600">Paused</span> : (custState.nextDelivery || 'Dispatched via Tracked 24')}
+                                {isManagedPlanCancelled ? <span className="text-rose-600">Paused</span> : (custState.nextDelivery || 'Dispatched via Tracked 24')}
                               </p>
                             </div>
                           </div>
                         </div>
 
-                        {custState.subStatus !== 'Cancelled' && (
+                        {!isManagedPlanCancelled && (
                           <div className="pt-2 flex justify-end">
                             <button
                               type="button"
-                              onClick={() => setShowSubCancelModal(true)}
+                              onClick={() => openCancelSubscriptionModal(managedSubscription?.id ? String(managedSubscription.id) : null)}
                               className="text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 font-bold text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl cursor-pointer text-center transition-colors"
                             >
                               Cancel Subscription Plan
@@ -5547,19 +5662,44 @@ export default function CustomerAccount({
                 <span>Cancel Subscription Plan</span>
               </h3>
               <button 
-                onClick={() => setShowSubCancelModal(false)} 
+                onClick={closeCancelSubscriptionModal} 
                 className="text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 space-y-1 text-xs text-rose-900">
-              <p className="font-bold">Are you sure you want to cancel your recurring subscription?</p>
-              <p className="text-rose-700 text-[11px]">
-                Your recurring boxes and member discounts will be halted immediately. You can reactivate anytime from your account dashboard.
-              </p>
-            </div>
+            {/*
+              Names the plan being cancelled. With several plans on the account
+              an unlabelled dialog gives no clue which one is about to stop.
+            */}
+            {(() => {
+              const target = cancellingSubscriptionId
+                ? visibleAccountSubscriptions.find((s: any) => String(s.id) === String(cancellingSubscriptionId))
+                : null;
+              const others = visibleAccountSubscriptions.filter((s: any) =>
+                String(s.id) !== String(cancellingSubscriptionId) &&
+                ['active', 'subscribed', 'paused'].includes(String(s.status || '').toLowerCase())
+              ).length;
+              return (
+                <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 space-y-1 text-xs text-rose-900">
+                  <p className="font-bold">
+                    {target
+                      ? `Cancel ${target.planName || 'this plan'}?`
+                      : 'Are you sure you want to cancel your recurring subscription?'}
+                  </p>
+                  <p className="text-rose-700 text-[11px]">
+                    Its recurring boxes and member discounts will be halted immediately. You can reactivate anytime
+                    from your account dashboard.
+                  </p>
+                  {target && others > 0 && (
+                    <p className="text-rose-700 text-[11px] font-semibold">
+                      Your other {others === 1 ? 'plan keeps' : `${others} plans keep`} running as normal.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="space-y-3 text-xs">
               <div>
@@ -5595,7 +5735,7 @@ export default function CustomerAccount({
             <div className="pt-2 flex gap-2">
               <button
                 type="button"
-                onClick={() => setShowSubCancelModal(false)}
+                onClick={closeCancelSubscriptionModal}
                 className="flex-1 py-2.5 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-xs transition cursor-pointer"
               >
                 Keep Subscription

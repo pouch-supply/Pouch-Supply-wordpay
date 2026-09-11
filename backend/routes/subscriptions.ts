@@ -970,9 +970,14 @@ router.post(
         const stored: any[] = (await fetchResource("subscriptions")) || [];
         let modified = false;
         const updatedList = stored.map((s: any) => {
-          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
-          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
-          if (matchId || matchEmail) {
+          // A named plan is the only one cancelled. Falling through to the email
+          // as well cancelled every plan the customer held, so cancelling one of
+          // three stopped all three. The email is the match only when no plan is
+          // named — that is what the account-level button means.
+          const match = subscriptionId
+            ? String(s.id) === String(subscriptionId)
+            : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean);
+          if (match) {
             modified = true;
             return {
               ...s,
@@ -986,9 +991,12 @@ router.post(
 
         if (modified) {
           await saveResource("subscriptions", updatedList);
-          subscription = updatedList.find((s: any) => 
-            (subscriptionId && String(s.id) === String(subscriptionId)) ||
-            (emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
+          // Reports back the plan that was actually changed, using the same
+          // rule the update above applied.
+          subscription = updatedList.find((s: any) =>
+            subscriptionId
+              ? String(s.id) === String(subscriptionId)
+              : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
           ) || subscription;
         }
       } catch (_e) {}
@@ -1191,10 +1199,14 @@ router.post(
         const stored: any[] = (await fetchResource("subscriptions")) || [];
         let modified = false;
         const updatedList = stored.map((s: any) => {
-          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
-          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
+          // A named plan is the only one resumed; without one, every plan the
+          // customer holds is. Matching the email as well as the id meant
+          // resuming one of three plans quietly restarted all three.
           // Without an explicit id, a deleted plan stays deleted.
-          if (matchId || (matchEmail && !isDeletedStatus(s.status))) {
+          const match = subscriptionId
+            ? String(s.id) === String(subscriptionId)
+            : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean && !isDeletedStatus(s.status));
+          if (match) {
             modified = true;
             const { cancelledAt, cancellationReason, deletedAt, ...rest } = s;
             return {
@@ -1209,9 +1221,12 @@ router.post(
 
         if (modified) {
           await saveResource("subscriptions", updatedList);
-          subscription = updatedList.find((s: any) => 
-            (subscriptionId && String(s.id) === String(subscriptionId)) ||
-            (emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
+          // Reports back the plan that was actually changed, using the same
+          // rule the update above applied.
+          subscription = updatedList.find((s: any) =>
+            subscriptionId
+              ? String(s.id) === String(subscriptionId)
+              : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
           ) || subscription;
         }
       } catch (_e) {}
