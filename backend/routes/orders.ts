@@ -463,13 +463,8 @@ export async function saveSingleOrder(orderData: any) {
   // payload is now logged in full whenever the row cannot be confirmed.
   let persistedToNeon = false;
   try {
-    const { prisma } = await import('../../src/lib/prisma');
-    await prisma.order.upsert({
-      where: { id },
-      update: formattedOrder,
-      create: formattedOrder
-    });
-    persistedToNeon = Boolean(await prisma.order.findUnique({ where: { id }, select: { id: true } }));
+    const { upsertOrderRow } = await import('../../src/lib/orderRow');
+    persistedToNeon = await upsertOrderRow(formattedOrder);
   } catch (prismaErr: any) {
     console.error('[Orders Router] Neon order write failed for ' + id + ':', prismaErr?.message);
   }

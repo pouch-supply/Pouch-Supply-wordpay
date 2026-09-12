@@ -382,6 +382,121 @@ var init_initialDevSettings = __esm({
   }
 });
 
+// src/lib/orderRow.ts
+var orderRow_exports = {};
+__export(orderRow_exports, {
+  toOrderRow: () => toOrderRow,
+  upsertOrderRow: () => upsertOrderRow
+});
+function toOrderRow(item) {
+  const id = String(item?.id || item?.orderId || "");
+  const row = {
+    id,
+    // Required columns get a value even when the caller omitted one, because the
+    // table rejects nulls here and losing the order is the worse outcome.
+    customerName: item?.customerName || "Valued Customer",
+    customerEmail: item?.customerEmail || "customer@pouch-supply.com",
+    tags: Array.isArray(item?.tags) ? item.tags : [],
+    fulfillmentStatus: item?.fulfillmentStatus || "Unfulfilled",
+    destination: item?.destination || item?.address || "United Kingdom",
+    date: item?.date || (/* @__PURE__ */ new Date()).toISOString(),
+    deliveryMethod: item?.deliveryMethod || "Royal Mail Tracked 24/48",
+    items: Array.isArray(item?.items) ? item.items : [],
+    total: num(item?.total),
+    // The whole order, including the fields the table has no column for.
+    data: item ?? {}
+  };
+  for (const key of ORDER_COLUMNS) {
+    if (key in row) continue;
+    const value = item?.[key];
+    if (value === void 0) continue;
+    row[key] = value;
+  }
+  if (row.shippingCost === void 0 && item?.deliveryCost !== void 0) {
+    row.shippingCost = num(item.deliveryCost, 0);
+  }
+  if (row.storeCreditApplied !== void 0) row.storeCreditApplied = num(row.storeCreditApplied);
+  if (row.subtotal !== void 0) row.subtotal = num(row.subtotal);
+  if (row.shippingCost !== void 0) row.shippingCost = num(row.shippingCost);
+  if (row.discountAmount !== void 0) row.discountAmount = num(row.discountAmount);
+  if (row.isSubscription !== void 0) row.isSubscription = Boolean(row.isSubscription);
+  if (row.tags.length === 0) row.tags = ["Storefront", "Online Order"];
+  return row;
+}
+async function upsertOrderRow(item) {
+  const row = toOrderRow(item);
+  if (!row.id) {
+    console.error("[Order Row] Refusing to write an order with no id.");
+    return false;
+  }
+  const customerId = item?.customerId ? String(item.customerId) : null;
+  const subscriptionId = item?.subscriptionId ? String(item.subscriptionId) : null;
+  if (customerId) {
+    const exists = await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } }).catch(() => null);
+    if (exists) row.customerId = customerId;
+  }
+  if (subscriptionId) {
+    const exists = await prisma.subscription.findUnique({ where: { id: subscriptionId }, select: { id: true } }).catch(() => null);
+    if (exists) row.subscriptionId = subscriptionId;
+  }
+  try {
+    await prisma.order.upsert({
+      where: { id: row.id },
+      update: row,
+      // `row` is assembled from a loose object, so it is narrowed to the real
+      // columns at runtime by toOrderRow rather than by the compiler.
+      create: row
+    });
+    return true;
+  } catch (err) {
+    console.error(`[Order Row] Neon write failed for ${row.id}:`, err?.message);
+    return false;
+  }
+}
+var ORDER_COLUMNS, num;
+var init_orderRow = __esm({
+  "src/lib/orderRow.ts"() {
+    init_prisma();
+    ORDER_COLUMNS = [
+      "customerName",
+      "customerEmail",
+      "tags",
+      "fulfillmentStatus",
+      "paymentStatus",
+      "worldpayTxId",
+      "worldpayAuthCode",
+      "gatewayTxId",
+      "gatewayAuthCode",
+      "cardBrand",
+      "total",
+      "storeCreditApplied",
+      "destination",
+      "date",
+      "deliveryMethod",
+      "items",
+      "trackingId",
+      "carrier",
+      "trackingHistory",
+      "discountApplied",
+      "subtotal",
+      "shippingCost",
+      "discountAmount",
+      "paymentMethod",
+      "currency",
+      "trackingNumber",
+      "royalMailOrderId",
+      "isSubscription",
+      "subscriptionDetails",
+      "notificationsSent"
+    ];
+    num = (value, fallback = 0) => {
+      if (typeof value === "number" && Number.isFinite(value)) return value;
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+  }
+});
+
 // serverDb.ts
 import fs from "fs";
 import path from "path";
@@ -1135,48 +1250,8 @@ async function syncToPrismaModel(resource, item) {
         }
       }
     } else if (norm === "orders") {
-      await prisma.order.upsert({
-        where: { id },
-        update: {
-          customerName: item.customerName || "Valued Customer",
-          customerEmail: item.customerEmail || "customer@pouch-supply.com",
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          fulfillmentStatus: item.fulfillmentStatus || "Unfulfilled",
-          paymentStatus: item.paymentStatus || "Paid",
-          worldpayTxId: item.worldpayTxId || item.gatewayTxId || null,
-          worldpayAuthCode: item.worldpayAuthCode || item.gatewayAuthCode || null,
-          gatewayTxId: item.gatewayTxId || item.worldpayTxId || null,
-          gatewayAuthCode: item.gatewayAuthCode || item.worldpayAuthCode || null,
-          cardBrand: item.cardBrand || "Card",
-          total: typeof item.total === "number" ? item.total : parseFloat(item.total) || 0,
-          storeCreditApplied: typeof item.storeCreditApplied === "number" ? item.storeCreditApplied : parseFloat(item.storeCreditApplied) || 0,
-          destination: item.destination || "United Kingdom",
-          date: item.date || (/* @__PURE__ */ new Date()).toISOString(),
-          deliveryMethod: item.deliveryMethod || "Royal Mail Tracked 24/48",
-          items: item.items || [],
-          data: item
-        },
-        create: {
-          id,
-          customerName: item.customerName || "Valued Customer",
-          customerEmail: item.customerEmail || "customer@pouch-supply.com",
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          fulfillmentStatus: item.fulfillmentStatus || "Unfulfilled",
-          paymentStatus: item.paymentStatus || "Paid",
-          worldpayTxId: item.worldpayTxId || item.gatewayTxId || null,
-          worldpayAuthCode: item.worldpayAuthCode || item.gatewayAuthCode || null,
-          gatewayTxId: item.gatewayTxId || item.worldpayTxId || null,
-          gatewayAuthCode: item.gatewayAuthCode || item.worldpayAuthCode || null,
-          cardBrand: item.cardBrand || "Card",
-          total: typeof item.total === "number" ? item.total : parseFloat(item.total) || 0,
-          storeCreditApplied: typeof item.storeCreditApplied === "number" ? item.storeCreditApplied : parseFloat(item.storeCreditApplied) || 0,
-          destination: item.destination || "United Kingdom",
-          date: item.date || (/* @__PURE__ */ new Date()).toISOString(),
-          deliveryMethod: item.deliveryMethod || "Royal Mail Tracked 24/48",
-          items: item.items || [],
-          data: item
-        }
-      });
+      const { upsertOrderRow: upsertOrderRow2 } = await Promise.resolve().then(() => (init_orderRow(), orderRow_exports));
+      await upsertOrderRow2(item);
     } else if (norm === "custompages" || norm === "pages") {
       const pageSlug = item.slug || id;
       const pageSections = Array.isArray(item.sections) ? item.sections : [];
@@ -1539,7 +1614,7 @@ async function saveResource(resource, list) {
               data: item
             }
           }).catch((e) => console.warn(`[StoreResource Sync] ${normResource} ${itemId} warning:`, e?.message));
-          syncToPrismaModel(normResource, item).catch(
+          await syncToPrismaModel(normResource, item).catch(
             (e) => console.error(
               `[Model Sync FAILED] ${normResource}/${itemId} \u2014 typed table is now stale:`,
               e?.message
@@ -1753,7 +1828,7 @@ async function saveSingleItem(resource, item) {
           data: item
         }
       });
-      syncToPrismaModel(normResource, item).catch(
+      await syncToPrismaModel(normResource, item).catch(
         (e) => console.error(
           `[Model Sync FAILED] ${normResource}/${itemId} \u2014 typed table is now stale:`,
           e?.message
@@ -4259,13 +4334,8 @@ async function saveSingleOrder(orderData) {
   }
   let persistedToNeon = false;
   try {
-    const { prisma: prisma2 } = await Promise.resolve().then(() => (init_prisma(), prisma_exports));
-    await prisma2.order.upsert({
-      where: { id },
-      update: formattedOrder,
-      create: formattedOrder
-    });
-    persistedToNeon = Boolean(await prisma2.order.findUnique({ where: { id }, select: { id: true } }));
+    const { upsertOrderRow: upsertOrderRow2 } = await Promise.resolve().then(() => (init_orderRow(), orderRow_exports));
+    persistedToNeon = await upsertOrderRow2(formattedOrder);
   } catch (prismaErr) {
     console.error("[Orders Router] Neon order write failed for " + id + ":", prismaErr?.message);
   }

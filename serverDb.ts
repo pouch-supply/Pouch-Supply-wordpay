@@ -847,48 +847,13 @@ async function syncToPrismaModel(resource: string, item: any): Promise<void> {
         }
       }
     } else if (norm === 'orders') {
-      await prisma.order.upsert({
-        where: { id },
-        update: {
-          customerName: item.customerName || 'Valued Customer',
-          customerEmail: item.customerEmail || 'customer@pouch-supply.com',
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          fulfillmentStatus: item.fulfillmentStatus || 'Unfulfilled',
-          paymentStatus: item.paymentStatus || 'Paid',
-          worldpayTxId: item.worldpayTxId || item.gatewayTxId || null,
-          worldpayAuthCode: item.worldpayAuthCode || item.gatewayAuthCode || null,
-          gatewayTxId: item.gatewayTxId || item.worldpayTxId || null,
-          gatewayAuthCode: item.gatewayAuthCode || item.worldpayAuthCode || null,
-          cardBrand: item.cardBrand || 'Card',
-          total: typeof item.total === 'number' ? item.total : parseFloat(item.total) || 0,
-          storeCreditApplied: typeof item.storeCreditApplied === 'number' ? item.storeCreditApplied : parseFloat(item.storeCreditApplied) || 0,
-          destination: item.destination || 'United Kingdom',
-          date: item.date || new Date().toISOString(),
-          deliveryMethod: item.deliveryMethod || 'Royal Mail Tracked 24/48',
-          items: item.items || [],
-          data: item
-        },
-        create: {
-          id,
-          customerName: item.customerName || 'Valued Customer',
-          customerEmail: item.customerEmail || 'customer@pouch-supply.com',
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          fulfillmentStatus: item.fulfillmentStatus || 'Unfulfilled',
-          paymentStatus: item.paymentStatus || 'Paid',
-          worldpayTxId: item.worldpayTxId || item.gatewayTxId || null,
-          worldpayAuthCode: item.worldpayAuthCode || item.gatewayAuthCode || null,
-          gatewayTxId: item.gatewayTxId || item.worldpayTxId || null,
-          gatewayAuthCode: item.gatewayAuthCode || item.worldpayAuthCode || null,
-          cardBrand: item.cardBrand || 'Card',
-          total: typeof item.total === 'number' ? item.total : parseFloat(item.total) || 0,
-          storeCreditApplied: typeof item.storeCreditApplied === 'number' ? item.storeCreditApplied : parseFloat(item.storeCreditApplied) || 0,
-          destination: item.destination || 'United Kingdom',
-          date: item.date || new Date().toISOString(),
-          deliveryMethod: item.deliveryMethod || 'Royal Mail Tracked 24/48',
-          items: item.items || [],
-          data: item
-        }
-      });
+      // One shared, schema-checked writer for the Order table - see
+      // src/lib/orderRow.ts. This branch used to list the columns by hand and
+      // omitted isSubscription, subscriptionDetails, subtotal, shippingCost,
+      // trackingNumber and royalMailOrderId, so every order it wrote was a
+      // partial row that disagreed with the StoreResource copy.
+      const { upsertOrderRow } = await import('./src/lib/orderRow');
+      await upsertOrderRow(item);
     } else if (norm === 'custompages' || norm === 'pages') {
       const pageSlug = item.slug || id;
       const pageSections = Array.isArray(item.sections) ? item.sections : [];
@@ -1283,11 +1248,13 @@ export async function saveResource(resource: string, list: any[] | any): Promise
             }
           }).catch((e: any) => console.warn(`[StoreResource Sync] ${normResource} ${itemId} warning:`, e?.message));
 
-          // Dual sync to dedicated Prisma model table. Failures are logged, not
-          // swallowed: a silent failure here is how the typed tables drifted out
-          // of step with the StoreResource blobs (subscription billing intervals
-          // ended up different in each).
-          syncToPrismaModel(normResource, item).catch((e: any) =>
+          // Dual sync to the dedicated Prisma model table. This MUST be awaited.
+          // It used to be fire-and-forget, which works on a long-lived server but
+          // not on a serverless deploy: the response returns, the container is
+          // frozen, and the pending write never reaches Neon. The order landed in
+          // StoreResource (awaited) and never in the Order table - which is why
+          // the admin list, which merges both, still showed it.
+          await syncToPrismaModel(normResource, item).catch((e: any) =>
             console.error(
               `[Model Sync FAILED] ${normResource}/${itemId} — typed table is now stale:`,
               e?.message
@@ -1531,7 +1498,9 @@ export async function saveSingleItem(resource: string, item: any): Promise<any> 
           data: item
         }
       });
-      syncToPrismaModel(normResource, item).catch((e: any) =>
+      // Awaited for the same reason as in saveResource: an unawaited write does
+      // not survive a serverless invocation ending.
+      await syncToPrismaModel(normResource, item).catch((e: any) =>
         console.error(
           `[Model Sync FAILED] ${normResource}/${itemId} — typed table is now stale:`,
           e?.message
