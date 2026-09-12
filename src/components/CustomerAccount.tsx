@@ -565,13 +565,26 @@ export default function CustomerAccount({
       const orderTier = detectPlanTier(planName);
       const ownerCandidates = !linkedId && orderTier ? unclaimedPlansByTier.get(orderTier) : undefined;
       if (ownerCandidates && ownerCandidates.length > 0) {
-        const ownerId = ownerCandidates[0];
+        // One order per unclaimed plan. This is meant to reunite a plan with the
+        // single order that created it, but the candidate was never consumed, so
+        // EVERY unlinked order of that tier piled onto the same plan — three
+        // separate LITE purchases showed as one card with three order badges.
+        const ownerId = ownerCandidates.shift() as string;
+        if (ownerCandidates.length === 0) unclaimedPlansByTier.delete(orderTier as string);
         attributed.set(ownerId, [...(attributed.get(ownerId) || []), String(order.id)]);
         continue;
       }
-      // Renewals of one plan collapse onto a single card rather than showing
-      // one card per delivery.
-      const key = linkedId || `plan:${planName.toLowerCase()}`;
+      // Renewals of one plan collapse onto a single card rather than showing one
+      // card per delivery. A renewal always carries its plan id, and the worker
+      // also tags it "Worldpay Recurring"; anything else is a separate purchase
+      // and gets its own card.
+      //
+      // Keying every unlinked order by plan NAME collapsed distinct purchases
+      // too: three separate "LITE Plan" subscriptions bought on different days
+      // shared one card, because they share a name.
+      const isRenewalOrder = Array.isArray(order.tags)
+        && order.tags.some((t: any) => String(t).toLowerCase().includes('recurring'));
+      const key = linkedId || (isRenewalOrder ? `plan:${planName.toLowerCase()}` : `order:${order.id}`);
       if (derived.has(key)) continue;
 
       const cancelled = Boolean(

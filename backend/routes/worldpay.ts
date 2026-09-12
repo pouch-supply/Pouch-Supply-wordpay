@@ -259,6 +259,14 @@ const AUTHORISED_PAYMENT_EVENTS = [
   'authorized',
   'authorised',
   'sentforsettlement',
+  // What this account actually reports for a captured payment. Every live
+  // Worldpay payment queried on this entity comes back
+  // `"lastEvent": "settlementRequestSubmitted"` — the money is authorised AND
+  // the settlement request is in. It was missing from this list, so every real
+  // payment normalised to "unknown", the order was recorded as Pending, and the
+  // subscription that depends on a confirmed payment was never created.
+  'settlementrequestsubmitted',
+  'settlementsubmitted',
   'settled',
   'charged',
   'captured'
@@ -678,6 +686,90 @@ async function saveVerifiedOrder(
 }
 
 // GET /api/worldpay/config - Returns mode and configuration status
+/**
+ * Reconcile orders that Worldpay confirmed after we stopped listening.
+ *
+ * Worldpay publishes a payment a moment after the shopper's browser returns. If
+ * the callback ran before that, `paymentOutcome` answered "unknown", the order
+ * was recorded as Pending, and — because a subscription is only created from a
+ * CONFIRMED payment — no subscription was created either. Nothing re-checked
+ * afterwards, so the order stayed Pending for good while the money had in fact
+ * been taken.
+ *
+ * This re-asks Worldpay about every Pending order and, where the payment is
+ * authorised, runs it back through `saveVerifiedOrder` — the same funnel the
+ * callback uses. That path already refuses to act twice: an order that is
+ * already Paid, or that already has a subscription, is skipped rather than
+ * duplicated, so this is safe to run on a schedule and safe to run twice.
+ */
+export async function reconcilePendingWorldpayOrders(limit = 50) {
+  const orders: any[] = (await fetchResource('orders')) || [];
+  const pendingOrders = orders
+    .filter((o: any) => o && String(o.paymentStatus || '').toLowerCase() === 'pending')
+    .slice(0, limit);
+
+  const results: Array<{ orderId: string; status: string; detail?: string }> = [];
+
+  for (const order of pendingOrders) {
+    const orderId = String(order.id);
+    try {
+      const payment = await fetchWorldpayPaymentDetails(orderId);
+      const outcome = paymentOutcome(payment);
+
+      if (outcome === 'failed') {
+        results.push({ orderId, status: 'failed', detail: String(payment?.lastEvent || 'refused') });
+        continue;
+      }
+      if (outcome !== 'authorised') {
+        results.push({ orderId, status: 'still-unconfirmed', detail: String(payment?.lastEvent || 'no payment published') });
+        continue;
+      }
+
+      const card = payment?.paymentInstrument?.card;
+      await saveVerifiedOrder(orderId, {
+        transactionId: String(payment?.paymentId || order.worldpayTxId || orderId),
+        authCode: payment?.issuer?.authorizationCode || undefined,
+        cardBrand: card?.brand || undefined,
+        cardLast4: card?.number?.last4Digits || undefined,
+        // The payment query response is what carries scheme.reference, which is
+        // the stored credential the renewal needs.
+        gatewayResponse: payment,
+        paymentConfirmed: true,
+        customerName: order.customerName,
+        customerEmail: order.customerEmail,
+        destination: order.destination,
+        items: order.items,
+        total: typeof order.total === 'number' ? order.total : undefined,
+        deliveryMethod: order.deliveryMethod
+      });
+
+      results.push({ orderId, status: 'reconciled', detail: String(payment?.transactionType || '') });
+    } catch (err: any) {
+      results.push({ orderId, status: 'error', detail: err?.message });
+    }
+  }
+
+  return results;
+}
+
+const handleReconcilePending = async (_req: Request, res: Response) => {
+  try {
+    const results = await reconcilePendingWorldpayOrders();
+    const reconciled = results.filter(r => r.status === 'reconciled').length;
+    return res.json({
+      success: true,
+      message: `Checked ${results.length} pending order(s); ${reconciled} reconciled.`,
+      results
+    });
+  } catch (err: any) {
+    console.error('[Worldpay Reconcile] Failed:', err);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+};
+
+router.get('/reconcile-pending', handleReconcilePending);
+router.post('/reconcile-pending', handleReconcilePending);
+
 router.get('/config', (_req: Request, res: Response) => {
   const cfg = getEnvironmentConfig();
 
