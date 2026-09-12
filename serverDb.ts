@@ -592,6 +592,23 @@ export async function getDb(): Promise<boolean> {
   return status.status === 'connected';
 }
 
+/**
+ * Resources a whole-list save is never allowed to delete from.
+ *
+ * saveResource() used to treat the posted array as the complete truth and
+ * delete every row whose id was absent from it. That is correct for a
+ * catalogue the admin edits as a whole, but catastrophic for transactional
+ * records: an admin tab holding an order list loaded ten minutes ago would,
+ * on Save, delete every order placed since it loaded - including orders a
+ * customer had just paid for. Rows here are only ever created or updated by a
+ * list save; removing one goes through deleteSingleItem (DELETE /api/:id).
+ */
+const LIST_SAVE_NEVER_DELETES = new Set(['orders', 'customers', 'subscriptions', 'pending_checkouts', 'email_logs', 'klaviyo_logs']);
+
+function isDeleteProtected(resource: string): boolean {
+  return LIST_SAVE_NEVER_DELETES.has(String(resource || '').toLowerCase());
+}
+
 function normalizeResourceName(resource: string): string {
   if (!resource) return resource;
   const lower = resource.toLowerCase();
@@ -1248,7 +1265,7 @@ export async function saveResource(resource: string, list: any[] | any): Promise
         const batch = normalizedList.slice(i, i + BATCH_SIZE);
         await Promise.all(batch.map(async (item) => {
           if (!item) return;
-          const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
+          const itemId = String(item.id || item.slug || item.orderId || `item-${Date.now()}-${Math.random()}`);
           validItemIds.push(itemId);
 
           await prisma.storeResource.upsert({
@@ -1279,8 +1296,9 @@ export async function saveResource(resource: string, list: any[] | any): Promise
         }));
       }
 
-      // Delete items removed from list in StoreResource only if validItemIds has items and list wasn't empty
-      if (validItemIds.length > 0) {
+      // Delete items removed from list in StoreResource. Transactional resources
+      // are exempt from list-driven deletion - see isDeleteProtected.
+      if (validItemIds.length > 0 && !isDeleteProtected(normResource)) {
         await prisma.storeResource.deleteMany({
           where: {
             resource: normResource,
@@ -1291,12 +1309,11 @@ export async function saveResource(resource: string, list: any[] | any): Promise
         }).catch((e: any) => console.warn(`[StoreResource deleteMany] ${normResource} warning:`, e?.message));
       }
 
-      // Delete items removed from list in dedicated Prisma tables
+      // Delete items removed from list in dedicated Prisma tables. Transactional
+      // resources are exempt from list-driven deletion - see isDeleteProtected.
       const norm = normResource.toLowerCase();
-      if (validItemIds.length > 0) {
-        if (norm === 'orders') {
-          await prisma.order.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
-        } else if (norm === 'products') {
+      if (validItemIds.length > 0 && !isDeleteProtected(normResource)) {
+        if (norm === 'products') {
           await prisma.product.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
         } else if (norm === 'collections') {
           await prisma.collection.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {});
@@ -1475,7 +1492,7 @@ export async function fetchSingleItem(resource: string, id: string): Promise<any
 export async function saveSingleItem(resource: string, item: any): Promise<any> {
   if (!item) return item;
   const normResource = normalizeResourceName(resource);
-  const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
+  const itemId = String(item.id || item.slug || item.orderId || `item-${Date.now()}-${Math.random()}`);
 
   const items = memoryCache[normResource] || memoryCache[resource] || [];
 

@@ -454,7 +454,14 @@ export async function saveSingleOrder(orderData: any) {
     formattedOrder.data.notificationsSent[item.key] = dispatchedAt;
   }
 
-  // Try Prisma first
+  // Persist to the Order table, then confirm the row is actually there.
+  //
+  // This used to swallow the failure as a warning. On a serverless deploy the
+  // local JSON snapshot is not writable and the in-memory cache dies with the
+  // invocation, so a failed write here meant a customer paid and the order
+  // existed nowhere - with nothing in the logs to reconstruct it from. The
+  // payload is now logged in full whenever the row cannot be confirmed.
+  let persistedToNeon = false;
   try {
     const { prisma } = await import('../../src/lib/prisma');
     await prisma.order.upsert({
@@ -462,8 +469,17 @@ export async function saveSingleOrder(orderData: any) {
       update: formattedOrder,
       create: formattedOrder
     });
+    persistedToNeon = Boolean(await prisma.order.findUnique({ where: { id }, select: { id: true } }));
   } catch (prismaErr: any) {
-    console.warn('[Orders Router] Prisma save warning:', prismaErr?.message);
+    console.error('[Orders Router] Neon order write failed for ' + id + ':', prismaErr?.message);
+  }
+
+  if (!persistedToNeon) {
+    console.error(
+      '[ORDER NOT PERSISTED] ' + id + ' is not in the Neon Order table after save. ' +
+        'Recover it from the payload below.',
+      JSON.stringify(formattedOrder)
+    );
   }
 
   // Sync to StoreResource

@@ -896,6 +896,9 @@ async function getDb() {
   const status = await testNeonConnection();
   return status.status === "connected";
 }
+function isDeleteProtected(resource) {
+  return LIST_SAVE_NEVER_DELETES.has(String(resource || "").toLowerCase());
+}
 function normalizeResourceName(resource) {
   if (!resource) return resource;
   const lower = resource.toLowerCase();
@@ -1520,7 +1523,7 @@ async function saveResource(resource, list) {
         const batch = normalizedList.slice(i, i + BATCH_SIZE);
         await Promise.all(batch.map(async (item) => {
           if (!item) return;
-          const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
+          const itemId = String(item.id || item.slug || item.orderId || `item-${Date.now()}-${Math.random()}`);
           validItemIds.push(itemId);
           await prisma.storeResource.upsert({
             where: {
@@ -1544,7 +1547,7 @@ async function saveResource(resource, list) {
           );
         }));
       }
-      if (validItemIds.length > 0) {
+      if (validItemIds.length > 0 && !isDeleteProtected(normResource)) {
         await prisma.storeResource.deleteMany({
           where: {
             resource: normResource,
@@ -1555,11 +1558,8 @@ async function saveResource(resource, list) {
         }).catch((e) => console.warn(`[StoreResource deleteMany] ${normResource} warning:`, e?.message));
       }
       const norm = normResource.toLowerCase();
-      if (validItemIds.length > 0) {
-        if (norm === "orders") {
-          await prisma.order.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
-          });
-        } else if (norm === "products") {
+      if (validItemIds.length > 0 && !isDeleteProtected(normResource)) {
+        if (norm === "products") {
           await prisma.product.deleteMany({ where: { id: { notIn: validItemIds } } }).catch(() => {
           });
         } else if (norm === "collections") {
@@ -1718,7 +1718,7 @@ async function fetchSingleItem(resource, id) {
 async function saveSingleItem(resource, item) {
   if (!item) return item;
   const normResource = normalizeResourceName(resource);
-  const itemId = String(item.id || item.slug || `item-${Date.now()}-${Math.random()}`);
+  const itemId = String(item.id || item.slug || item.orderId || `item-${Date.now()}-${Math.random()}`);
   const items = memoryCache[normResource] || memoryCache[resource] || [];
   if (normResource === "customPages" || normResource === "custompages" || normResource === "pages") {
     if (!item.sections || !Array.isArray(item.sections) || item.sections.length === 0) {
@@ -1996,7 +1996,7 @@ async function saveDevSettings(settings) {
   }
   return settings;
 }
-var memoryCache, BACKUP_FILE_PATH, isTablesInitialized, memoryImages;
+var memoryCache, BACKUP_FILE_PATH, isTablesInitialized, LIST_SAVE_NEVER_DELETES, memoryImages;
 var init_serverDb = __esm({
   "serverDb.ts"() {
     init_prisma();
@@ -2021,6 +2021,7 @@ var init_serverDb = __esm({
       });
     }).catch(() => {
     });
+    LIST_SAVE_NEVER_DELETES = /* @__PURE__ */ new Set(["orders", "customers", "subscriptions", "pending_checkouts", "email_logs", "klaviyo_logs"]);
     memoryImages = {};
   }
 });
@@ -3989,18 +3990,18 @@ async function saveSingleOrder(orderData) {
     const rawPlan = (subItem?.subscriptionPlan || orderData.subPlan || orderData.subscriptionPlan || "").toLowerCase();
     const title = (subItem?.productTitle || "").toLowerCase();
     const prodId = (subItem?.productId || "").toLowerCase();
-    if (rawPlan.includes("ultimate") || title.startsWith("ultimate") || title.includes("ultimate plan") || prodId.includes("ultimate")) {
-      planName = "ULTIMATE Plan";
-    } else if (rawPlan.includes("pro") || title.startsWith("pro") || title.includes("pro plan") || prodId.includes("pro")) {
-      planName = "PRO Plan";
-    } else if (rawPlan.includes("core") || title.startsWith("core") || title.includes("core plan") || prodId.includes("core")) {
-      planName = "CORE Plan";
-    } else if (rawPlan.includes("lite") || title.startsWith("lite") || title.includes("lite plan") || prodId.includes("lite")) {
-      planName = "LITE Plan";
+    const tierIn = (text) => {
+      const heading = String(text || "").toLowerCase().split(/\s+-\s+|\[|\(/)[0];
+      const m = heading.match(/\b(ultimate|core|lite|pro)\b/);
+      return m ? m[1] : null;
+    };
+    const tier = tierIn(subItem?.productTitle) || tierIn(subItem?.subscriptionSummary) || tierIn(rawPlan) || tierIn(prodId);
+    if (tier) {
+      planName = `${tier.toUpperCase()} Plan`;
     } else if (subItem?.subscriptionPlan) {
       planName = subItem.subscriptionPlan;
     } else {
-      planName = "PRO Plan";
+      planName = subItem?.productTitle || "Subscription Plan";
     }
     let frequency = subItem?.subscriptionFrequency || orderData.subscriptionFrequency || "";
     let frequencyDiscount = subItem?.frequencyDiscount || orderData.frequencyDiscount || "";
@@ -4256,6 +4257,7 @@ async function saveSingleOrder(orderData) {
   for (const item of pending) {
     formattedOrder.data.notificationsSent[item.key] = dispatchedAt;
   }
+  let persistedToNeon = false;
   try {
     const { prisma: prisma2 } = await Promise.resolve().then(() => (init_prisma(), prisma_exports));
     await prisma2.order.upsert({
@@ -4263,8 +4265,15 @@ async function saveSingleOrder(orderData) {
       update: formattedOrder,
       create: formattedOrder
     });
+    persistedToNeon = Boolean(await prisma2.order.findUnique({ where: { id }, select: { id: true } }));
   } catch (prismaErr) {
-    console.warn("[Orders Router] Prisma save warning:", prismaErr?.message);
+    console.error("[Orders Router] Neon order write failed for " + id + ":", prismaErr?.message);
+  }
+  if (!persistedToNeon) {
+    console.error(
+      "[ORDER NOT PERSISTED] " + id + " is not in the Neon Order table after save. Recover it from the payload below.",
+      JSON.stringify(formattedOrder)
+    );
   }
   try {
     const currentOrders = await fetchResource("orders") || [];
@@ -4359,35 +4368,26 @@ var init_orders = __esm({
       try {
         const payload = req.body;
         if (Array.isArray(payload)) {
-          const formattedOrders = payload.map((orderData) => {
-            const id = String(orderData.id || orderData.orderId || `PS${Math.floor(Math.random() * 9e4 + 1e4)}`);
-            return {
-              id,
-              customerName: orderData.customerName || "Valued Customer",
-              customerEmail: orderData.customerEmail || "customer@pouch-supply.com",
-              tags: Array.isArray(orderData.tags) ? orderData.tags : ["Storefront", "Online Order"],
-              fulfillmentStatus: orderData.fulfillmentStatus || "Unfulfilled",
-              paymentStatus: orderData.paymentStatus || (orderData.total === 0 ? "Paid" : "Pending"),
-              worldpayTxId: orderData.worldpayTxId || orderData.gatewayTxId || null,
-              worldpayAuthCode: orderData.worldpayAuthCode || orderData.gatewayAuthCode || null,
-              gatewayTxId: orderData.gatewayTxId || orderData.worldpayTxId || null,
-              gatewayAuthCode: orderData.gatewayAuthCode || orderData.worldpayAuthCode || null,
-              cardBrand: orderData.cardBrand || "Card",
-              total: typeof orderData.total === "number" ? orderData.total : parseFloat(orderData.total) || 0,
-              storeCreditApplied: typeof orderData.storeCreditApplied === "number" ? orderData.storeCreditApplied : parseFloat(orderData.storeCreditApplied) || 0,
-              destination: orderData.destination || orderData.address || "United Kingdom",
-              date: orderData.date || (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              deliveryMethod: orderData.deliveryMethod || "Royal Mail Tracked 24/48",
-              items: orderData.items || [],
-              discountApplied: orderData.discountApplied || null,
-              trackingNumber: orderData.trackingNumber || null,
-              carrier: orderData.carrier || null,
-              data: orderData.data || {}
-            };
+          const currentOrders = await fetchResource("orders") || [];
+          const byId = /* @__PURE__ */ new Map();
+          currentOrders.forEach((o) => {
+            if (o && o.id) byId.set(String(o.id), o);
           });
-          const savedOrders = await saveResource("orders", formattedOrders);
+          for (const orderData of payload) {
+            if (!orderData || typeof orderData !== "object") continue;
+            const id = String(orderData.id || orderData.orderId || "");
+            if (!id) continue;
+            const existing = byId.get(id);
+            const merged = { ...existing || {}, ...orderData, id };
+            if (typeof merged.total !== "number") merged.total = parseFloat(merged.total) || 0;
+            if (!Array.isArray(merged.tags)) merged.tags = ["Storefront", "Online Order"];
+            if (!Array.isArray(merged.items)) merged.items = [];
+            byId.set(id, merged);
+          }
+          const savedOrders = await saveResource("orders", Array.from(byId.values()));
           return res.json(savedOrders);
-        } else if (payload && typeof payload === "object") {
+        }
+        if (payload && typeof payload === "object") {
           const savedOrder = await saveSingleOrder(payload);
           return res.json({ success: true, order: savedOrder });
         } else {
@@ -8810,6 +8810,11 @@ async function customerHasOtherLiveSubscription(email, excludeId) {
 function toCustomerSubscription(s, now = /* @__PURE__ */ new Date()) {
   return {
     id: s.id,
+    // The order the plan was bought on. The account page shows it so a customer
+    // can quote one reference to support for both the plan and its first
+    // payment. Records written before checkout recorded it have none, and the
+    // account page falls back to the customer's own order history there.
+    sourceOrderId: s.sourceOrderId || null,
     planId: s.planId,
     planName: s.planName,
     customerEmail: s.customerEmail,
@@ -8967,197 +8972,114 @@ router11.post("/update-plan", async (req, res) => {
       return res.status(400).json({ success: false, message: "customerEmail or subscriptionId is required" });
     }
     const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
-    const finalPlanName = subPlan || planName || (planId ? planId.toUpperCase() : "Custom Box");
-    const finalPlanId = planId || (subPlan ? subPlan.toLowerCase().split(" ")[0] : "custom");
-    const finalAmount = Number(subPrice ?? amount ?? 0);
-    const finalInterval = normalizeBillingInterval(subFrequency || billingInterval || "Bi-Weekly");
-    const finalItems = subItems || items || [];
-    const finalCans = subCansCount ?? cansCount ?? (Array.isArray(finalItems) ? finalItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0) : 6);
-    const finalStatus = (subStatus || status || "active").toLowerCase();
-    const planFields = {
-      planId: finalPlanId,
-      planName: finalPlanName,
-      amount: finalAmount,
-      billingInterval: finalInterval,
-      status: finalStatus,
-      ...Array.isArray(finalItems) ? { items: finalItems } : {},
-      ...Number.isFinite(Number(finalCans)) ? { cansCount: Number(finalCans) } : {},
-      ...nextBillingDate ? { nextBillingDate: new Date(nextBillingDate) } : {}
-    };
-    if (subscriptionId) {
-      try {
-        await prisma.subscription.update({
-          where: { id: subscriptionId },
-          data: planFields
+    const given = (v) => v !== void 0 && v !== null && String(v).trim() !== "";
+    const ownPlans = emailClean ? (await loadCustomerSubscriptions(emailClean)).filter((s) => !isDeletedStatus(s.status)) : [];
+    let targetId = subscriptionId ? String(subscriptionId) : null;
+    if (!targetId) {
+      if (ownPlans.length !== 1) {
+        return res.status(400).json({
+          success: false,
+          message: ownPlans.length === 0 ? "No subscription found for this customer." : "subscriptionId is required: this customer has more than one plan."
         });
-      } catch (_e) {
       }
-    } else if (emailClean) {
-      try {
-        const existingSub = await prisma.subscription.findFirst({
-          where: { customerEmail: emailClean }
-        });
-        if (existingSub) {
-          await prisma.subscription.update({
-            where: { id: existingSub.id },
-            data: planFields
-          });
-        }
-      } catch (_e) {
-      }
+      targetId = String(ownPlans[0].id);
     }
+    const itemsIn = Array.isArray(subItems) ? subItems : Array.isArray(items) ? items : void 0;
+    const amountIn = given(subPrice) ? Number(subPrice) : given(amount) ? Number(amount) : void 0;
+    const cansIn = given(subCansCount) ? Number(subCansCount) : given(cansCount) ? Number(cansCount) : itemsIn ? itemsIn.reduce((sum, it) => sum + (Number(it?.quantity) || 1), 0) : void 0;
+    const patch = {};
+    if (given(planName)) patch.planName = String(planName);
+    else if (given(subPlan)) patch.planName = String(subPlan);
+    if (given(planId)) patch.planId = String(planId);
+    else if (given(subPlan)) patch.planId = String(subPlan).toLowerCase().split(" ")[0];
+    if (amountIn !== void 0 && Number.isFinite(amountIn) && amountIn > 0) patch.amount = amountIn;
+    if (given(subFrequency) || given(billingInterval)) {
+      patch.billingInterval = normalizeBillingInterval(subFrequency || billingInterval);
+    }
+    if (itemsIn) patch.items = itemsIn;
+    if (cansIn !== void 0 && Number.isFinite(cansIn)) patch.cansCount = cansIn;
+    if (given(subStatus) || given(status)) patch.status = String(subStatus || status).toLowerCase();
+    if (given(nextBillingDate)) patch.nextBillingDate = new Date(nextBillingDate);
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ success: false, message: "Nothing to update." });
+    }
+    let updatedPlan = null;
     try {
       const storedSubs = await fetchResource("subscriptions") || [];
-      let foundSub = false;
       const updatedSubs = storedSubs.map((s) => {
-        const match = subscriptionId ? String(s.id) === String(subscriptionId) : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean && !isDeletedStatus(s.status));
-        if (match) {
-          foundSub = true;
-          return {
-            ...s,
-            planId: finalPlanId,
-            planName: finalPlanName,
-            amount: finalAmount,
-            billingInterval: finalInterval,
-            items: finalItems,
-            cansCount: finalCans,
-            status: finalStatus,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          };
-        }
-        return s;
-      });
-      if (!foundSub && emailClean) {
-        updatedSubs.push({
-          id: subscriptionId || `sub_${Date.now()}`,
-          customerEmail: emailClean,
-          planId: finalPlanId,
-          planName: finalPlanName,
-          amount: finalAmount,
-          billingInterval: finalInterval,
-          items: finalItems,
-          cansCount: finalCans,
-          status: finalStatus,
-          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        if (String(s.id) !== targetId) return s;
+        if (emailClean && String(s.customerEmail || "").toLowerCase().trim() !== emailClean) return s;
+        updatedPlan = {
+          ...s,
+          ...patch,
+          ...patch.nextBillingDate ? { nextBillingDate: patch.nextBillingDate.toISOString() } : {},
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        });
-      }
-      await saveResource("subscriptions", updatedSubs);
+        };
+        return updatedPlan;
+      });
+      if (updatedPlan) await saveResource("subscriptions", updatedSubs);
     } catch (_e) {
     }
-    let updatedCustomerRecord = null;
+    try {
+      const existing = await prisma.subscription.findUnique({ where: { id: targetId } });
+      if (existing && (!emailClean || String(existing.customerEmail || "").toLowerCase().trim() === emailClean)) {
+        const row = await prisma.subscription.update({ where: { id: targetId }, data: patch });
+        updatedPlan = updatedPlan || row;
+      }
+    } catch (_e) {
+    }
+    if (!updatedPlan) {
+      return res.status(404).json({ success: false, message: "Subscription plan not found for this customer." });
+    }
     if (emailClean) {
-      try {
-        const storedCustomers = await fetchResource("customers") || [];
-        const updatedCustList = storedCustomers.map((c) => {
-          if (String(c.email || "").toLowerCase().trim() === emailClean) {
-            const updatedC = {
-              ...c,
-              subscriptionStatus: finalStatus === "active" ? "Subscribed" : finalStatus === "paused" ? "Paused" : "Not subscribed",
-              subStatus: finalStatus === "active" ? "Active" : finalStatus === "paused" ? "Paused" : "Cancelled",
-              subPlan: finalPlanName,
-              subPrice: finalAmount,
-              subFrequency: finalInterval,
-              subCansCount: finalCans,
-              subItems: finalItems,
-              subPlanManuallyConfigured: true,
-              ...nextPayment ? { nextPayment } : {},
-              ...nextDelivery ? { nextDelivery } : {},
-              data: {
-                ...c.data || {},
-                subPlan: finalPlanName,
-                subPrice: finalAmount,
-                subFrequency: finalInterval,
-                subCansCount: finalCans,
-                subItems: finalItems,
-                subPlanManuallyConfigured: true
-              }
-            };
-            updatedCustomerRecord = updatedC;
-            return updatedC;
-          }
-          return c;
-        });
-        await saveResource("customers", updatedCustList);
+      const liveStatuses = ["active", "subscribed", "paused"];
+      const planStatus = String(updatedPlan.status || "").toLowerCase();
+      const anotherLive = await customerHasOtherLiveSubscription(emailClean, targetId);
+      const profileStatus = patch.status === void 0 ? void 0 : liveStatuses.includes(planStatus) ? planStatus === "paused" && !anotherLive ? "Paused" : "Active" : anotherLive ? "Active" : "Cancelled";
+      const profilePatch = {
+        ...patch.planName !== void 0 ? { subPlan: patch.planName } : {},
+        ...patch.amount !== void 0 ? { subPrice: patch.amount } : {},
+        ...patch.billingInterval !== void 0 ? { subFrequency: patch.billingInterval } : {},
+        ...patch.cansCount !== void 0 ? { subCansCount: patch.cansCount } : {},
+        ...profileStatus ? {
+          subStatus: profileStatus,
+          subscriptionStatus: profileStatus === "Active" ? "Subscribed" : profileStatus === "Paused" ? "Paused" : "Not subscribed"
+        } : {},
+        ...given(nextPayment) ? { nextPayment } : {},
+        ...given(nextDelivery) ? { nextDelivery } : {}
+      };
+      if (Object.keys(profilePatch).length > 0 || patch.items) {
         try {
-          await prisma.customer.updateMany({
-            where: { email: emailClean },
-            data: {
-              subscriptionStatus: finalStatus === "active" ? "Subscribed" : finalStatus === "paused" ? "Paused" : "Not subscribed",
-              subStatus: finalStatus === "active" ? "Active" : finalStatus === "paused" ? "Paused" : "Cancelled",
-              subPlan: finalPlanName,
-              subPrice: finalAmount,
-              subFrequency: finalInterval,
-              subCansCount: finalCans,
-              ...nextPayment ? { nextPayment } : {},
-              ...nextDelivery ? { nextDelivery } : {}
-            }
+          const storedCustomers = await fetchResource("customers") || [];
+          let changed = false;
+          const updatedCustList = storedCustomers.map((c) => {
+            if (String(c.email || "").toLowerCase().trim() !== emailClean) return c;
+            changed = true;
+            return {
+              ...c,
+              ...profilePatch,
+              ...patch.items ? { subItems: patch.items } : {},
+              data: { ...c.data || {}, ...profilePatch, ...patch.items ? { subItems: patch.items } : {} }
+            };
           });
+          if (changed) await saveResource("customers", updatedCustList);
+        } catch (_e) {
+        }
+        try {
+          if (Object.keys(profilePatch).length > 0) {
+            await prisma.customer.updateMany({ where: { email: emailClean }, data: profilePatch });
+          }
         } catch (_prErr) {
         }
-      } catch (_e) {
       }
     }
-    if (emailClean) {
-      try {
-        const storedOrders = await fetchResource("orders") || [];
-        const updatedOrders = storedOrders.map((o) => {
-          const isCustomerOrder = String(o.customerEmail || "").toLowerCase().trim() === emailClean;
-          if (isCustomerOrder && Array.isArray(o.items)) {
-            const hasSubItem = o.items.some((i) => i.isSubscription || i.subscriptionPlan) || Boolean(o.subscriptionDetails) || Array.isArray(o.tags) && o.tags.some((t) => String(t).toLowerCase().includes("subscription"));
-            if (hasSubItem) {
-              const updatedItems = o.items.map((i) => {
-                const isSub = i.isSubscription || i.subscriptionPlan || Array.isArray(o.tags) && o.tags.some((t) => String(t).toLowerCase().includes("subscription"));
-                if (isSub) {
-                  return {
-                    ...i,
-                    subscriptionPlan: finalPlanName,
-                    subscriptionFrequency: finalInterval,
-                    price: finalAmount > 0 ? finalAmount : i.price,
-                    selectedProducts: finalItems,
-                    selectedFlavors: finalItems,
-                    subscriptionItems: finalItems,
-                    items: finalItems
-                  };
-                }
-                return i;
-              });
-              return {
-                ...o,
-                items: updatedItems,
-                subscriptionDetails: {
-                  ...o.subscriptionDetails || {},
-                  planName: finalPlanName,
-                  frequency: finalInterval,
-                  items: finalItems,
-                  selectedProducts: finalItems,
-                  subItems: finalItems,
-                  lastSwappedAt: (/* @__PURE__ */ new Date()).toISOString()
-                },
-                total: finalAmount > 0 ? finalAmount : o.total
-              };
-            }
-          }
-          return o;
-        });
-        await saveResource("orders", updatedOrders);
-      } catch (_ordErr) {
-      }
-    }
-    console.log(`[Subscription Plan Update] Successfully updated subscription for ${emailClean || subscriptionId}: ${finalPlanName} (\xA3${finalAmount})`);
+    console.log(
+      `[Subscription Plan Update] ${targetId} updated for ${emailClean || "unknown"}: ${Object.keys(patch).join(", ")}`
+    );
     return res.json({
       success: true,
-      message: `Subscription plan updated to ${finalPlanName} successfully!`,
-      plan: {
-        planId: finalPlanId,
-        planName: finalPlanName,
-        amount: finalAmount,
-        billingInterval: finalInterval,
-        cansCount: finalCans,
-        items: finalItems,
-        status: finalStatus
-      },
-      customer: updatedCustomerRecord
+      message: "Subscription plan updated.",
+      plan: toCustomerSubscription(updatedPlan)
     });
   } catch (error) {
     console.error("[Subscription Plan Update] Error:", error);
@@ -9485,9 +9407,8 @@ router11.post(
         const stored = await fetchResource("subscriptions") || [];
         let modified = false;
         const updatedList = stored.map((s) => {
-          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
-          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
-          if (matchId || matchEmail) {
+          const match = subscriptionId ? String(s.id) === String(subscriptionId) : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean);
+          if (match) {
             modified = true;
             return {
               ...s,
@@ -9501,7 +9422,7 @@ router11.post(
         if (modified) {
           await saveResource("subscriptions", updatedList);
           subscription = updatedList.find(
-            (s) => subscriptionId && String(s.id) === String(subscriptionId) || emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean
+            (s) => subscriptionId ? String(s.id) === String(subscriptionId) : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
           ) || subscription;
         }
       } catch (_e) {
@@ -9660,9 +9581,8 @@ router11.post(
         const stored = await fetchResource("subscriptions") || [];
         let modified = false;
         const updatedList = stored.map((s) => {
-          const matchId = subscriptionId && String(s.id) === String(subscriptionId);
-          const matchEmail = emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean;
-          if (matchId || matchEmail && !isDeletedStatus(s.status)) {
+          const match = subscriptionId ? String(s.id) === String(subscriptionId) : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean && !isDeletedStatus(s.status));
+          if (match) {
             modified = true;
             const { cancelledAt, cancellationReason, deletedAt, ...rest } = s;
             return {
@@ -9677,7 +9597,7 @@ router11.post(
         if (modified) {
           await saveResource("subscriptions", updatedList);
           subscription = updatedList.find(
-            (s) => subscriptionId && String(s.id) === String(subscriptionId) || emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean
+            (s) => subscriptionId ? String(s.id) === String(subscriptionId) : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
           ) || subscription;
         }
       } catch (_e) {
@@ -9830,10 +9750,25 @@ router11.get(
     try {
       const email = String(req.params.email).toLowerCase().trim();
       const now = /* @__PURE__ */ new Date();
-      const subscriptions = (await loadCustomerSubscriptions(email)).filter((s) => !isDeletedStatus(s.status)).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      const all = await loadCustomerSubscriptions(email);
+      const subscriptions = all.filter((s) => !isDeletedStatus(s.status)).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       return res.json({
         success: true,
-        subscriptions: subscriptions.map((s) => toCustomerSubscription(s, now))
+        subscriptions: subscriptions.map((s) => toCustomerSubscription(s, now)),
+        // Ids and removal times, no plan detail. The account page rebuilds a
+        // plan card from a subscription order when this endpoint has no record
+        // for it, so it needs to tell "never stored" apart from "the customer
+        // removed it" — otherwise removing a plan would resurrect it from its
+        // own orders. The timestamp matters too: an order placed after the
+        // removal is new activity the removal cannot account for, and hiding it
+        // would lose a paid order from the customer's view.
+        deletedSubscriptions: all.filter((s) => isDeletedStatus(s.status)).map((s) => ({
+          id: String(s.id),
+          deletedAt: s.deletedAt || s.updatedAt || null,
+          // Lets the account page recognise an order that belonged to this
+          // plan back when orders did not record which plan billed them.
+          planName: s.planName || null
+        }))
       });
     } catch (error) {
       return res.status(500).json({

@@ -1225,8 +1225,14 @@ export default function AdminDashboard({
     fetch('/api/collections', { ...postOptions, body: JSON.stringify(localCollections) })
       .catch(err => console.error('[Admin Save] Direct POST collections failed:', err));
 
-    fetch('/api/orders', { ...postOptions, body: JSON.stringify(localOrders) })
-      .catch(err => console.error('[Admin Save] Direct POST orders failed:', err));
+    // Orders are deliberately NOT synced here.
+    //
+    // localOrders is whatever this tab loaded when it opened. Posting it as the
+    // order list meant every order placed after that point was absent from the
+    // payload - and the server then deleted those rows, so a customer who paid
+    // while the admin had the dashboard open lost their order. Orders are
+    // changed through their own endpoints instead: /api/orders/:id/admin-action,
+    // /api/orders/:id/cancel and DELETE /api/orders/:id.
 
     fetch('/api/customers', { ...postOptions, body: JSON.stringify(localCustomers) })
       .catch(err => console.error('[Admin Save] Direct POST customers failed:', err));
