@@ -487,7 +487,17 @@ async function saveVerifiedOrder(
   // was never taken, so it waits for the confirmation instead.
   if (subItem && paymentConfirmed) {
     try {
-      const planName = subItem.productTitle || subItem.title || 'Pouch Supply Subscription';
+      // The plan's NAME, not the whole checkout line. `productTitle` reads
+      // "LITE Plan [Next Day (Test) - 10% OFF] - (77 10.4 mg — Watermelon Ice
+      // (Qty:6))", and storing that as the name put the entire string wherever a
+      // plan name was shown. The frequency and box are held separately, so the
+      // tier is all that belongs here; the full line stays on the order item.
+      const rawPlanTitle = subItem.subscriptionPlan || subItem.productTitle || subItem.title || '';
+      const planTier = String(rawPlanTitle).toLowerCase().split(/\s+-\s+|\[|\(/)[0]
+        .match(/\b(ultimate|core|lite|pro)\b/)?.[1];
+      const planName = planTier
+        ? `${planTier.toUpperCase()} Plan`
+        : (rawPlanTitle || 'Pouch Supply Subscription');
       const planId = subItem.productId || 'sub-pack-core';
       const rawFrequency = (
         subItem.subscriptionFrequency ||

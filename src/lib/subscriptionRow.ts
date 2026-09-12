@@ -72,7 +72,15 @@ export function toSubscriptionRow(item: any): Record<string, any> {
   const itemPrice = num(item?.itemPrice);
   if (itemPrice !== undefined) row.itemPrice = itemPrice;
 
-  const cans = num(item?.cansCount ?? item?.subCansCount);
+  // Cans come from the box when the caller did not count them. The checkout
+  // passes `items` but no cansCount, so the column stayed null and a renewal
+  // could not tell how big the box was without re-parsing the order.
+  let cans = num(item?.cansCount ?? item?.subCansCount);
+  if (cans === undefined) {
+    const box = Array.isArray(item?.items) ? item.items : [];
+    const counted = box.reduce((sum: number, it: any) => sum + (num(it?.quantity) ?? 0), 0);
+    if (counted > 0) cans = counted;
+  }
   if (cans !== undefined) row.cansCount = Math.round(cans);
 
   const failed = num(item?.failedPaymentCount);

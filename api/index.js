@@ -540,7 +540,12 @@ function toSubscriptionRow(item) {
   if (shipping !== void 0) row.shippingCost = shipping;
   const itemPrice = num2(item?.itemPrice);
   if (itemPrice !== void 0) row.itemPrice = itemPrice;
-  const cans = num2(item?.cansCount ?? item?.subCansCount);
+  let cans = num2(item?.cansCount ?? item?.subCansCount);
+  if (cans === void 0) {
+    const box = Array.isArray(item?.items) ? item.items : [];
+    const counted = box.reduce((sum, it) => sum + (num2(it?.quantity) ?? 0), 0);
+    if (counted > 0) cans = counted;
+  }
   if (cans !== void 0) row.cansCount = Math.round(cans);
   const failed = num2(item?.failedPaymentCount);
   row.failedPaymentCount = failed !== void 0 ? Math.round(failed) : 0;
@@ -8212,7 +8217,9 @@ async function saveVerifiedOrder(orderId, details) {
   let createdSubscriptionId;
   if (subItem && paymentConfirmed) {
     try {
-      const planName = subItem.productTitle || subItem.title || "Pouch Supply Subscription";
+      const rawPlanTitle = subItem.subscriptionPlan || subItem.productTitle || subItem.title || "";
+      const planTier = String(rawPlanTitle).toLowerCase().split(/\s+-\s+|\[|\(/)[0].match(/\b(ultimate|core|lite|pro)\b/)?.[1];
+      const planName = planTier ? `${planTier.toUpperCase()} Plan` : rawPlanTitle || "Pouch Supply Subscription";
       const planId = subItem.productId || "sub-pack-core";
       const rawFrequency = (subItem.subscriptionFrequency || subItem.frequency || subItem.billingInterval || pending?.items?.find((i) => i.isSubscription)?.subscriptionFrequency || "month").toString();
       const billingInterval = normalizeBillingInterval(rawFrequency);
