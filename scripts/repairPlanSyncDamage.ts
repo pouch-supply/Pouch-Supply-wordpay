@@ -55,7 +55,14 @@ const BOX_FIELDS_ON_DETAILS = ['items', 'selectedProducts', 'subItems'];
 const tierLabel = (tier: string | null) => (tier ? `${tier.toUpperCase()} Plan` : null);
 const summaryOf = (order: any) => {
   const line = findSubscriptionItem(order);
-  return String(line?.subscriptionSummary || order?.subscriptionSummary || '').trim();
+  // `productTitle` is the same untouched record when the order predates
+  // `subscriptionSummary`: it carries the plan and the box, e.g.
+  // "LITE Plan [Next Day (Test) - 10% OFF] - (WHITE FOX 22.5 mg — Full Charge (Qty:6))".
+  // Without this fallback those orders reported "no summary" and had their box
+  // deleted, throwing away the only remaining record of what to actually ship.
+  return String(
+    line?.subscriptionSummary || order?.subscriptionSummary || line?.productTitle || ''
+  ).trim();
 };
 const trueTierOf = (order: any) => {
   const line = findSubscriptionItem(order);
@@ -169,9 +176,16 @@ async function main() {
     const summary = summaryOf(source);
     const restored = {
       ...plan,
-      planName: summary || tierLabel(orderTier),
+      // The tier label is the plan's name ("LITE Plan"); the summary is the long
+      // "PLAN [freq] - (contents)" string and only stands in if no tier was
+      // detected. Preferring the summary here put that whole string in the name
+      // the customer sees on their account page.
+      planName: tierLabel(orderTier) || summary,
       planId: line?.productId || orderTier,
-      amount: Number(source.total) || plan.amount,
+      // `fixedSource`, not `source`: the plan bills what the order was actually
+      // charged, and on a damaged order that is the repaired total, not the
+      // plan price the old sync stamped over it.
+      amount: Number(fixedSource.total) || Number(source.total) || plan.amount,
       ...(box.length > 0 ? { items: box, cansCount: box.reduce((n: number, i: any) => n + (Number(i.quantity) || 0), 0) } : {}),
       updatedAt: new Date().toISOString(),
       restoredFromOrderId: String(source.id)

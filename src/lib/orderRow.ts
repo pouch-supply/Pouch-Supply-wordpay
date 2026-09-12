@@ -90,7 +90,17 @@ export function toOrderRow(item: any): Record<string, any> {
   if (row.subtotal !== undefined) row.subtotal = num(row.subtotal);
   if (row.shippingCost !== undefined) row.shippingCost = num(row.shippingCost);
   if (row.discountAmount !== undefined) row.discountAmount = num(row.discountAmount);
-  if (row.isSubscription !== undefined) row.isSubscription = Boolean(row.isSubscription);
+  // `isSubscription` only became a field late, so orders written before that
+  // carry the evidence without the flag: a populated subscriptionDetails, or a
+  // subscription tag. Reading the flag alone would report every one of those as
+  // a one-off purchase.
+  if (row.isSubscription === undefined) {
+    const tagged = row.tags.some((t: any) => String(t).toLowerCase().includes('subscription'));
+    const hasDetails = Boolean(item?.subscriptionDetails && Object.keys(item.subscriptionDetails).length > 0);
+    row.isSubscription = tagged || hasDetails;
+  } else {
+    row.isSubscription = Boolean(row.isSubscription);
+  }
   if (row.tags.length === 0) row.tags = ['Storefront', 'Online Order'];
 
   return row;

@@ -462,7 +462,15 @@ export function parseSubscriptionProducts(
   // An order the old plan sync rewrote carries some other plan's box in its
   // structured fields. Its untouched summary is what was actually bought, so
   // the structured fields are skipped for it.
-  const summaryIsTruth = wasRewrittenByPlanSync(order) && Boolean(subItem?.subscriptionSummary || order?.subscriptionSummary);
+  //
+  // `productTitle` counts as that untouched record too. The sync rewrote the
+  // structured box but never the title, and orders written before
+  // `subscriptionSummary` existed carry the box only in the title — for those,
+  // requiring a summary here meant falling back to the damaged box and
+  // reporting another customer's flavours as what was ordered.
+  const summaryIsTruth =
+    wasRewrittenByPlanSync(order) &&
+    Boolean(subItem?.subscriptionSummary || order?.subscriptionSummary || subItem?.productTitle);
   const stored = summaryIsTruth ? null : findStoredItems(order, subItem);
   if (stored) {
     const normalized = stored

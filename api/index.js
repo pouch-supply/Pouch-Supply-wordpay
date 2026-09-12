@@ -419,7 +419,13 @@ function toOrderRow(item) {
   if (row.subtotal !== void 0) row.subtotal = num(row.subtotal);
   if (row.shippingCost !== void 0) row.shippingCost = num(row.shippingCost);
   if (row.discountAmount !== void 0) row.discountAmount = num(row.discountAmount);
-  if (row.isSubscription !== void 0) row.isSubscription = Boolean(row.isSubscription);
+  if (row.isSubscription === void 0) {
+    const tagged = row.tags.some((t) => String(t).toLowerCase().includes("subscription"));
+    const hasDetails = Boolean(item?.subscriptionDetails && Object.keys(item.subscriptionDetails).length > 0);
+    row.isSubscription = tagged || hasDetails;
+  } else {
+    row.isSubscription = Boolean(row.isSubscription);
+  }
   if (row.tags.length === 0) row.tags = ["Storefront", "Online Order"];
   return row;
 }
