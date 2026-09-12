@@ -86,6 +86,21 @@ export function toOrderRow(item: any): Record<string, any> {
   if (row.shippingCost === undefined && item?.deliveryCost !== undefined) {
     row.shippingCost = num(item.deliveryCost, 0);
   }
+
+  // Royal Mail writes its dispatch details under `data.royalMail`, so the
+  // dedicated columns stayed empty and the shipment could not be found from SQL.
+  const royalMail = item?.data?.royalMail;
+  if (royalMail) {
+    if (row.royalMailOrderId === undefined && royalMail.royalMailOrderId) {
+      row.royalMailOrderId = String(royalMail.royalMailOrderId);
+    }
+    if (row.trackingNumber === undefined && royalMail.trackingNumber) {
+      row.trackingNumber = String(royalMail.trackingNumber);
+    }
+    if (row.carrier === undefined && royalMail.carrier) {
+      row.carrier = String(royalMail.carrier);
+    }
+  }
   if (row.storeCreditApplied !== undefined) row.storeCreditApplied = num(row.storeCreditApplied);
   if (row.subtotal !== undefined) row.subtotal = num(row.subtotal);
   if (row.shippingCost !== undefined) row.shippingCost = num(row.shippingCost);

@@ -731,8 +731,12 @@ export default function CustomerAccount({
    * "Subscription Plan Cancelled — Billing Halted" banner above three live
    * plans.
    */
+  // A cancelled plan alongside a live one does not mean billing has stopped.
+  // Testing 'any plan cancelled' put a red "Billing Halted" banner above two
+  // ACTIVE plans with deliveries scheduled, which reads as the account being
+  // dead. Billing is only halted when nothing is still running.
   const hasCancelledSubscription = visibleAccountSubscriptions.length > 0
-    ? cancelledAccountSubscriptions.length > 0
+    ? activeAccountSubscriptions.length === 0 && cancelledAccountSubscriptions.length > 0
     : String((loggedInCustomer as any)?.subStatus || '').toLowerCase() === 'cancelled';
   const hasRealSubscription = activeAccountSubscriptions.length > 0 || Boolean(
     loggedInCustomer &&
@@ -3725,6 +3729,12 @@ export default function CustomerAccount({
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             {visibleAccountSubscriptions.map((subscription: any) => {
                               const planName = subscription.planName || subscription.name || 'Subscription Box';
+                              // Some plans were stored with the entire checkout line as their
+                              // name — "LITE Plan [Next Day (Test) - 10% OFF] - (WHITE FOX …)" —
+                              // which the card then truncated mid-word. The tier is the name;
+                              // the frequency and box are already shown on their own rows.
+                              const planTierName = detectPlanTier(planName);
+                              const planLabel = planTierName ? `${planTierName.toUpperCase()} Plan` : planName;
                               const planSlug = getPlanSlug(planName);
                               const planTier = ACCOUNT_SUB_PLANS.find(tier => tier.id === planSlug);
                               const amount = Number(subscription.amount ?? subscription.subPrice ?? planTier?.price ?? 0);
@@ -3804,7 +3814,7 @@ export default function CustomerAccount({
                                           </span>
                                         )}
                                       </div>
-                                      <h4 className="text-sm font-black text-[#071d37] uppercase truncate mt-1">{planName}</h4>
+                                      <h4 className="text-sm font-black text-[#071d37] uppercase truncate mt-1" title={planName}>{planLabel}</h4>
                                       <p className="text-xs text-slate-500 font-medium">
                                         {planTier?.cans || subscription.cansCount || 6} items • £{amount.toFixed(2)} per delivery
                                       </p>

@@ -958,53 +958,13 @@ async function syncToPrismaModel(resource: string, item: any): Promise<void> {
         }
       }
     } else if (norm === 'subscriptions' || norm === 'subscription') {
-      const subEmail = String(item.customerEmail || item.email || `customer-${id}@pouch-supply.com`).toLowerCase().trim();
-      const amountVal = typeof item.amount === 'number' ? item.amount : (parseFloat(item.amount) || 0.0);
-      const nextDate = item.nextBillingDate ? new Date(item.nextBillingDate) : null;
-      const lastPaymentDate = item.lastPaymentAt ? new Date(item.lastPaymentAt) : null;
-
-      await prisma.subscription.upsert({
-        where: { id },
-        update: {
-          customerId: item.customerId || null,
-          customerEmail: subEmail,
-          customerName: item.customerName || null,
-          planId: item.planId || 'sub-pack',
-          planName: item.planName || 'Pouch Supply Subscription',
-          amount: amountVal,
-          currency: item.currency || 'GBP',
-          status: item.status || 'active',
-          billingInterval: item.billingInterval || 'month',
-          nextBillingDate: nextDate,
-          worldpayTransactionId: item.worldpayTransactionId || null,
-          worldpayRecurringHref: item.worldpayRecurringHref || item.recurringHref || null,
-          worldpaySchemeReference: item.worldpaySchemeReference || null,
-          lastPaymentStatus: item.lastPaymentStatus || null,
-          lastPaymentId: item.lastPaymentId || null,
-          lastPaymentAt: lastPaymentDate,
-          failedPaymentCount: typeof item.failedPaymentCount === 'number' ? item.failedPaymentCount : 0
-        },
-        create: {
-          id,
-          customerId: item.customerId || null,
-          customerEmail: subEmail,
-          customerName: item.customerName || null,
-          planId: item.planId || 'sub-pack',
-          planName: item.planName || 'Pouch Supply Subscription',
-          amount: amountVal,
-          currency: item.currency || 'GBP',
-          status: item.status || 'active',
-          billingInterval: item.billingInterval || 'month',
-          nextBillingDate: nextDate,
-          worldpayTransactionId: item.worldpayTransactionId || null,
-          worldpayRecurringHref: item.worldpayRecurringHref || item.recurringHref || null,
-          worldpaySchemeReference: item.worldpaySchemeReference || null,
-          lastPaymentStatus: item.lastPaymentStatus || null,
-          lastPaymentId: item.lastPaymentId || null,
-          lastPaymentAt: lastPaymentDate,
-          failedPaymentCount: typeof item.failedPaymentCount === 'number' ? item.failedPaymentCount : 0
-        }
-      });
+      // One shared, schema-checked writer - see src/lib/subscriptionRow.ts.
+      // The hand-listed columns here dropped items, cansCount, itemPrice,
+      // shippingCost, shippingAddress, deliveryMethod and sourceOrderId, so the
+      // typed row could not reproduce the box or the shipping charge, and
+      // customerId was written unchecked against the Customer foreign key.
+      const { upsertSubscriptionRow } = await import('./src/lib/subscriptionRow');
+      await upsertSubscriptionRow(item);
     }
   } catch (mErr: any) {
     console.warn(`[Prisma Model Sync] ${norm} sync warning:`, mErr?.message);

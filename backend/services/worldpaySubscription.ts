@@ -77,14 +77,37 @@ function getWorldpayConfig(): WorldpayConfig {
   };
 }
 
+/**
+ * The payments media type this account accepts.
+ *
+ * Verified against the live entity: `application/json` and the v7 media type are
+ * both rejected with HTTP 415 headerHasInvalidValue; v6 reaches schema
+ * validation. The previous plain `application/json` header meant no recurring
+ * charge could ever be submitted, however correct its credential was.
+ */
+const PAYMENTS_MEDIA_TYPE = "application/vnd.worldpay.payments-v6+json";
+
+/**
+ * The authorizations endpoint, as advertised by Worldpay's own service
+ * discovery (GET / -> _links["payments:authorize"]).
+ *
+ * This used to be `/api/payments/authorizations`. That extra `/api` segment
+ * never reaches the payments service — it answers 400 headerIsMissing no matter
+ * how correct the body is — so every MIT charge failed before Worldpay looked
+ * at it.
+ */
+function authorizationsUrl(config: WorldpayConfig): string {
+  return `${config.baseUrl}/payments/authorizations`;
+}
+
 function getHeaders(config: WorldpayConfig) {
   const correlationId = crypto.randomUUID
     ? crypto.randomUUID()
     : `sub-${Math.random().toString(36).substring(2, 10)}`;
   return {
     Authorization: config.authHeader,
-    "Content-Type": "application/json",
-    Accept: "application/json",
+    "Content-Type": PAYMENTS_MEDIA_TYPE,
+    Accept: PAYMENTS_MEDIA_TYPE,
     "WP-CorrelationId": correlationId
   };
 }
@@ -135,7 +158,7 @@ export async function createInitialSubscriptionPayment({
     body.customer = { email: customerEmail };
   }
 
-  const response = await fetch(`${config.baseUrl}/api/payments/authorizations`, {
+  const response = await fetch(authorizationsUrl(config), {
     method: "POST",
     headers: getHeaders(config),
     body: JSON.stringify(body)
@@ -163,6 +186,20 @@ export function extractSchemeReference(response: any): string | null {
   if (!response || typeof response !== "object") return null;
 
   const candidates = [
+    // Where Worldpay ACTUALLY returns it, on both the authorization response and
+    // the payment query:
+    //
+    //   "transactionType": "cardOnFile",
+    //   "scheme": { "reference": "MRLZRGKT60908  " }
+    //
+    // This path was missing, so every subscription looked like it had no stored
+    // credential and reported "no stored-card mandate" — while Worldpay had
+    // issued a perfectly good reference on the very first payment. The value is
+    // space-padded to a fixed width by the scheme, hence the trim below.
+    response?.scheme?.reference,
+    response?.payment?.scheme?.reference,
+    response?._embedded?.payments?.[0]?.scheme?.reference,
+    // Shapes other Worldpay endpoints/versions use.
     response?.schemeReference,
     response?.schemeTransactionReference,
     response?.paymentInstrument?.schemeReference,
@@ -173,8 +210,10 @@ export function extractSchemeReference(response: any): string | null {
   ];
 
   for (const value of candidates) {
-    if (value && typeof value === "string" && !isPlaceholderCredential(value)) {
-      return value;
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed && !isPlaceholderCredential(trimmed)) {
+      return trimmed;
     }
   }
 
@@ -289,9 +328,7 @@ export async function chargeRecurringSubscription({
     );
   }
 
-  const targetUrl = usableHref
-    ? (recurringHref as string)
-    : `${config.baseUrl}/api/payments/authorizations`;
+  const targetUrl = usableHref ? (recurringHref as string) : authorizationsUrl(config);
 
   console.log(
     `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ${transactionReference} (£${amount})`

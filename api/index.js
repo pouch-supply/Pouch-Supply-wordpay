@@ -415,6 +415,18 @@ function toOrderRow(item) {
   if (row.shippingCost === void 0 && item?.deliveryCost !== void 0) {
     row.shippingCost = num(item.deliveryCost, 0);
   }
+  const royalMail = item?.data?.royalMail;
+  if (royalMail) {
+    if (row.royalMailOrderId === void 0 && royalMail.royalMailOrderId) {
+      row.royalMailOrderId = String(royalMail.royalMailOrderId);
+    }
+    if (row.trackingNumber === void 0 && royalMail.trackingNumber) {
+      row.trackingNumber = String(royalMail.trackingNumber);
+    }
+    if (row.carrier === void 0 && royalMail.carrier) {
+      row.carrier = String(royalMail.carrier);
+    }
+  }
   if (row.storeCreditApplied !== void 0) row.storeCreditApplied = num(row.storeCreditApplied);
   if (row.subtotal !== void 0) row.subtotal = num(row.subtotal);
   if (row.shippingCost !== void 0) row.shippingCost = num(row.shippingCost);
@@ -499,6 +511,99 @@ var init_orderRow = __esm({
       if (typeof value === "number" && Number.isFinite(value)) return value;
       const parsed = parseFloat(value);
       return Number.isFinite(parsed) ? parsed : fallback;
+    };
+  }
+});
+
+// src/lib/subscriptionRow.ts
+var subscriptionRow_exports = {};
+__export(subscriptionRow_exports, {
+  toSubscriptionRow: () => toSubscriptionRow,
+  upsertSubscriptionRow: () => upsertSubscriptionRow
+});
+function toSubscriptionRow(item) {
+  const row = {
+    id: String(item?.id || ""),
+    // Required columns. A subscription with no email or plan is still worth
+    // storing — losing it entirely is the worse outcome.
+    customerEmail: String(item?.customerEmail || item?.email || "").toLowerCase().trim(),
+    planId: String(item?.planId || "sub-pack"),
+    planName: String(item?.planName || "Pouch Supply Subscription"),
+    amount: num2(item?.amount) ?? num2(item?.subPrice) ?? 0,
+    status: String(item?.status || "active")
+  };
+  for (const key of OPTIONAL_COLUMNS) {
+    const value = item?.[key];
+    if (value !== void 0 && value !== null) row[key] = value;
+  }
+  const shipping = num2(item?.shippingCost) ?? num2(item?.shippingFee) ?? num2(item?.shippingAmount) ?? num2(item?.deliveryCost);
+  if (shipping !== void 0) row.shippingCost = shipping;
+  const itemPrice = num2(item?.itemPrice);
+  if (itemPrice !== void 0) row.itemPrice = itemPrice;
+  const cans = num2(item?.cansCount ?? item?.subCansCount);
+  if (cans !== void 0) row.cansCount = Math.round(cans);
+  const failed = num2(item?.failedPaymentCount);
+  row.failedPaymentCount = failed !== void 0 ? Math.round(failed) : 0;
+  const next = date(item?.nextBillingDate ?? item?.nextPayment);
+  if (next) row.nextBillingDate = next;
+  const last = date(item?.lastPaymentAt);
+  if (last) row.lastPaymentAt = last;
+  const cancelled = date(item?.cancelledAt);
+  if (cancelled) row.cancelledAt = cancelled;
+  return row;
+}
+async function upsertSubscriptionRow(item) {
+  const row = toSubscriptionRow(item);
+  if (!row.id) {
+    console.error("[Subscription Row] Refusing to write a subscription with no id.");
+    return false;
+  }
+  const candidateId = item?.customerId ? String(item.customerId) : null;
+  if (candidateId) {
+    const exists = await prisma.customer.findUnique({ where: { id: candidateId }, select: { id: true } }).catch(() => null);
+    if (exists) row.customerId = candidateId;
+  }
+  if (!row.customerId && row.customerEmail) {
+    const byEmail = await prisma.customer.findUnique({ where: { email: row.customerEmail }, select: { id: true } }).catch(() => null);
+    if (byEmail) row.customerId = byEmail.id;
+  }
+  try {
+    await prisma.subscription.upsert({ where: { id: row.id }, update: row, create: row });
+    return true;
+  } catch (err) {
+    console.error(`[Subscription Row] Neon write failed for ${row.id}:`, err?.message);
+    return false;
+  }
+}
+var OPTIONAL_COLUMNS, num2, date;
+var init_subscriptionRow = __esm({
+  "src/lib/subscriptionRow.ts"() {
+    init_prisma();
+    OPTIONAL_COLUMNS = [
+      "customerName",
+      "currency",
+      "billingInterval",
+      "worldpayTransactionId",
+      "worldpayRecurringHref",
+      "worldpaySchemeReference",
+      "lastPaymentStatus",
+      "lastPaymentId",
+      "lastPaymentError",
+      "items",
+      "shippingAddress",
+      "deliveryMethod",
+      "sourceOrderId",
+      "cancellationReason"
+    ];
+    num2 = (value) => {
+      if (value === void 0 || value === null || value === "") return void 0;
+      const parsed = typeof value === "number" ? value : parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : void 0;
+    };
+    date = (value) => {
+      if (!value) return void 0;
+      const d = value instanceof Date ? value : new Date(value);
+      return Number.isNaN(d.getTime()) ? void 0 : d;
     };
   }
 });
@@ -1357,52 +1462,8 @@ async function syncToPrismaModel(resource, item) {
         }
       }
     } else if (norm === "subscriptions" || norm === "subscription") {
-      const subEmail = String(item.customerEmail || item.email || `customer-${id}@pouch-supply.com`).toLowerCase().trim();
-      const amountVal = typeof item.amount === "number" ? item.amount : parseFloat(item.amount) || 0;
-      const nextDate = item.nextBillingDate ? new Date(item.nextBillingDate) : null;
-      const lastPaymentDate = item.lastPaymentAt ? new Date(item.lastPaymentAt) : null;
-      await prisma.subscription.upsert({
-        where: { id },
-        update: {
-          customerId: item.customerId || null,
-          customerEmail: subEmail,
-          customerName: item.customerName || null,
-          planId: item.planId || "sub-pack",
-          planName: item.planName || "Pouch Supply Subscription",
-          amount: amountVal,
-          currency: item.currency || "GBP",
-          status: item.status || "active",
-          billingInterval: item.billingInterval || "month",
-          nextBillingDate: nextDate,
-          worldpayTransactionId: item.worldpayTransactionId || null,
-          worldpayRecurringHref: item.worldpayRecurringHref || item.recurringHref || null,
-          worldpaySchemeReference: item.worldpaySchemeReference || null,
-          lastPaymentStatus: item.lastPaymentStatus || null,
-          lastPaymentId: item.lastPaymentId || null,
-          lastPaymentAt: lastPaymentDate,
-          failedPaymentCount: typeof item.failedPaymentCount === "number" ? item.failedPaymentCount : 0
-        },
-        create: {
-          id,
-          customerId: item.customerId || null,
-          customerEmail: subEmail,
-          customerName: item.customerName || null,
-          planId: item.planId || "sub-pack",
-          planName: item.planName || "Pouch Supply Subscription",
-          amount: amountVal,
-          currency: item.currency || "GBP",
-          status: item.status || "active",
-          billingInterval: item.billingInterval || "month",
-          nextBillingDate: nextDate,
-          worldpayTransactionId: item.worldpayTransactionId || null,
-          worldpayRecurringHref: item.worldpayRecurringHref || item.recurringHref || null,
-          worldpaySchemeReference: item.worldpaySchemeReference || null,
-          lastPaymentStatus: item.lastPaymentStatus || null,
-          lastPaymentId: item.lastPaymentId || null,
-          lastPaymentAt: lastPaymentDate,
-          failedPaymentCount: typeof item.failedPaymentCount === "number" ? item.failedPaymentCount : 0
-        }
-      });
+      const { upsertSubscriptionRow: upsertSubscriptionRow2 } = await Promise.resolve().then(() => (init_subscriptionRow(), subscriptionRow_exports));
+      await upsertSubscriptionRow2(item);
     }
   } catch (mErr) {
     console.warn(`[Prisma Model Sync] ${norm} sync warning:`, mErr?.message);
@@ -4714,18 +4775,35 @@ function getWorldpayConfig() {
     authHeader: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
   };
 }
+function authorizationsUrl(config) {
+  return `${config.baseUrl}/payments/authorizations`;
+}
 function getHeaders(config) {
   const correlationId = crypto2.randomUUID ? crypto2.randomUUID() : `sub-${Math.random().toString(36).substring(2, 10)}`;
   return {
     Authorization: config.authHeader,
-    "Content-Type": "application/json",
-    Accept: "application/json",
+    "Content-Type": PAYMENTS_MEDIA_TYPE,
+    Accept: PAYMENTS_MEDIA_TYPE,
     "WP-CorrelationId": correlationId
   };
 }
 function extractSchemeReference(response) {
   if (!response || typeof response !== "object") return null;
   const candidates = [
+    // Where Worldpay ACTUALLY returns it, on both the authorization response and
+    // the payment query:
+    //
+    //   "transactionType": "cardOnFile",
+    //   "scheme": { "reference": "MRLZRGKT60908  " }
+    //
+    // This path was missing, so every subscription looked like it had no stored
+    // credential and reported "no stored-card mandate" — while Worldpay had
+    // issued a perfectly good reference on the very first payment. The value is
+    // space-padded to a fixed width by the scheme, hence the trim below.
+    response?.scheme?.reference,
+    response?.payment?.scheme?.reference,
+    response?._embedded?.payments?.[0]?.scheme?.reference,
+    // Shapes other Worldpay endpoints/versions use.
     response?.schemeReference,
     response?.schemeTransactionReference,
     response?.paymentInstrument?.schemeReference,
@@ -4735,8 +4813,10 @@ function extractSchemeReference(response) {
     response?.paymentInstrument?.card?.schemeReference
   ];
   for (const value of candidates) {
-    if (value && typeof value === "string" && !isPlaceholderCredential(value)) {
-      return value;
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed && !isPlaceholderCredential(trimmed)) {
+      return trimmed;
     }
   }
   return null;
@@ -4795,7 +4875,7 @@ async function chargeRecurringSubscription({
       "No Worldpay stored credential is available for this subscription. The initial payment must be taken with a customer agreement so Worldpay returns a scheme transaction reference to reuse for recurring charges."
     );
   }
-  const targetUrl = usableHref ? recurringHref : `${config.baseUrl}/api/payments/authorizations`;
+  const targetUrl = usableHref ? recurringHref : authorizationsUrl(config);
   console.log(
     `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ${transactionReference} (\xA3${amount})`
   );
@@ -4861,7 +4941,7 @@ async function chargeRecurringSubscription({
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
-var PLACEHOLDER_PATTERNS;
+var PLACEHOLDER_PATTERNS, PAYMENTS_MEDIA_TYPE;
 var init_worldpaySubscription = __esm({
   "backend/services/worldpaySubscription.ts"() {
     PLACEHOLDER_PATTERNS = [
@@ -4877,6 +4957,7 @@ var init_worldpaySubscription = __esm({
       /mock/i,
       /test-simulation/i
     ];
+    PAYMENTS_MEDIA_TYPE = "application/vnd.worldpay.payments-v6+json";
   }
 });
 
@@ -8169,9 +8250,15 @@ async function saveVerifiedOrder(orderId, details) {
         lastPaymentAt: /* @__PURE__ */ new Date(),
         items
       };
-      try {
-        await prisma.subscription.create({ data: subData });
-      } catch (_e) {
+      {
+        const { upsertSubscriptionRow: upsertSubscriptionRow2 } = await Promise.resolve().then(() => (init_subscriptionRow(), subscriptionRow_exports));
+        const stored = await upsertSubscriptionRow2(subData);
+        if (!stored) {
+          console.error(
+            `[SUBSCRIPTION NOT PERSISTED] ${subId} for order ${orderId} is not in the Neon Subscription table. Recover it from the payload below.`,
+            JSON.stringify(subData)
+          );
+        }
       }
       try {
         const storedSubs = await fetchResource("subscriptions") || [];

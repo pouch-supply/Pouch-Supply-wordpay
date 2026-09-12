@@ -551,9 +551,22 @@ async function saveVerifiedOrder(
         items: items
       };
 
-      try {
-        await prisma.subscription.create({ data: subData });
-      } catch (_e) {}
+      // Schema-checked write - see src/lib/subscriptionRow.ts. This used to be
+      // prisma.subscription.create(subData) inside an empty catch: subData carries
+      // shippingFee/shippingAmount/deliveryCost, which are not columns, and a
+      // customerId holding an email, so every create threw and was discarded in
+      // silence. The subscription then existed only as a JSON blob.
+      {
+        const { upsertSubscriptionRow } = await import('../../src/lib/subscriptionRow');
+        const stored = await upsertSubscriptionRow(subData);
+        if (!stored) {
+          console.error(
+            `[SUBSCRIPTION NOT PERSISTED] ${subId} for order ${orderId} is not in the Neon ` +
+              'Subscription table. Recover it from the payload below.',
+            JSON.stringify(subData)
+          );
+        }
+      }
 
       try {
         const storedSubs: any[] = (await fetchResource('subscriptions')) || [];
