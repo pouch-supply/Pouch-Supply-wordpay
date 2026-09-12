@@ -253,6 +253,17 @@ export default function CustomerAccount({
     setActiveTab('subscriptions', subscriptionId ? String(subscriptionId) : null);
   };
   const [accountSubscriptions, setAccountSubscriptions] = useState<any[]>([]);
+  /**
+   * Whether the stored plans have been fetched yet.
+   *
+   * The plan list is stored plans plus a card rebuilt from any subscription
+   * order no stored plan claims. Before the fetch resolves there are no stored
+   * plans, so every order rebuilt a card and the customer saw a complete,
+   * order-derived list for a moment — then it was replaced as the real plans
+   * arrived and suppressed those rebuilt cards. Rendering nothing until the
+   * fetch settles means the list is painted once, from both sources.
+   */
+  const [accountSubscriptionsLoaded, setAccountSubscriptionsLoaded] = useState(false);
   // Plans the customer removed, with when they were removed. The API strips
   // them from `subscriptions` entirely, so without this a removed plan would be
   // rebuilt from its own orders and reappear — and without the timestamp, an
@@ -393,6 +404,7 @@ export default function CustomerAccount({
     const email = loggedInCustomer?.email?.trim();
     if (!email) {
       setAccountSubscriptions([]);
+      setAccountSubscriptionsLoaded(true);
       return [];
     }
     try {
@@ -402,8 +414,10 @@ export default function CustomerAccount({
       const subs = Array.isArray(data?.subscriptions) ? data.subscriptions : [];
       setAccountSubscriptions(subs);
       setDeletedSubscriptions(parseDeletedSubscriptions(data));
+      setAccountSubscriptionsLoaded(true);
       return subs;
     } catch {
+      setAccountSubscriptionsLoaded(true);
       return [];
     }
   }, [loggedInCustomer?.email]);
@@ -414,20 +428,24 @@ export default function CustomerAccount({
     if (!email) {
       setAccountSubscriptions([]);
       setDeletedSubscriptions([]);
+      setAccountSubscriptionsLoaded(true);
       return () => { cancelled = true; };
     }
 
+    setAccountSubscriptionsLoaded(false);
     fetch(`/api/subscriptions/customer/${encodeURIComponent(email.toLowerCase())}`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (cancelled) return;
         setAccountSubscriptions(Array.isArray(data?.subscriptions) ? data.subscriptions : []);
         setDeletedSubscriptions(parseDeletedSubscriptions(data));
+        setAccountSubscriptionsLoaded(true);
       })
       .catch(() => {
         if (!cancelled) {
           setAccountSubscriptions([]);
           setDeletedSubscriptions([]);
+          setAccountSubscriptionsLoaded(true);
         }
       });
 
@@ -3567,7 +3585,7 @@ export default function CustomerAccount({
               {/* TAB 3: SUBSCRIPTIONS (Interactive controls for active sub, swaps, pause/resume) */}
               {activeTab === 'subscriptions' && (
                 <div className="space-y-6">
-                  {!hasRealSubscription && !hasCancelledSubscription ? (
+                  {accountSubscriptionsLoaded && !hasRealSubscription && !hasCancelledSubscription ? (
                     <div className="bg-white border border-slate-200 rounded-3xl p-8 sm:p-12 shadow-xs text-center space-y-6 max-w-2xl mx-auto my-4">
                       <div className="w-16 h-16 bg-amber-50 border border-amber-200/80 rounded-full flex items-center justify-center mx-auto text-[#dfa047] shadow-2xs">
                         <RefreshCw className="w-8 h-8" />
@@ -3621,7 +3639,7 @@ export default function CustomerAccount({
                         profile flag when there are no plans — so it no longer
                         appears above plans that are all live.
                       */}
-                      {hasCancelledSubscription && (
+                      {accountSubscriptionsLoaded && hasCancelledSubscription && (
                         <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                           <div className="flex items-start gap-3.5">
                             <div className="p-2.5 bg-rose-100 border border-rose-300 rounded-2xl text-rose-700 shrink-0 mt-0.5">
@@ -3672,7 +3690,27 @@ export default function CustomerAccount({
                         the list here; the buttons above act on the whole
                         account, which is wrong once there is more than one plan.
                       */}
-                      {visibleAccountSubscriptions.length > 0 && (
+                      {!accountSubscriptionsLoaded && (
+                        <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-4">
+                          <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                            <div>
+                              <h3 className="font-extrabold text-sm sm:text-base text-[#071d37] uppercase tracking-wider">Your Subscription Plans</h3>
+                              <p className="text-slate-400 text-[11px] mt-0.5">Loading your plans…</p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {[0, 1].map(i => (
+                              <div key={i} className="border border-slate-200 rounded-2xl p-4 animate-pulse">
+                                <div className="h-3 w-24 bg-slate-200 rounded mb-3" />
+                                <div className="h-4 w-40 bg-slate-200 rounded mb-2" />
+                                <div className="h-3 w-32 bg-slate-100 rounded" />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {accountSubscriptionsLoaded && visibleAccountSubscriptions.length > 0 && (
                         <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-xs space-y-4">
                           <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100">
                             <div>
@@ -3978,7 +4016,7 @@ export default function CustomerAccount({
                         likely — but nothing on the server backs it, so say so
                         rather than showing an editor with nothing behind it.
                       */}
-                      {visibleAccountSubscriptions.length === 0 && (
+                      {accountSubscriptionsLoaded && visibleAccountSubscriptions.length === 0 && (
                         deletedSubscriptions.length > 0 ? (
                           /*
                             The plans are not lost — they were removed from this
