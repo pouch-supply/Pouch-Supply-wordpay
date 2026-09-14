@@ -244,6 +244,100 @@ async function backfillSubscriptionCredential(orderId: string, gatewayResponse: 
 }
 
 /**
+ * Tokens that arrived before the subscription they belong to existed.
+ *
+ * Worldpay delivers the payment event and the tokenCreated event separately and
+ * in no guaranteed order, so the token can land while the order is still being
+ * written — or while Neon is unreachable, which the production log shows does
+ * happen. Either way the href is the only copy of that credential in existence:
+ * Worldpay does not resend it on request, and without it the subscription
+ * cannot renew. So an unmatched token is parked rather than discarded.
+ */
+const PENDING_TOKENS_RESOURCE = 'worldpayPendingTokens';
+
+/** How long a parked token is worth keeping before it is almost certainly orphaned. */
+const PENDING_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function holdUnmatchedToken(
+  tokenHref: string,
+  hints: { reference?: string | null; namespace?: string | null }
+): Promise<void> {
+  try {
+    const held: any[] = (await fetchResource(PENDING_TOKENS_RESOURCE)) || [];
+    const cutoff = Date.now() - PENDING_TOKEN_TTL_MS;
+
+    const kept = held.filter(
+      (entry: any) =>
+        entry &&
+        entry.tokenHref !== tokenHref &&
+        new Date(entry.receivedAt || 0).getTime() > cutoff
+    );
+
+    kept.push({
+      id: `tok_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      tokenHref,
+      reference: hints.reference || null,
+      namespace: hints.namespace || null,
+      receivedAt: new Date().toISOString()
+    });
+
+    await saveResource(PENDING_TOKENS_RESOURCE, kept.slice(-200));
+
+    console.warn(
+      `[Worldpay Webhook] tokenCreated arrived for reference "${hints.reference || 'n/a'}" / ` +
+        `namespace "${hints.namespace || 'n/a'}" before its subscription existed. Held for the ` +
+        `subscription to claim. Token: ${tokenHref}`
+    );
+  } catch (err: any) {
+    // Losing the token here is the worst outcome in this file, so it is logged
+    // at full volume with the href, which is recoverable from the log by hand.
+    console.error(
+      `[Worldpay Webhook] COULD NOT PARK an unmatched card token — it is lost unless recovered ` +
+        `from this line. reference="${hints.reference || 'n/a'}" namespace="${hints.namespace || 'n/a'}" ` +
+        `token=${tokenHref} error=${err?.message}`
+    );
+  }
+}
+
+/**
+ * Takes a held token belonging to this order or shopper, if one is waiting.
+ * Claimed tokens are removed so a later subscription cannot pick up a card that
+ * is already spoken for.
+ */
+async function claimPendingToken(orderId: string, customerEmail?: string | null): Promise<string | null> {
+  const reference = String(orderId || '').trim();
+  const email = String(customerEmail || '').trim().toLowerCase();
+  if (!reference && !email) return null;
+
+  try {
+    const held: any[] = (await fetchResource(PENDING_TOKENS_RESOURCE)) || [];
+    if (held.length === 0) return null;
+
+    const match = held.find(
+      (entry: any) =>
+        entry &&
+        isUsableTokenHref(entry.tokenHref) &&
+        ((reference && String(entry.reference || '').trim() === reference) ||
+          (email && String(entry.namespace || '').trim().toLowerCase() === email))
+    );
+    if (!match) return null;
+
+    await saveResource(
+      PENDING_TOKENS_RESOURCE,
+      held.filter((entry: any) => entry?.id !== match.id)
+    );
+
+    console.log(
+      `[Worldpay Order] Claimed a held card token for order ${reference || email}: ${match.tokenHref}`
+    );
+    return match.tokenHref;
+  } catch (err: any) {
+    console.warn('[Worldpay Order] Could not read held card tokens:', err?.message);
+    return null;
+  }
+}
+
+/**
  * Records a stored-card token against the subscription it belongs to.
  *
  * The tokenCreated webhook is a separate event from the payment one and carries
@@ -282,11 +376,11 @@ async function recordTokenForSubscription(
     const candidates = storedSubs.filter(matches);
 
     if (candidates.length === 0) {
-      console.warn(
-        `[Worldpay Webhook] tokenCreated received for reference "${reference || 'n/a'}" / ` +
-          `namespace "${namespace || 'n/a'}" but no subscription matches it. The token is not stored, ` +
-          `so that plan cannot renew. Token: ${tokenHref}`
-      );
+      // Expected on a fast gateway: the token event can overtake the payment
+      // event, so the subscription this token belongs to does not exist yet.
+      // Dropping it here would cost that customer their renewal, so it is held
+      // and claimed when the subscription is created.
+      await holdUnmatchedToken(tokenHref, { reference, namespace });
       return false;
     }
 
@@ -617,7 +711,12 @@ async function saveVerifiedOrder(
       // to nothing — every recurring charge then failed and was masked by a
       // simulated "authorized" response, so subscriptions silently took no money.
       const recurringHref = extractRecurringAuthorizationHref(details.gatewayResponse) || null;
-      const tokenHref = extractTokenHref(details.gatewayResponse) || null;
+      const tokenHref =
+        extractTokenHref(details.gatewayResponse) ||
+        // The tokenCreated webhook can arrive before this order is written. If
+        // it did, its token is waiting to be claimed rather than lost.
+        (await claimPendingToken(String(orderId), customerEmail)) ||
+        null;
       const schemeReference =
         extractSchemeReference(details.gatewayResponse) ||
         (details.schemeReference && !isPlaceholderCredential(details.schemeReference)
@@ -630,7 +729,7 @@ async function saveVerifiedOrder(
         // recordTokenForSubscription attaches it when it arrives.
         console.log(
           `[Worldpay Order] Subscription for order ${orderId} has no stored card token yet — ` +
-            `awaiting the tokenCreated webhook.`
+            `awaiting the tokenCreated webhook at /api/worldpay/webhook.`
         );
       }
 
@@ -1442,6 +1541,35 @@ function normalizeWorldpayWebhook(event: any) {
   };
 }
 
+/**
+ * GET /api/worldpay/webhook — liveness only.
+ *
+ * The route is POST-only, so a GET answered 404, and a 404 is indistinguishable
+ * from "this URL does not exist" when checking a webhook registration by hand or
+ * with an uptime probe. Worth having: the URL registered in the Worldpay
+ * dashboard was the site root for months, and the only way to notice was that
+ * nothing ever arrived.
+ *
+ * This confirms the endpoint is reachable and nothing else. Events are accepted
+ * on POST alone.
+ */
+router.get('/webhook', async (_req: Request, res: Response) => {
+  let heldTokens = 0;
+  try {
+    heldTokens = ((await fetchResource(PENDING_TOKENS_RESOURCE)) || []).length;
+  } catch (_e) {}
+
+  return res.status(200).json({
+    ok: true,
+    endpoint: '/api/worldpay/webhook',
+    method: 'POST',
+    message:
+      'Worldpay webhook endpoint is live. Register this exact URL in Developer Tools > Webhooks ' +
+      'and make sure tokenCreated is among the subscribed events.',
+    heldTokensAwaitingSubscription: heldTokens
+  });
+});
+
 // POST /api/worldpay/webhook - Official Worldpay Webhook Handler
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
@@ -1521,7 +1649,12 @@ router.post('/webhook', async (req: Request, res: Response) => {
     return res.status(200).json({ received: true, processed: true, orderId: evt.orderId });
   } catch (error: any) {
     console.error('[Worldpay Webhook] Processing error:', error);
-    return res.status(200).json({ received: true, processed: false, error: error.message });
+
+    // A 2xx tells Worldpay the event was handled and it is never sent again.
+    // That is wrong for an internal failure — the production log shows Neon
+    // going unreachable mid-request, and answering 200 through that window
+    // would discard a card token permanently. A 5xx asks Worldpay to retry.
+    return res.status(500).json({ received: true, processed: false, error: error.message });
   }
 });
 
