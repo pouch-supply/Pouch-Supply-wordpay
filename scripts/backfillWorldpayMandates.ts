@@ -31,8 +31,10 @@ import 'dotenv/config';
 import { fetchResource, saveResource } from '../serverDb';
 import {
   extractSchemeReference,
+  extractTokenHref,
   isPlaceholderCredential,
-  isUsableRecurringHref
+  isUsableRecurringHref,
+  isUsableTokenHref
 } from '../backend/services/worldpaySubscription';
 
 const args = process.argv.slice(2);
@@ -96,17 +98,23 @@ async function main() {
     fetchResource('orders') as Promise<any[]>
   ]);
 
+  // A subscription needs this script if it is missing EITHER credential.
+  // Worldpay's integration support confirmed the subsequent payment must carry
+  // the card token href, so a plan holding only a scheme reference is still
+  // unchargeable and still belongs in this list.
   const needing = (subs || []).filter(s => {
     const scheme = s?.worldpaySchemeReference;
     const href = s?.worldpayRecurringHref || s?.recurringHref;
     const hasScheme = Boolean(scheme) && !isPlaceholderCredential(scheme);
-    return !hasScheme && !isUsableRecurringHref(href);
+    const hasToken = isUsableTokenHref(s?.worldpayTokenHref);
+    return !hasToken || (!hasScheme && !isUsableRecurringHref(href));
   });
 
-  console.log(`${subs?.length || 0} subscription(s); ${needing.length} without a usable credential.\n`);
+  console.log(`${subs?.length || 0} subscription(s); ${needing.length} without a complete credential.\n`);
   if (needing.length === 0) return;
 
   const updates = new Map<string, any>();
+  let tokensFound = 0;
 
   for (const sub of needing) {
     const refs = candidateReferences(sub, orders || []);
@@ -115,15 +123,19 @@ async function main() {
       continue;
     }
 
-    let found: { reference: string; scheme: string; txType: string; paymentId: string } | null = null;
+    let found:
+      | { reference: string; scheme: string | null; tokenHref: string | null; txType: string; paymentId: string }
+      | null = null;
     for (const reference of refs) {
       const payment = await lookupPayment(reference, auth);
       if (!payment) continue;
       const scheme = extractSchemeReference(payment);
-      if (!scheme) continue;
+      const tokenHref = extractTokenHref(payment);
+      if (!scheme && !tokenHref) continue;
       found = {
         reference,
         scheme,
+        tokenHref,
         txType: String(payment.transactionType || 'unknown'),
         paymentId: String(payment.paymentId || '')
       };
@@ -131,22 +143,27 @@ async function main() {
     }
 
     if (!found) {
-      console.log(`${sub.id} (${sub.customerEmail}) — Worldpay has no scheme reference for ${refs.join(', ')}.`);
+      console.log(
+        `${sub.id} (${sub.customerEmail}) — Worldpay returned neither a scheme reference nor a ` +
+          `token for ${refs.join(', ')}.`
+      );
       continue;
     }
 
     const mandateOk = found.txType === 'cardOnFile';
     const willWrite = mandateOk || INCLUDE_ONETIME;
+    if (found.tokenHref) tokensFound++;
     console.log(
       `${sub.id} (${sub.customerEmail}) — from ${found.reference}: ` +
-        `scheme=${found.scheme} txType=${found.txType}` +
+        `scheme=${found.scheme || 'none'} token=${found.tokenHref ? 'yes' : 'NONE'} txType=${found.txType}` +
         (mandateOk ? '' : `  << not a card-on-file mandate${willWrite ? ', writing anyway' : ', skipped'}`)
     );
 
     if (!willWrite) continue;
     updates.set(String(sub.id), {
       ...sub,
-      worldpaySchemeReference: found.scheme,
+      worldpaySchemeReference: found.scheme || sub.worldpaySchemeReference || null,
+      worldpayTokenHref: found.tokenHref || sub.worldpayTokenHref || null,
       worldpayTransactionId: sub.worldpayTransactionId || found.paymentId || found.reference,
       // Recorded so the difference between a true mandate and a bare reference
       // stays visible after the fact.
@@ -154,6 +171,15 @@ async function main() {
       mandateRecoveredAt: new Date().toISOString(),
       mandateRecoveredFromOrderId: found.reference
     });
+  }
+
+  if (needing.length > 0 && tokensFound === 0) {
+    console.log(
+      `\nNo card token was recoverable for any subscription. Worldpay only stores a card when the ` +
+        `payment page was created with createToken, and only publishes the token href on the ` +
+        `tokenCreated webhook — so subscriptions taken before that was in place have to re-authorise ` +
+        `rather than be backfilled.`
+    );
   }
 
   if (updates.size === 0) {

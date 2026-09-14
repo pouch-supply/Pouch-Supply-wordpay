@@ -3,6 +3,7 @@ import { fetchResource, saveResource, getDb } from '../../serverDb';
 import {
   chargeRecurringSubscription,
   isUsableRecurringHref,
+  isUsableTokenHref,
   isPlaceholderCredential
 } from './worldpaySubscription';
 import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from './subscriptionBox';
@@ -159,7 +160,7 @@ async function loadAllSubscriptions(): Promise<any[]> {
 const PRISMA_SUBSCRIPTION_FIELDS = new Set([
   'customerId', 'customerEmail', 'customerName', 'planId', 'planName', 'amount', 'currency',
   'status', 'billingInterval', 'nextBillingDate', 'worldpayTransactionId',
-  'worldpayRecurringHref', 'worldpaySchemeReference', 'lastPaymentStatus', 'lastPaymentId',
+  'worldpayTokenHref', 'worldpayRecurringHref', 'worldpaySchemeReference', 'lastPaymentStatus', 'lastPaymentId',
   'lastPaymentAt', 'failedPaymentCount',
   'lastPaymentError', 'items', 'cansCount', 'itemPrice', 'shippingCost', 'shippingAddress',
   'deliveryMethod', 'sourceOrderId', 'cancelledAt', 'cancellationReason'
@@ -258,6 +259,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       const customerEmail = String(sub.customerEmail || '').toLowerCase().trim();
       const recurringHref = sub.worldpayRecurringHref || sub.recurringHref;
       const schemeReference = sub.worldpaySchemeReference;
+      const tokenHref = sub.worldpayTokenHref || sub.tokenHref;
       const amount = Number(sub.amount || 25.0);
       const currency = sub.currency || 'GBP';
       const planName = planTitleFromSubscription(sub);
@@ -272,14 +274,16 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       // present but cannot authorise anything — treat them as missing rather
       // than burning retry attempts on a charge that can never succeed.
       const hasUsableCredential =
+        isUsableTokenHref(tokenHref) ||
         isUsableRecurringHref(recurringHref) ||
         (Boolean(schemeReference) && !isPlaceholderCredential(schemeReference));
 
       if (!hasUsableCredential) {
         console.warn(
           `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential ` +
-            `(href=${recurringHref || 'none'}, scheme=${schemeReference || 'none'}). ` +
-            `The initial payment must be taken with a customer agreement so Worldpay returns a reusable reference.`
+            `(token=${tokenHref || 'none'}, href=${recurringHref || 'none'}, scheme=${schemeReference || 'none'}). ` +
+            `The initial payment must be taken with createToken and a customer agreement so Worldpay ` +
+            `stores the card and sends the tokenCreated webhook.`
         );
         failed++;
         // Push the schedule forward so a broken subscription is not re-scanned every tick.
@@ -304,6 +308,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       try {
         // 1. Charge Worldpay using the stored MIT credential / scheme reference
         const chargeResult = await chargeRecurringSubscription({
+          tokenHref,
           recurringHref,
           transactionReference,
           amount,
@@ -412,6 +417,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           lastPaymentId: chargeResult?.id || transactionReference,
           lastPaymentAt: new Date(),
           worldpayTransactionId: chargeResult?.id || sub.worldpayTransactionId,
+          worldpayTokenHref: chargeResult?.tokenHref || tokenHref || null,
           worldpaySchemeReference: chargeResult?.schemeReference || schemeReference,
           nextBillingDate: claimedNextBilling,
           failedPaymentCount: 0

@@ -5,8 +5,12 @@ import { fetchResource, saveResource } from '../../serverDb';
 import {
   extractRecurringAuthorizationHref,
   extractSchemeReference,
+  extractTokenHref,
   isPlaceholderCredential,
-  isUsableRecurringHref
+  isTokenEvent,
+  isUsableRecurringHref,
+  isUsableTokenHref,
+  tokenOptIn
 } from '../services/worldpaySubscription';
 import { calculateNextBillingDate, normalizeBillingInterval } from '../services/subscriptionCron';
 import {
@@ -182,7 +186,8 @@ function extractWorldpayRedirectUrl(responseBody: any): string | null {
 async function backfillSubscriptionCredential(orderId: string, gatewayResponse: any): Promise<boolean> {
   const href = extractRecurringAuthorizationHref(gatewayResponse);
   const scheme = extractSchemeReference(gatewayResponse);
-  if (!href && !scheme) return false;
+  const tokenHref = extractTokenHref(gatewayResponse);
+  if (!href && !scheme && !tokenHref) return false;
 
   let updated = false;
 
@@ -191,18 +196,25 @@ async function backfillSubscriptionCredential(orderId: string, gatewayResponse: 
     const next = storedSubs.map((sub: any) => {
       if (String(sub?.sourceOrderId || sub?.worldpayTransactionId || "") !== String(orderId)) return sub;
 
+      // The token is the card, and a subscription that already has a scheme
+      // reference can still be missing it — that is precisely the state every
+      // existing subscription is in. So a token is recorded even when the
+      // subscription looks "complete" by the old standard.
+      const needsToken = Boolean(tokenHref) && !isUsableTokenHref(sub.worldpayTokenHref);
       const hasUsable =
         isUsableRecurringHref(sub.worldpayRecurringHref) ||
         (Boolean(sub.worldpaySchemeReference) && !isPlaceholderCredential(sub.worldpaySchemeReference));
-      if (hasUsable) return sub;
+      if (hasUsable && !needsToken) return sub;
 
       updated = true;
       console.log(
         `[Worldpay Order] Recording Worldpay stored credential for subscription ${sub.id} ` +
-          `from a later gateway response for order ${orderId}.`
+          `from a later gateway response for order ${orderId}` +
+          (needsToken ? ' (including the stored card token).' : '.')
       );
       return {
         ...sub,
+        worldpayTokenHref: tokenHref || sub.worldpayTokenHref || null,
         worldpayRecurringHref: href || sub.worldpayRecurringHref || null,
         worldpaySchemeReference: scheme || sub.worldpaySchemeReference || null
       };
@@ -218,6 +230,7 @@ async function backfillSubscriptionCredential(orderId: string, gatewayResponse: 
           await prisma.subscription.update({
             where: { id: String(target.id) },
             data: {
+              worldpayTokenHref: target.worldpayTokenHref,
               worldpayRecurringHref: target.worldpayRecurringHref,
               worldpaySchemeReference: target.worldpaySchemeReference
             }
@@ -228,6 +241,92 @@ async function backfillSubscriptionCredential(orderId: string, gatewayResponse: 
   } catch (_e) {}
 
   return updated;
+}
+
+/**
+ * Records a stored-card token against the subscription it belongs to.
+ *
+ * The tokenCreated webhook is a separate event from the payment one and carries
+ * no order object — it identifies itself by the transaction reference of the
+ * payment that stored the card, and by the namespace the checkout set (the
+ * shopper's email). Both are tried, because a subscription may have been
+ * created under either.
+ */
+async function recordTokenForSubscription(
+  tokenHref: string,
+  hints: { transactionReference?: string | null; namespace?: string | null }
+): Promise<boolean> {
+  const reference = String(hints.transactionReference || '').trim();
+  const namespace = String(hints.namespace || '').trim().toLowerCase();
+  if (!isUsableTokenHref(tokenHref)) return false;
+
+  const matches = (sub: any): boolean => {
+    if (!sub) return false;
+    if (reference) {
+      const refs = [sub.sourceOrderId, sub.worldpayTransactionId, sub.lastPaymentId]
+        .map((v: any) => String(v || '').trim())
+        .filter(Boolean);
+      if (refs.some(r => r === reference)) return true;
+    }
+    if (namespace) {
+      const email = String(sub.customerEmail || '').trim().toLowerCase();
+      if (email && email === namespace) return true;
+    }
+    return false;
+  };
+
+  let updatedId: string | null = null;
+
+  try {
+    const storedSubs: any[] = (await fetchResource('subscriptions')) || [];
+    const candidates = storedSubs.filter(matches);
+
+    if (candidates.length === 0) {
+      console.warn(
+        `[Worldpay Webhook] tokenCreated received for reference "${reference || 'n/a'}" / ` +
+          `namespace "${namespace || 'n/a'}" but no subscription matches it. The token is not stored, ` +
+          `so that plan cannot renew. Token: ${tokenHref}`
+      );
+      return false;
+    }
+
+    // Newest first: a shopper who has resubscribed should have the token
+    // attached to the plan the payment just created, not to an old one.
+    const target = candidates.sort((a: any, b: any) => {
+      const at = new Date(a?.createdAt || 0).getTime();
+      const bt = new Date(b?.createdAt || 0).getTime();
+      return bt - at;
+    })[0];
+
+    if (String(target.worldpayTokenHref || '') === tokenHref) return false;
+
+    updatedId = String(target.id);
+    const next = storedSubs.map((sub: any) =>
+      String(sub.id) === updatedId
+        ? { ...sub, worldpayTokenHref: tokenHref, tokenRecordedAt: new Date().toISOString() }
+        : sub
+    );
+    await saveResource('subscriptions', next);
+
+    console.log(
+      `[Worldpay Webhook] Stored card token recorded for subscription ${updatedId} ` +
+        `(${target.customerEmail}). Renewals can now present the card.`
+    );
+  } catch (err: any) {
+    console.error('[Worldpay Webhook] Failed to record token against a subscription:', err?.message);
+    return false;
+  }
+
+  if (updatedId) {
+    try {
+      await prisma.subscription.update({
+        where: { id: updatedId },
+        data: { worldpayTokenHref: tokenHref }
+      });
+    } catch (_e) {}
+  }
+
+  return Boolean(updatedId);
 }
 
 /**
@@ -518,11 +617,22 @@ async function saveVerifiedOrder(
       // to nothing — every recurring charge then failed and was masked by a
       // simulated "authorized" response, so subscriptions silently took no money.
       const recurringHref = extractRecurringAuthorizationHref(details.gatewayResponse) || null;
+      const tokenHref = extractTokenHref(details.gatewayResponse) || null;
       const schemeReference =
         extractSchemeReference(details.gatewayResponse) ||
         (details.schemeReference && !isPlaceholderCredential(details.schemeReference)
           ? details.schemeReference
           : null);
+
+      if (!tokenHref) {
+        // Expected, and not an error: Worldpay delivers the token on its own
+        // tokenCreated webhook, which usually lands after this order is written.
+        // recordTokenForSubscription attaches it when it arrives.
+        console.log(
+          `[Worldpay Order] Subscription for order ${orderId} has no stored card token yet — ` +
+            `awaiting the tokenCreated webhook.`
+        );
+      }
 
       if (!recurringHref && !schemeReference) {
         console.warn(
@@ -561,6 +671,7 @@ async function saveVerifiedOrder(
         billingInterval,
         nextBillingDate,
         worldpayTransactionId: details.transactionId || orderId,
+        worldpayTokenHref: tokenHref,
         worldpayRecurringHref: recurringHref,
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: 'authorized',
@@ -997,8 +1108,10 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
         namespace: String(customerEmail || transactionReference).toLowerCase().slice(0, 64),
         description: 'Pouch Supply subscription',
         // Consent for the stored card is taken in our own checkout terms, so the
-        // shopper is not asked a second time on Worldpay's page.
-        optIn: 'Silent'
+        // shopper is not asked a second time on Worldpay's page. `Silent` has to
+        // be enabled on the account — set WORLDPAY_TOKEN_OPT_IN=ASK if Worldpay
+        // rejects it, rather than losing the token and the renewal with it.
+        optIn: tokenOptIn()
       };
     }
 
@@ -1259,38 +1372,153 @@ const handleWorldpayCallback = async (req: Request, res: Response) => {
 router.get('/callback', handleWorldpayCallback);
 router.post('/callback', handleWorldpayCallback);
 
+/** Worldpay event names that mean the money is committed. */
+const WEBHOOK_PAID_EVENTS = new Set([
+  'authorized',
+  'authorised',
+  'captured',
+  'settled',
+  'charged',
+  'sentforsettlement',
+  'settlementrequestsubmitted',
+  'settlementsubmitted'
+]);
+
+const WEBHOOK_FAILED_EVENTS = new Set([
+  'failed',
+  'refused',
+  'declined',
+  'error',
+  'expired',
+  'cancelled',
+  'canceled',
+  'sentforrefund'
+]);
+
+/**
+ * Reads one Worldpay webhook, whichever body shape it arrives in.
+ *
+ * Worldpay Access delivers `{ eventId, eventTimestamp, eventDetails: { type,
+ * transactionReference, ... } }`. This handler only ever understood a
+ * `{ type, data: { attributes: { status, metadata } } }` body, so it answered
+ * `{ ignored: true }` to everything Worldpay actually sent — including every
+ * tokenCreated event. Both are read now, and anything unrecognised is logged in
+ * full rather than discarded, because a dropped token is a subscription that
+ * cannot renew.
+ */
+function normalizeWorldpayWebhook(event: any) {
+  const details = event?.eventDetails || {};
+  const attributes = event?.data?.attributes || {};
+
+  const eventType = String(details.type || event?.eventType || event?.type || '').trim();
+  const status = String(attributes.status || details.lastEvent || eventType || '')
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
+
+  const orderId =
+    attributes?.metadata?.orderId ||
+    attributes?.reference ||
+    details.transactionReference ||
+    event?.transactionReference ||
+    null;
+
+  return {
+    eventType,
+    status,
+    orderId: orderId ? String(orderId) : null,
+    transactionId:
+      attributes.transactionId ||
+      details.paymentId ||
+      details.transactionId ||
+      event?.data?.id ||
+      event?.eventId ||
+      null,
+    authCode: attributes.authCode || details.authorizationCode || null,
+    cardBrand: attributes?.paymentMethod?.card?.brand || details?.paymentInstrument?.card?.brand || null,
+    namespace: details.namespace || details.tokenNamespace || attributes?.namespace || null,
+    eventId: event?.eventId || event?.data?.id || null,
+    // The raw half of the payload that carries the stored-credential references.
+    payload: Object.keys(details).length > 0 ? details : attributes
+  };
+}
+
 // POST /api/worldpay/webhook - Official Worldpay Webhook Handler
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
     const event = req.body;
-    if (!event || !event.type || !event.data) {
+    if (!event || typeof event !== 'object') {
       return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
-    const orderId = event.data.attributes?.metadata?.orderId || event.data.attributes?.reference;
-    if (!orderId) {
+    const evt = normalizeWorldpayWebhook(event);
+
+    const tokenHref = extractTokenHref(event);
+    const isPaymentEvent =
+      WEBHOOK_PAID_EVENTS.has(evt.status) || WEBHOOK_FAILED_EVENTS.has(evt.status);
+
+    // A tokenCreated event is how Worldpay hands over the stored card. It is a
+    // separate delivery from the payment event, names no order, and is the only
+    // place the token href appears — so it is handled here rather than falling
+    // through to the "no transaction reference" exit below, which is where every
+    // one of them used to be discarded.
+    if (tokenHref && !isPaymentEvent) {
+      const recorded = await recordTokenForSubscription(tokenHref, {
+        transactionReference: evt.orderId,
+        namespace: evt.namespace
+      });
+      return res.status(200).json({
+        received: true,
+        processed: recorded,
+        event: evt.eventType || 'tokenCreated',
+        orderId: evt.orderId
+      });
+    }
+
+    if (!tokenHref && isTokenEvent(event)) {
+      console.error(
+        `[Worldpay Webhook] A token event (${evt.eventType || 'unknown type'}) arrived with no ` +
+          `readable token href. Renewals depend on this value — raw body follows so the shape ` +
+          `can be matched: ${JSON.stringify(event).slice(0, 4000)}`
+      );
+      return res.status(200).json({ received: true, processed: false, reason: 'no token href' });
+    }
+
+    if (!evt.orderId) {
+      console.warn(
+        `[Worldpay Webhook] Ignoring an event with no transaction reference ` +
+          `(type: ${evt.eventType || 'unknown'}).`
+      );
       return res.status(200).json({ received: true, ignored: true });
     }
 
-    const paymentStatus = event.data.attributes?.status;
-    const transactionId = event.data.attributes?.transactionId || event.data.id;
-    const authCode = event.data.attributes?.authCode;
-    const cardBrand = event.data.attributes?.paymentMethod?.card?.brand;
-
-    if (paymentStatus === 'authorized' || paymentStatus === 'captured' || paymentStatus === 'settled') {
-      await saveVerifiedOrder(orderId, {
-        transactionId,
-        authCode,
-        cardBrand,
+    if (WEBHOOK_PAID_EVENTS.has(evt.status)) {
+      // The order and its subscription are written first: saveVerifiedOrder
+      // reads the same payload for stored credentials, so a payment event that
+      // does carry a token stores it on creation rather than being chased by a
+      // second write against a subscription that does not exist yet.
+      await saveVerifiedOrder(evt.orderId, {
+        transactionId: String(evt.transactionId || evt.orderId),
+        authCode: evt.authCode || undefined,
+        cardBrand: evt.cardBrand || undefined,
         // Carries any stored-credential reference Worldpay included in the event.
-        gatewayResponse: event.data.attributes,
-        webhookEventId: event.data.id
+        gatewayResponse: evt.payload,
+        webhookEventId: evt.eventId || undefined
       });
-    } else if (paymentStatus === 'failed') {
-      pendingCheckoutsMap.delete(orderId);
+      if (tokenHref) {
+        await recordTokenForSubscription(tokenHref, {
+          transactionReference: evt.orderId,
+          namespace: evt.namespace
+        });
+      }
+    } else if (WEBHOOK_FAILED_EVENTS.has(evt.status)) {
+      pendingCheckoutsMap.delete(evt.orderId);
+    } else {
+      console.log(
+        `[Worldpay Webhook] No action for event "${evt.eventType || evt.status}" on ${evt.orderId}.`
+      );
     }
 
-    return res.status(200).json({ received: true, processed: true, orderId });
+    return res.status(200).json({ received: true, processed: true, orderId: evt.orderId });
   } catch (error: any) {
     console.error('[Worldpay Webhook] Processing error:', error);
     return res.status(200).json({ received: true, processed: false, error: error.message });

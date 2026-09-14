@@ -7,8 +7,10 @@ import {
   chargeRecurringSubscription,
   extractRecurringAuthorizationHref,
   extractSchemeReference,
+  extractTokenHref,
   isPlaceholderCredential,
   isUsableRecurringHref,
+  isUsableTokenHref,
 } from "../services/worldpaySubscription";
 import {
   processDueSubscriptions,
@@ -64,7 +66,15 @@ function canChargeRecurring(sub: any): boolean {
   if (!sub) return false;
   const href = sub.worldpayRecurringHref || sub.recurringHref;
   const scheme = sub.worldpaySchemeReference;
-  return isUsableRecurringHref(href) || (Boolean(scheme) && !isPlaceholderCredential(scheme));
+  // The token is the card. A plan can hold a scheme reference and still be
+  // unchargeable without it, which is the state every subscription created
+  // before the tokenCreated webhook was handled is in.
+  const token = sub.worldpayTokenHref || sub.tokenHref;
+  return (
+    isUsableTokenHref(token) ||
+    isUsableRecurringHref(href) ||
+    (Boolean(scheme) && !isPlaceholderCredential(scheme))
+  );
 }
 
 /** Statuses that mean "this plan is still running and can bill". */
@@ -574,6 +584,9 @@ router.post(
       // while every renewal actually hit a non-existent endpoint.
       const recurringHref = extractRecurringAuthorizationHref(worldpayResponse);
       const schemeReference = extractSchemeReference(worldpayResponse);
+      // Usually absent here: Worldpay delivers the stored-card token on its own
+      // tokenCreated webhook, which the webhook route attaches when it lands.
+      const tokenHref = extractTokenHref(worldpayResponse);
 
       const transactionId =
         worldpayResponse?.id || worldpayResponse?.transactionReference || null;
@@ -616,6 +629,7 @@ router.post(
         billingInterval: normalizedInterval,
         nextBillingDate,
         worldpayTransactionId: transactionId,
+        worldpayTokenHref: tokenHref || null,
         worldpayRecurringHref: recurringHref,
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: "authorized",
@@ -715,11 +729,13 @@ router.post(
         });
       }
 
-      if (!subscription.worldpayRecurringHref && !subscription.worldpaySchemeReference) {
+      if (!canChargeRecurring(subscription)) {
         return res.status(400).json({
           success: false,
           message:
-            "This subscription has no Worldpay stored credential, so no recurring payment can be taken.",
+            "This subscription has no Worldpay stored credential, so no recurring payment can be taken. " +
+            "Worldpay must store the card on the first payment and deliver its token href to the " +
+            "tokenCreated webhook.",
         });
       }
 
@@ -730,6 +746,7 @@ router.post(
 
       const chargeAmount = Number(subscription.amount);
       const result = await chargeRecurringSubscription({
+        tokenHref: subscription.worldpayTokenHref,
         recurringHref: subscription.worldpayRecurringHref,
         transactionReference,
         amount: chargeAmount,
@@ -749,6 +766,9 @@ router.post(
         lastPaymentStatus: "authorized",
         lastPaymentId: result?.id || transactionReference,
         lastPaymentAt: new Date(),
+        // Worldpay can rotate the stored card token on a charge; keeping the
+        // returned one means the next renewal presents the current card.
+        worldpayTokenHref: result?.tokenHref || subscription.worldpayTokenHref || null,
         nextBillingDate,
         failedPaymentCount: 0,
       };

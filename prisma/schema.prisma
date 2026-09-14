@@ -455,6 +455,7 @@ model Subscription {
   nextBillingDate DateTime?
 
   worldpayTransactionId   String?
+  worldpayTokenHref       String?
   worldpayRecurringHref   String?
   worldpaySchemeReference String?
 

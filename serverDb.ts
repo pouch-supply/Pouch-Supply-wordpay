@@ -289,6 +289,7 @@ export async function ensureNeonTablesExist(): Promise<void> {
         "billingInterval" TEXT NOT NULL DEFAULT 'month',
         "nextBillingDate" TIMESTAMP(3),
         "worldpayTransactionId" TEXT,
+        "worldpayTokenHref" TEXT,
         "worldpayRecurringHref" TEXT,
         "worldpaySchemeReference" TEXT,
         "lastPaymentStatus" TEXT,
@@ -298,6 +299,15 @@ export async function ensureNeonTablesExist(): Promise<void> {
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    // The CREATE above only runs on a fresh database, so a column added after
+    // the table already existed has to be applied separately or every write of
+    // it is discarded by Postgres. `worldpayTokenHref` holds the stored-card
+    // token Worldpay returns on the tokenCreated webhook — without it no
+    // subscription can present a card on its renewal.
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Subscription" ADD COLUMN IF NOT EXISTS "worldpayTokenHref" TEXT;
     `);
 
     // 6. Blog Posts, Discounts, Layout & Analytics
@@ -1019,6 +1029,7 @@ async function fetchFromPrismaModel(resource: string): Promise<any[]> {
         billingInterval: s.billingInterval,
         nextBillingDate: s.nextBillingDate ? s.nextBillingDate.toISOString() : null,
         worldpayTransactionId: s.worldpayTransactionId,
+        worldpayTokenHref: s.worldpayTokenHref,
         worldpayRecurringHref: s.worldpayRecurringHref,
         worldpaySchemeReference: s.worldpaySchemeReference,
         lastPaymentStatus: s.lastPaymentStatus,

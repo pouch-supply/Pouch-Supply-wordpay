@@ -22,6 +22,7 @@ const OPTIONAL_COLUMNS = [
   'currency',
   'billingInterval',
   'worldpayTransactionId',
+  'worldpayTokenHref',
   'worldpayRecurringHref',
   'worldpaySchemeReference',
   'lastPaymentStatus',

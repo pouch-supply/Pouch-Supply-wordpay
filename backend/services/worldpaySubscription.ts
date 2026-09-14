@@ -44,6 +44,150 @@ export function isUsableRecurringHref(href?: string | null): boolean {
   return true;
 }
 
+/**
+ * A Worldpay card token href, e.g. https://access.worldpay.com/tokens/<id>
+ *
+ * This is the credential Worldpay integration support identified as the one
+ * that must be present on every subsequent recurring payment:
+ *
+ *   "you would need to send a payment request each time with the token href,
+ *    as we do not have functionality for automatically renewing subscriptions"
+ *
+ * A scheme transaction reference identifies the AGREEMENT; it does not identify
+ * the card. Only the token does — which is why MIT charges that carried a
+ * scheme reference and no payment instrument had nothing to bill.
+ */
+export function isUsableTokenHref(href?: string | null): boolean {
+  if (!href || typeof href !== "string") return false;
+  const trimmed = href.trim();
+  if (!trimmed.startsWith("http")) return false;
+  if (isPlaceholderCredential(trimmed)) return false;
+  return /\/tokens?\//i.test(trimmed);
+}
+
+/**
+ * How the shopper consents to the card being stored.
+ *
+ * `Silent` stores it without Worldpay asking, on the basis that consent was
+ * taken in our own checkout terms — but it has to be enabled on the account. If
+ * it is not, Worldpay rejects the whole payment page request and the checkout
+ * falls back to an untokenised one-off sale, which cannot renew. Worldpay's own
+ * example uses `ASK`, so this is switchable without a code change.
+ */
+export function tokenOptIn(): string {
+  const configured = String(process.env.WORLDPAY_TOKEN_OPT_IN || "Silent").trim();
+  return /^(ask|silent)$/i.test(configured)
+    ? configured.toUpperCase() === "ASK"
+      ? "ASK"
+      : "Silent"
+    : "Silent";
+}
+
+/** Keys that have carried a token href in one Worldpay payload shape or another. */
+const TOKEN_HREF_KEYS = new Set([
+  "href",
+  "tokenhref",
+  "tokenpaymentinstrument",
+  "token",
+  "tokens:token",
+  "payments:token"
+]);
+
+/**
+ * Last-resort search for a token href anywhere in a payload.
+ *
+ * Worldpay's exact tokenCreated webhook body is not something this side can pin
+ * down with certainty, and committing to one path means silently discarding the
+ * credential whenever the guess is wrong — which is the exact failure this
+ * change exists to repair. So the documented paths are tried first, and
+ * anything that still looks unmistakably like a Worldpay token URL is accepted
+ * from wherever it sits.
+ */
+function findTokenHrefDeep(node: any, depth: number, seen: Set<any>): string | null {
+  if (depth > 6 || node === null || node === undefined) return null;
+  if (typeof node === "string") return isUsableTokenHref(node) ? node.trim() : null;
+  if (typeof node !== "object") return null;
+  if (seen.has(node)) return null;
+  seen.add(node);
+
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      const found = findTokenHrefDeep(entry, depth + 1, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // Prefer values sitting under a key that names a token.
+  for (const [key, value] of Object.entries(node)) {
+    if (!TOKEN_HREF_KEYS.has(key.toLowerCase())) continue;
+    const found = findTokenHrefDeep(value, depth + 1, seen);
+    if (found) return found;
+  }
+
+  for (const value of Object.values(node)) {
+    const found = findTokenHrefDeep(value, depth + 1, seen);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+/**
+ * Extracts the stored-card token href from a Worldpay payload — a tokenCreated
+ * webhook, a payment authorization response, or a payment query result.
+ */
+export function extractTokenHref(payload: any): string | null {
+  if (!payload) return null;
+  if (typeof payload === "string") return isUsableTokenHref(payload) ? payload.trim() : null;
+  if (typeof payload !== "object") return null;
+
+  const preferred = [
+    // Access webhook: { eventDetails: { type: "tokenCreated", ... } }
+    payload?.eventDetails?.tokenHref,
+    payload?.eventDetails?.token?.href,
+    payload?.eventDetails?.tokenPaymentInstrument?.href,
+    payload?.eventDetails?._links?.["tokens:token"]?.href,
+    // Flattened webhook bodies.
+    payload?.tokenHref,
+    payload?.token?.href,
+    payload?.attributes?.tokenHref,
+    payload?.data?.attributes?.tokenHref,
+    // Payment authorization / payment query responses.
+    payload?._links?.["tokens:token"]?.href,
+    payload?._links?.token?.href,
+    payload?.paymentInstrument?.href,
+    payload?.paymentInstrument?.token?.href,
+    payload?.instruction?.paymentInstrument?.href,
+    payload?._embedded?.payments?.[0]?._links?.["tokens:token"]?.href,
+    payload?._embedded?.payments?.[0]?.paymentInstrument?.href
+  ];
+
+  for (const value of preferred) {
+    if (isUsableTokenHref(value)) return String(value).trim();
+  }
+
+  return findTokenHrefDeep(payload, 0, new Set());
+}
+
+/**
+ * True when this event describes a card token being stored.
+ *
+ * Worldpay delivers these as a separate event from the payment ones, so a
+ * handler that only inspects payment status drops them on the floor.
+ */
+export function isTokenEvent(payload: any): boolean {
+  const type = String(
+    payload?.eventDetails?.type ||
+      payload?.eventType ||
+      payload?.type ||
+      payload?.data?.type ||
+      ""
+  ).toLowerCase();
+  if (type.includes("token")) return true;
+  return Boolean(extractTokenHref(payload));
+}
+
 
 /**
  * True when this process is pointed at a real, money-moving Worldpay account.
@@ -100,6 +244,90 @@ function authorizationsUrl(config: WorldpayConfig): string {
   return `${config.baseUrl}/payments/authorizations`;
 }
 
+/**
+ * Auto-settlement on the recurring charge.
+ *
+ * Worldpay integration support supplied this object for the subsequent payment:
+ *
+ *   "settlement": { "auto": true,
+ *                   "cancelOn": { "cvcNotMatched": "disabled",
+ *                                 "avsNotMatched": "disabled" } }
+ *
+ * An authorisation that is never settled reserves the money and then releases
+ * it, so a renewal can look successful while nothing is ever collected.
+ *
+ * The v6 payments schema this account accepts spells the same directive
+ * `requestAutoSettlement`. Rather than bet the renewal on one of the two, the
+ * charge is attempted with the object support gave, and a schema rejection —
+ * which Worldpay returns BEFORE authorising anything, so no money has moved —
+ * falls through to the other spelling and then to no directive at all. The
+ * shape that worked is logged so it can be pinned with WORLDPAY_SETTLEMENT_SHAPE.
+ */
+type SettlementShape = "settlement" | "requestAutoSettlement" | "none";
+
+const SETTLEMENT_FALLBACK_ORDER: SettlementShape[] = [
+  "settlement",
+  "requestAutoSettlement",
+  "none"
+];
+
+function settlementShapesToTry(): SettlementShape[] {
+  const configured = String(process.env.WORLDPAY_SETTLEMENT_SHAPE || "auto").trim();
+  if (configured && configured !== "auto") {
+    if (SETTLEMENT_FALLBACK_ORDER.includes(configured as SettlementShape)) {
+      return [configured as SettlementShape];
+    }
+    console.warn(
+      `[Worldpay Subscription] Ignoring unknown WORLDPAY_SETTLEMENT_SHAPE "${configured}". ` +
+        `Expected one of: ${SETTLEMENT_FALLBACK_ORDER.join(", ")}, auto.`
+    );
+  }
+  if (String(process.env.WORLDPAY_AUTO_SETTLE || "true").toLowerCase() === "false") {
+    return ["none"];
+  }
+  return [...SETTLEMENT_FALLBACK_ORDER];
+}
+
+function applySettlement(instruction: Record<string, any>, shape: SettlementShape) {
+  delete instruction.settlement;
+  delete instruction.requestAutoSettlement;
+
+  if (shape === "settlement") {
+    instruction.settlement = {
+      auto: true,
+      cancelOn: {
+        // A stored-card MIT presents neither a CVC nor an address, so cancelling
+        // the payment because they did not match would decline every renewal.
+        cvcNotMatched: "disabled",
+        avsNotMatched: "disabled"
+      }
+    };
+  } else if (shape === "requestAutoSettlement") {
+    instruction.requestAutoSettlement = { enabled: true };
+  }
+}
+
+/**
+ * Did Worldpay reject the request on its schema rather than on the payment?
+ *
+ * Only these are safe to retry: the gateway validates the body before it looks
+ * at the card, so nothing was authorised and no duplicate charge is possible.
+ */
+function isSchemaRejection(status: number, data: any): boolean {
+  if (status !== 400 && status !== 415 && status !== 422) return false;
+  const text = JSON.stringify(data || {}).toLowerCase();
+  return (
+    text.includes("settlement") ||
+    text.includes("schema") ||
+    text.includes("unrecognised") ||
+    text.includes("unrecognized") ||
+    text.includes("unexpected") ||
+    text.includes("notsupported") ||
+    text.includes("invalidvalue") ||
+    text.includes("bodydoesnotmatch")
+  );
+}
+
 function getHeaders(config: WorldpayConfig) {
   const correlationId = crypto.randomUUID
     ? crypto.randomUUID()
@@ -148,6 +376,15 @@ export async function createInitialSubscriptionPayment({
         type: "subscription",
         storedCardUsage: "first"
       }
+    },
+    // Without createToken Worldpay establishes the agreement but stores no card,
+    // so no tokenCreated webhook arrives and no subsequent payment can name a
+    // payment instrument.
+    createToken: {
+      type: "worldpay",
+      namespace: String(customerEmail || orderReference).toLowerCase().slice(0, 64),
+      description: "Pouch Supply subscription",
+      optIn: tokenOptIn()
     }
   };
 
@@ -269,6 +506,8 @@ export interface RecurringChargeResult {
   currency: string;
   authCode?: string | null;
   schemeReference?: string | null;
+  /** Present when Worldpay issued or rotated the stored-card token on this charge. */
+  tokenHref?: string | null;
   paymentMethod?: string;
   rawResponse?: any;
   timestamp: string;
@@ -277,11 +516,22 @@ export interface RecurringChargeResult {
 /**
  * Perform a merchant initiated (MIT) recurring subscription payment.
  *
- * Requires a stored credential that Worldpay issued during the initial
- * payment — either a recurring action href or a scheme transaction reference.
- * Neither can be invented locally.
+ * Worldpay has no automatically renewing subscription product. Every month is a
+ * fresh Payments API request that presents the card Worldpay stored during the
+ * first payment, as its own integration support spelled out:
+ *
+ *   "To manage your agreement and take subsequent payments, you must use a
+ *    direct integration through our Subsequent recurring payment | Payments API"
+ *
+ * The card is presented as the token href from the tokenCreated webhook. The
+ * scheme transaction reference travels alongside it on the customerAgreement,
+ * but on its own it is not a card and cannot be charged — which is why every
+ * renewal built from a scheme reference and no payment instrument failed.
+ *
+ * Nothing here can be invented locally: both credentials come from Worldpay.
  */
 export async function chargeRecurringSubscription({
+  tokenHref,
   recurringHref,
   transactionReference,
   amount,
@@ -290,6 +540,7 @@ export async function chargeRecurringSubscription({
   previousTransactionId,
   customerEmail
 }: {
+  tokenHref?: string | null;
   recurringHref?: string | null;
   transactionReference: string;
   amount: number;
@@ -308,6 +559,7 @@ export async function chargeRecurringSubscription({
     console.warn("[Worldpay Subscription] Credentials note:", cfgErr.message);
   }
 
+  const usableToken = isUsableTokenHref(tokenHref);
   const usableHref = isUsableRecurringHref(recurringHref);
   const usableScheme = Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
   const usablePreviousTx =
@@ -320,56 +572,122 @@ export async function chargeRecurringSubscription({
     );
   }
 
-  if (!usableHref && !usableScheme && !usablePreviousTx) {
+  if (!usableToken && !usableHref && !usableScheme && !usablePreviousTx) {
     throw new Error(
       "No Worldpay stored credential is available for this subscription. " +
-        "The initial payment must be taken with a customer agreement so Worldpay returns a " +
-        "scheme transaction reference to reuse for recurring charges."
+        "The initial payment must be taken with createToken and a customer agreement so " +
+        "Worldpay stores the card and sends a tokenCreated webhook carrying the token href."
     );
   }
 
-  const targetUrl = usableHref ? (recurringHref as string) : authorizationsUrl(config);
+  if (!usableToken) {
+    // Worth saying out loud on every charge: without the token this request has
+    // no card on it, and Worldpay is being asked to bill an agreement rather
+    // than a payment method.
+    console.warn(
+      `[Worldpay Subscription] ${transactionReference} has no stored card token. ` +
+        `Falling back to the scheme reference alone, which Worldpay may refuse — ` +
+        `the tokenCreated webhook for this subscription was never received or never stored.`
+    );
+  }
+
+  // With a token in hand this is an ordinary Payments API authorization, not a
+  // call to a recurring action link. The token is the card.
+  const targetUrl =
+    usableToken || !usableHref ? authorizationsUrl(config) : (recurringHref as string);
 
   console.log(
-    `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ${transactionReference} (£${amount})`
+    `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ` +
+      `${transactionReference} (£${amount})${usableToken ? " using the stored card token" : ""}`
   );
 
-  const instruction: any = {
-    narrative: { line1: "Pouch Supply Sub" },
-    value: {
-      currency,
-      amount: Math.round(amount * 100)
-    },
-    debtRepayment: false,
-    customerAgreement: {
-      type: "subscription",
-      storedCardUsage: "subsequent"
+  const buildInstruction = (): any => {
+    const instruction: any = {
+      narrative: { line1: "Pouch Supply Sub" },
+      value: {
+        currency,
+        amount: Math.round(amount * 100)
+      },
+      debtRepayment: false,
+      customerAgreement: {
+        type: "subscription",
+        storedCardUsage: "subsequent"
+      }
+    };
+
+    if (usableToken) {
+      instruction.paymentInstrument = {
+        type: "card/token",
+        href: String(tokenHref).trim()
+      };
     }
+
+    if (usableScheme) {
+      instruction.customerAgreement.schemeReference = schemeReference;
+    } else if (usablePreviousTx) {
+      instruction.customerAgreement.schemeReference = previousTransactionId;
+    }
+
+    return instruction;
   };
 
-  if (usableScheme) {
-    instruction.customerAgreement.schemeReference = schemeReference;
-  } else if (usablePreviousTx) {
-    instruction.customerAgreement.schemeReference = previousTransactionId;
+  const shapes = settlementShapesToTry();
+  let response!: Response;
+  let data: any = {};
+
+  for (let attempt = 0; attempt < shapes.length; attempt++) {
+    const shape = shapes[attempt];
+    const instruction = buildInstruction();
+    applySettlement(instruction, shape);
+
+    const mitPayload: any = {
+      transactionReference,
+      merchant: { entity: config.entity },
+      instruction
+    };
+
+    if (customerEmail) {
+      mitPayload.customer = { email: customerEmail };
+    }
+
+    response = await fetch(targetUrl, {
+      method: "POST",
+      headers: getHeaders(config),
+      body: JSON.stringify(mitPayload)
+    });
+
+    data = await response.json().catch(() => ({}));
+
+    if (response.ok) {
+      if (attempt > 0) {
+        console.warn(
+          `[Worldpay Subscription] Settlement directive "${shapes[attempt - 1]}" was rejected by ` +
+            `this account; "${shape}" was accepted. Set WORLDPAY_SETTLEMENT_SHAPE=${shape} to ` +
+            `skip the rejected attempt on every future renewal.`
+        );
+      }
+      if (shape === "none") {
+        console.warn(
+          `[Worldpay Subscription] ${transactionReference} was authorised WITHOUT an ` +
+            `auto-settlement directive. Confirm the account settles automatically, or the ` +
+            `money will be reserved and released rather than collected.`
+        );
+      }
+      break;
+    }
+
+    // Only a schema rejection is retried, and only because Worldpay validates
+    // the body before it touches the card: nothing was authorised, so there is
+    // no risk of charging the customer twice.
+    const retryable = attempt < shapes.length - 1 && isSchemaRejection(response.status, data);
+    if (!retryable) break;
+
+    console.warn(
+      `[Worldpay Subscription] Settlement shape "${shape}" rejected for ${transactionReference} ` +
+        `(${response.status}: ${data?.description || data?.message || data?.errorName || "schema error"}). ` +
+        `Retrying as "${shapes[attempt + 1]}".`
+    );
   }
-
-  const mitPayload: any = {
-    transactionReference,
-    merchant: { entity: config.entity },
-    instruction
-  };
-
-  if (customerEmail) {
-    mitPayload.customer = { email: customerEmail };
-  }
-
-  const response = await fetch(targetUrl, {
-    method: "POST",
-    headers: getHeaders(config),
-    body: JSON.stringify(mitPayload)
-  });
-
-  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     const errMsg =
@@ -407,6 +725,9 @@ export async function chargeRecurringSubscription({
     currency,
     authCode: data?.authorizationCode || data?.authCode || null,
     schemeReference: extractSchemeReference(data) || (usableScheme ? schemeReference : null),
+    // Worldpay can return a rotated token href on the charge. Keeping it means
+    // the next renewal presents the current card rather than a retired one.
+    tokenHref: extractTokenHref(data) || (usableToken ? String(tokenHref).trim() : null),
     rawResponse: data,
     timestamp: new Date().toISOString()
   };
