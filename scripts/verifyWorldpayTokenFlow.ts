@@ -319,17 +319,36 @@ async function main() {
     await post('/api/worldpay/session', checkoutBody(ORDER_5, EMAIL_5));
     await post('/api/worldpay/verify-payment', { orderId: ORDER_5, status: 'SUCCESS' });
 
+    // One empty answer is not proof, so it keeps asking for a few rounds.
     await post('/api/worldpay/recover-tokens', {});
-    const exhausted = await subscriptionFor(ORDER_5);
-    check('a subscription with no recoverable card is marked as such', Boolean(exhausted?.tokenLookupExhaustedAt), JSON.stringify(exhausted?.tokenLookupExhaustedAt));
+    const afterOne = await subscriptionFor(ORDER_5);
+    check('a fruitless lookup is counted, not treated as final', Number(afterOne?.tokenLookupAttempts) === 1, JSON.stringify(afterOne?.tokenLookupAttempts));
+    check('it is not written off after one try', !afterOne?.tokenLookupExhaustedAt);
 
-    const queriesBefore = calls.queries.length;
+    const queriesAfterOne = calls.queries.length;
     await post('/api/worldpay/recover-tokens', {});
-    check(
-      'the next sweep does not ask Worldpay about it again',
-      calls.queries.length === queriesBefore,
-      `${calls.queries.length - queriesBefore} extra quer(ies)`
-    );
+    check('it is asked again on the next sweep', calls.queries.length > queriesAfterOne);
+
+    // A token that only becomes visible later is still caught while the budget lasts.
+    scenario.queryToken = TOKEN_C;
+    await post('/api/worldpay/recover-tokens', {});
+    const lateRecovery = await subscriptionFor(ORDER_5);
+    check('a token that appears late is still recovered', lateRecovery?.worldpayTokenHref === TOKEN_C, `got ${lateRecovery?.worldpayTokenHref}`);
+
+    console.log('\n=== 9. A genuinely dead subscription stops being asked about ===');
+    const ORDER_6 = 'PS90006';
+    const EMAIL_6 = 'harness.six@pouch-supply.com';
+    scenario.queryToken = null;
+    await post('/api/worldpay/session', checkoutBody(ORDER_6, EMAIL_6));
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_6, status: 'SUCCESS' });
+
+    for (let i = 0; i < 5; i++) await post('/api/worldpay/recover-tokens', {});
+    const dead = await subscriptionFor(ORDER_6);
+    check('it is written off once the attempt budget is spent', Boolean(dead?.tokenLookupExhaustedAt), JSON.stringify(dead?.tokenLookupAttempts));
+
+    const queriesBeforeLast = calls.queries.length;
+    await post('/api/worldpay/recover-tokens', {});
+    check('and is not asked about again', calls.queries.length === queriesBeforeLast, `${calls.queries.length - queriesBeforeLast} extra quer(ies)`);
   } catch (err: any) {
     failures.push(`harness threw: ${err?.stack || err?.message || err}`);
     console.error('\n[verify] threw:', err);

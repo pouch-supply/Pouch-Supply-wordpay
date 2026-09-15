@@ -1060,6 +1060,13 @@ const handleReconcilePending = async (_req: Request, res: Response) => {
  */
 const TOKEN_SWEEP_LIMIT = 25;
 
+/**
+ * How many times one subscription is asked about before the sweep leaves it
+ * alone. At the 15-minute reconcile cadence this spans a little over an hour,
+ * which is far longer than a webhook that is merely late.
+ */
+const TOKEN_SWEEP_MAX_ATTEMPTS = 5;
+
 /** Statuses that still bill, so a missing card is worth chasing. */
 const LIVE_SUB_STATUSES_FOR_SWEEP = ['active', 'subscribed', 'paused', 'trialing'];
 
@@ -1080,10 +1087,13 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
     if (isUsableTokenHref(sub.worldpayTokenHref)) return false;
     // Worldpay refused to store this card at checkout. There is no token to find.
     if (sub.tokenisationDowngraded) return false;
-    // Worldpay has already been asked and published a payment with no token on
-    // it. That answer does not change, and without this the sweep would re-ask
-    // for the same dead subscription every 15 minutes for as long as it exists.
-    if (sub.tokenLookupExhaustedAt) return false;
+    // Asked enough times already. This is deliberately a budget of attempts
+    // rather than a single "the payment had no token, so give up": it is not
+    // established that a payment query exposes a token link at all on this
+    // account, so one empty answer is not proof that no token exists. Spreading
+    // the attempts means a token that only becomes visible later is still
+    // caught, while a genuinely dead subscription stops being asked about.
+    if (Number(sub.tokenLookupAttempts || 0) >= TOKEN_SWEEP_MAX_ATTEMPTS) return false;
     return true;
   });
 
@@ -1096,7 +1106,7 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
 
   let changed = false;
   const patched = new Map<string, { tokenHref: string; schemeReference?: string | null }>();
-  const exhausted = new Set<string>();
+  const attempted = new Map<string, number>();
 
   for (const sub of needsToken.slice(0, limit)) {
     const reference = String(sub.sourceOrderId || sub.worldpayTransactionId || sub.lastPaymentId || '').trim();
@@ -1119,13 +1129,23 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
       // card was never stored and no amount of waiting will produce one. Marked
       // so it is asked once rather than on every sweep. A payment Worldpay has
       // not published yet returns null above instead and is retried next time.
-      exhausted.add(id);
+      const attempts = Number(sub.tokenLookupAttempts || 0) + 1;
+      attempted.set(id, attempts);
       changed = true;
-      results.push({ id, reference, status: 'no-token', detail: 'payment carries no token link' });
-      console.warn(
-        `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) has no stored card and ` +
-          `Worldpay holds no token for it. It cannot renew — the customer has to re-subscribe.`
-      );
+      results.push({
+        id,
+        reference,
+        status: 'no-token',
+        detail: `payment carries no token link (attempt ${attempts}/${TOKEN_SWEEP_MAX_ATTEMPTS})`
+      });
+      if (attempts >= TOKEN_SWEEP_MAX_ATTEMPTS) {
+        console.warn(
+          `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) still has no stored card ` +
+            `after ${attempts} lookups. It cannot renew. Either Worldpay never stored the card, or the ` +
+            `payment query does not expose token links on this account — check the tokenCreated webhook ` +
+            `before assuming the customer has to re-subscribe.`
+        );
+      }
       continue;
     }
 
@@ -1140,8 +1160,14 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
   try {
     const next = subs.map((sub: any) => {
       const id = String(sub?.id);
-      if (exhausted.has(id)) {
-        return { ...sub, tokenLookupExhaustedAt: new Date().toISOString() };
+      const attempts = attempted.get(id);
+      if (attempts !== undefined) {
+        return {
+          ...sub,
+          tokenLookupAttempts: attempts,
+          tokenLookupLastAt: new Date().toISOString(),
+          ...(attempts >= TOKEN_SWEEP_MAX_ATTEMPTS ? { tokenLookupExhaustedAt: new Date().toISOString() } : {})
+        };
       }
       const found = patched.get(id);
       if (!found) return sub;

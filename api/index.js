@@ -8739,6 +8739,7 @@ var handleReconcilePending = async (_req, res) => {
   }
 };
 var TOKEN_SWEEP_LIMIT = 25;
+var TOKEN_SWEEP_MAX_ATTEMPTS = 5;
 var LIVE_SUB_STATUSES_FOR_SWEEP = ["active", "subscribed", "paused", "trialing"];
 async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
   const results = [];
@@ -8754,7 +8755,7 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
     if (!LIVE_SUB_STATUSES_FOR_SWEEP.includes(String(sub.status || "").toLowerCase())) return false;
     if (isUsableTokenHref(sub.worldpayTokenHref)) return false;
     if (sub.tokenisationDowngraded) return false;
-    if (sub.tokenLookupExhaustedAt) return false;
+    if (Number(sub.tokenLookupAttempts || 0) >= TOKEN_SWEEP_MAX_ATTEMPTS) return false;
     return true;
   });
   if (needsToken.length === 0) return results;
@@ -8763,7 +8764,7 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
   );
   let changed = false;
   const patched = /* @__PURE__ */ new Map();
-  const exhausted = /* @__PURE__ */ new Set();
+  const attempted = /* @__PURE__ */ new Map();
   for (const sub of needsToken.slice(0, limit)) {
     const reference = String(sub.sourceOrderId || sub.worldpayTransactionId || sub.lastPaymentId || "").trim();
     const id = String(sub.id);
@@ -8778,12 +8779,20 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
     }
     const tokenHref = extractTokenHref(payment);
     if (!tokenHref) {
-      exhausted.add(id);
+      const attempts = Number(sub.tokenLookupAttempts || 0) + 1;
+      attempted.set(id, attempts);
       changed = true;
-      results.push({ id, reference, status: "no-token", detail: "payment carries no token link" });
-      console.warn(
-        `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) has no stored card and Worldpay holds no token for it. It cannot renew \u2014 the customer has to re-subscribe.`
-      );
+      results.push({
+        id,
+        reference,
+        status: "no-token",
+        detail: `payment carries no token link (attempt ${attempts}/${TOKEN_SWEEP_MAX_ATTEMPTS})`
+      });
+      if (attempts >= TOKEN_SWEEP_MAX_ATTEMPTS) {
+        console.warn(
+          `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) still has no stored card after ${attempts} lookups. It cannot renew. Either Worldpay never stored the card, or the payment query does not expose token links on this account \u2014 check the tokenCreated webhook before assuming the customer has to re-subscribe.`
+        );
+      }
       continue;
     }
     patched.set(id, { tokenHref, schemeReference: extractSchemeReference(payment) });
@@ -8795,8 +8804,14 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
   try {
     const next = subs.map((sub) => {
       const id = String(sub?.id);
-      if (exhausted.has(id)) {
-        return { ...sub, tokenLookupExhaustedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      const attempts = attempted.get(id);
+      if (attempts !== void 0) {
+        return {
+          ...sub,
+          tokenLookupAttempts: attempts,
+          tokenLookupLastAt: (/* @__PURE__ */ new Date()).toISOString(),
+          ...attempts >= TOKEN_SWEEP_MAX_ATTEMPTS ? { tokenLookupExhaustedAt: (/* @__PURE__ */ new Date()).toISOString() } : {}
+        };
       }
       const found = patched.get(id);
       if (!found) return sub;
