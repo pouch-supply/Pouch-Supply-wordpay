@@ -1,7 +1,8 @@
 /**
  * Reports whether a subscription order ended up with a stored Worldpay card.
  *
- *   npx tsx scripts/inspectSubscriptionToken.ts PS65700
+ *   npx tsx scripts/inspectSubscriptionToken.ts PS65700 --worldpay
+ *   npx tsx scripts/inspectSubscriptionToken.ts PS65700 --assign-token=<href> --subscription=<id>
  *
  * Read-only: it queries the database and, with --worldpay, asks Worldpay about
  * the payment itself. It writes nothing and takes no payment.
@@ -19,16 +20,20 @@
  *                           and no token will ever exist for it.
  */
 import 'dotenv/config';
-import { fetchResource } from '../serverDb';
+import { fetchResource, saveResource } from '../serverDb';
 import { prisma } from '../src/lib/prisma';
 import { extractSchemeReference, extractTokenHref, isUsableTokenHref } from '../backend/services/worldpaySubscription';
 
 const args = process.argv.slice(2);
 const ORDER_ID = args.find(a => !a.startsWith('--'));
 const ASK_WORLDPAY = args.includes('--worldpay');
+const pick = (flag: string) => (args.find((a) => a.startsWith(flag + '=')) || '').split('=').slice(1).join('=') || null;
+const ASSIGN_TOKEN = pick('--assign-token');
+const ASSIGN_SUB = pick('--subscription');
 
 if (!ORDER_ID) {
   console.error('Usage: npx tsx scripts/inspectSubscriptionToken.ts <ORDER_ID> [--worldpay]');
+  console.error('       ... --assign-token=<href> --subscription=<id>   attach a card by hand');
   process.exit(1);
 }
 
@@ -139,6 +144,55 @@ async function main() {
         console.log('     the customer has to subscribe again once tokenisation is working.');
       }
     }
+  }
+
+
+  // ------------------------------------------------------- deliberate assignment
+  //
+  // The automatic matcher refuses anything it cannot prove, which is correct for
+  // an unattended sweep but leaves no route for a case a human HAS established —
+  // for example a card whose agreement predates the subscription it belongs to.
+  // This is that route, and it is deliberately awkward: both the subscription and
+  // the exact token href must be named, so nothing can be assigned by accident.
+  if (ASSIGN_TOKEN) {
+    if (!ASSIGN_SUB) {
+      console.log('\n--assign-token also needs --subscription=<id>. Nothing was written.');
+      await prisma.$disconnect().catch(() => {});
+      return;
+    }
+    if (!isUsableTokenHref(ASSIGN_TOKEN)) {
+      console.log(`\n"${ASSIGN_TOKEN}" is not a Worldpay token href. Nothing was written.`);
+      await prisma.$disconnect().catch(() => {});
+      return;
+    }
+
+    const target = subs.find((s: any) => String(s?.id) === ASSIGN_SUB);
+    if (!target) {
+      console.log(`\nNo subscription ${ASSIGN_SUB} is linked to ${ORDER_ID}. Nothing was written.`);
+      await prisma.$disconnect().catch(() => {});
+      return;
+    }
+
+    console.log('\n=== Assigning a stored card by hand ===');
+    console.log(`  subscription : ${target.id} (${target.customerEmail})`);
+    console.log(`  was          : ${target.worldpayTokenHref || 'no card'}`);
+    console.log(`  now          : ${ASSIGN_TOKEN}`);
+
+    const next = ((await fetchResource('subscriptions')) || []).map((s: any) =>
+      String(s?.id) === ASSIGN_SUB
+        ? { ...s, worldpayTokenHref: ASSIGN_TOKEN, tokenAssignedByHandAt: new Date().toISOString() }
+        : s
+    );
+    await saveResource('subscriptions', next);
+    await prisma.subscription
+      .update({ where: { id: ASSIGN_SUB }, data: { worldpayTokenHref: ASSIGN_TOKEN } })
+      .catch((e: any) => console.log('  (typed Neon row not updated:', e?.message, ')'));
+
+    const check = await prisma.subscription
+      .findUnique({ where: { id: ASSIGN_SUB }, select: { worldpayTokenHref: true } })
+      .catch(() => null);
+    console.log(`  Neon now reports: ${check?.worldpayTokenHref || 'NULL'}`);
+    console.log('  Charge it with POST /api/subscriptions/charge to confirm before the renewal date.');
   }
 
   await prisma.$disconnect().catch(() => {});

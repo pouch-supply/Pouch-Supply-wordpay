@@ -733,3 +733,249 @@ export async function chargeRecurringSubscription({
   };
 }
 
+/**
+ * Reading stored cards back out of Worldpay.
+ *
+ * Worldpay stores the card on the first payment and announces it on a
+ * tokenCreated webhook. A webhook is a push: if it is not subscribed on the
+ * account, or the endpoint is wrong, or the delivery fails, the href is gone and
+ * the subscription can never charge. That is not hypothetical — it is what
+ * happened here, twice, while Worldpay held a perfectly good token all along.
+ *
+ * The tokens service turns that into a pull we control. Confirmed against
+ * entity PO4094415264:
+ *
+ *   GET /tokens?namespace=<shopper email>   ->   200, with the stored card
+ *
+ * so the webhook becomes an optimisation rather than the only route.
+ */
+const TOKENS_MEDIA_TYPE = 'application/vnd.worldpay.tokens-v3.hal+json';
+
+export interface WorldpayToken {
+  /** The value a recurring payment presents as its paymentInstrument. */
+  href: string;
+  tokenId: string | null;
+  namespace: string | null;
+  /**
+   * The agreement this token was created under. This is what ties a card to a
+   * particular subscription — a namespace holds every card one shopper ever
+   * stored, so the email alone does not identify which.
+   */
+  schemeTransactionReference: string | null;
+  expiryDateTime: string | null;
+  raw: any;
+}
+
+/** Pulls token objects out of whichever envelope Worldpay wraps them in. */
+function collectTokenObjects(payload: any): any[] {
+  if (!payload || typeof payload !== 'object') return [];
+  if (Array.isArray(payload)) return payload;
+
+  const candidates = [
+    payload?._embedded?.tokens,
+    payload?._embedded?.token,
+    payload?.tokens,
+    payload?.items,
+    payload?.results
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+    if (candidate && typeof candidate === 'object') return [candidate];
+  }
+
+  // A single token returned bare.
+  if (payload.tokenId || payload.tokenPaymentInstrument || payload.schemeTransactionReference) {
+    return [payload];
+  }
+  return [];
+}
+
+function toWorldpayToken(raw: any): WorldpayToken | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const href =
+    raw?.tokenPaymentInstrument?.href ||
+    raw?._links?.['tokens:token']?.href ||
+    raw?._links?.self?.href ||
+    raw?.href ||
+    null;
+
+  if (!isUsableTokenHref(href)) return null;
+
+  const scheme =
+    raw?.schemeTransactionReference ||
+    raw?.paymentInstrument?.schemeTransactionReference ||
+    raw?.tokenPaymentInstrument?.schemeTransactionReference ||
+    null;
+
+  return {
+    href: String(href).trim(),
+    tokenId: raw?.tokenId ? String(raw.tokenId) : null,
+    namespace: raw?.namespace ? String(raw.namespace) : null,
+    schemeTransactionReference: typeof scheme === 'string' && scheme.trim() ? scheme.trim() : null,
+    expiryDateTime: raw?.tokenExpiryDateTime ? String(raw.tokenExpiryDateTime) : null,
+    raw
+  };
+}
+
+/**
+ * Every card Worldpay is holding for one shopper.
+ *
+ * Returns an empty list rather than throwing when the lookup cannot be made, so
+ * a recovery sweep degrades to "found nothing" instead of failing outright.
+ */
+export async function fetchTokensForNamespace(namespace: string): Promise<WorldpayToken[]> {
+  const cleaned = String(namespace || '').trim().toLowerCase();
+  if (!cleaned) return [];
+
+  let config: WorldpayConfig;
+  try {
+    config = getWorldpayConfig();
+  } catch (err: any) {
+    console.warn('[Worldpay Tokens] Cannot look up stored cards:', err?.message);
+    return [];
+  }
+
+  const url =
+    `${config.baseUrl}/tokens?namespace=${encodeURIComponent(cleaned)}` +
+    `&entityReference=${encodeURIComponent(config.entity)}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: config.authHeader,
+        Accept: TOKENS_MEDIA_TYPE,
+        'WP-CorrelationId': crypto.randomUUID ? crypto.randomUUID() : `tok-${Date.now()}`
+      }
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      console.warn(
+        `[Worldpay Tokens] Lookup for "${cleaned}" returned HTTP ${response.status}. ${detail.slice(0, 300)}`
+      );
+      return [];
+    }
+
+    const data = await response.json().catch(() => null);
+    const tokens = collectTokenObjects(data)
+      .map(toWorldpayToken)
+      .filter((t): t is WorldpayToken => Boolean(t));
+
+    console.log(
+      `[Worldpay Tokens] ${tokens.length} stored card(s) for "${cleaned}": ` +
+        tokens.map(t => `${t.tokenId || 'no-id'}/${t.schemeTransactionReference || 'no-scheme'}`).join(', ')
+    );
+
+    return tokens;
+  } catch (err: any) {
+    console.warn(`[Worldpay Tokens] Lookup for "${cleaned}" failed:`, err?.message);
+    return [];
+  }
+}
+
+export interface TokenSelection {
+  token: WorldpayToken | null;
+  /** Why this token was chosen, or why none was — written for a log a human reads. */
+  reason: string;
+  /** True when a human should decide rather than the code guessing. */
+  ambiguous: boolean;
+}
+
+/**
+ * Picks the stored card that belongs to ONE subscription.
+ *
+ * This is deliberately hard to satisfy. A namespace is keyed on the shopper's
+ * email, so it accumulates every card that shopper has ever stored — across
+ * different plans, different cards, and re-subscriptions. Taking "the token for
+ * this email" would therefore mean charging a card the shopper never attached to
+ * this plan, and with enough tokens in one namespace, eventually the wrong card
+ * for the wrong subscription.
+ *
+ * The scheme transaction reference is the identifier that actually ties a card
+ * to an agreement, so it decides. Everything else is refused and reported rather
+ * than guessed: a subscription that does not renew is a support ticket, but a
+ * subscription that charges the wrong card is a chargeback.
+ */
+export function selectTokenForSubscription(
+  tokens: WorldpayToken[],
+  criteria: { namespace: string; schemeReference?: string | null }
+): TokenSelection {
+  const wantedNamespace = String(criteria.namespace || '').trim().toLowerCase();
+  if (!wantedNamespace) {
+    return { token: null, reason: 'the subscription has no customer email to look up', ambiguous: false };
+  }
+
+  // Never accept a card Worldpay filed under a different shopper, whatever the
+  // query returned. A token reporting no namespace is trusted only because the
+  // query itself was scoped to one.
+  const mine = tokens.filter(t => {
+    if (!isUsableTokenHref(t.href)) return false;
+    if (!t.namespace) return true;
+    return t.namespace.trim().toLowerCase() === wantedNamespace;
+  });
+
+  const foreign = tokens.length - mine.length;
+  if (foreign > 0) {
+    console.warn(
+      `[Worldpay Tokens] Discarded ${foreign} token(s) filed under a namespace other than "${wantedNamespace}".`
+    );
+  }
+
+  if (mine.length === 0) {
+    return { token: null, reason: `Worldpay holds no stored card for "${wantedNamespace}"`, ambiguous: false };
+  }
+
+  const wantedScheme = String(criteria.schemeReference || '').trim();
+
+  if (wantedScheme) {
+    const exact = mine.filter(t => (t.schemeTransactionReference || '').trim() === wantedScheme);
+    if (exact.length === 1) {
+      return {
+        token: exact[0],
+        reason: `matched on scheme transaction reference ${wantedScheme}`,
+        ambiguous: false
+      };
+    }
+    if (exact.length > 1) {
+      return {
+        token: null,
+        reason: `${exact.length} stored cards share scheme reference ${wantedScheme} — cannot tell them apart`,
+        ambiguous: true
+      };
+    }
+
+    // The decisive case, and the one that caught PS65700: Worldpay holds a card
+    // for this shopper, but it was stored under a different agreement. It may
+    // well be the same plastic; it is not the same mandate, and assigning it
+    // here would be a guess dressed up as a recovery.
+    return {
+      token: null,
+      reason:
+        `Worldpay holds ${mine.length} stored card(s) for "${wantedNamespace}", but none was created under ` +
+        `this subscription's agreement (${wantedScheme}). Found: ` +
+        mine.map(t => t.schemeTransactionReference || 'no scheme reference').join(', ') +
+        '. Not assigned — a human has to confirm which card this plan should charge.',
+      ambiguous: true
+    };
+  }
+
+  // No agreement reference to match against. One card is unambiguous; more than
+  // one is not, and picking the newest would be arbitrary.
+  if (mine.length === 1) {
+    return {
+      token: mine[0],
+      reason: `the only stored card for "${wantedNamespace}" and the subscription has no scheme reference to match`,
+      ambiguous: false
+    };
+  }
+
+  return {
+    token: null,
+    reason:
+      `Worldpay holds ${mine.length} stored cards for "${wantedNamespace}" and this subscription has no scheme ` +
+      `reference to identify which one belongs to it. Not assigned.`,
+    ambiguous: true
+  };
+}

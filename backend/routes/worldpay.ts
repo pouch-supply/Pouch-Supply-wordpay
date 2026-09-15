@@ -10,7 +10,9 @@ import {
   isTokenEvent,
   isUsableRecurringHref,
   isUsableTokenHref,
-  tokenOptIn
+  tokenOptIn,
+  fetchTokensForNamespace,
+  selectTokenForSubscription
 } from '../services/worldpaySubscription';
 import { calculateNextBillingDate, normalizeBillingInterval } from '../services/subscriptionCron';
 import {
@@ -635,6 +637,27 @@ async function saveVerifiedOrder(
   const pending = details.pendingData || await getPendingCheckout(orderId);
   const { saveSingleOrder } = await import('./orders');
 
+  /**
+   * Repairing an order that was recorded as Paid without the subscription it
+   * was supposed to create. The order itself is left alone; only the missing
+   * subscription is built.
+   */
+  let repairMissingSubscription = false;
+  let existingPaidOrder: any = null;
+
+  const looksLikeSubscriptionOrder = (order: any, candidateItems: any[]): boolean => {
+    if (!order && !candidateItems?.length) return false;
+    if (order?.isSubscription) return true;
+    if (Array.isArray(order?.tags) && order.tags.some((t: any) => /subscription/i.test(String(t)))) return true;
+    if (order?.subscriptionDetails) return true;
+    const all = [...(Array.isArray(order?.items) ? order.items : []), ...(candidateItems || [])];
+    return all.some(
+      (it: any) =>
+        it?.isSubscription ||
+        (typeof it?.productId === 'string' && it.productId.includes('sub-pack'))
+    );
+  };
+
   // The shopper's browser return (/callback) and the client-side
   // /verify-payment call both land here for the same payment. Without this
   // guard the second one creates a SECOND subscription for the same order —
@@ -642,12 +665,33 @@ async function saveVerifiedOrder(
   try {
     const existingOrders: any[] = (await fetchResource('orders')) || [];
     const already = existingOrders.find((o: any) => String(o.id) === String(orderId));
+
     if (already && already.paymentStatus === 'Paid') {
-      console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid — skipping duplicate creation.`);
-      // The order is done, but this callback may be the one carrying the stored
-      // credential the subscription still needs.
-      await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
-      return already;
+      const existingSubs: any[] = (await fetchResource('subscriptions')) || [];
+      const hasSubscription = existingSubs.some((s: any) => String(s?.sourceOrderId || '') === String(orderId));
+      const wantsSubscription = looksLikeSubscriptionOrder(already, details.items || pending?.items || []);
+
+      if (hasSubscription || !wantsSubscription) {
+        console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid — skipping duplicate creation.`);
+        // The order is done, but this callback may be the one carrying the stored
+        // credential the subscription still needs.
+        await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
+        return already;
+      }
+
+      // A paid subscription order with no subscription. This used to return
+      // here like any other duplicate, which permanently locked in the broken
+      // state: every later callback, webhook and reconcile hit the same guard,
+      // and backfillSubscriptionCredential only UPDATES a subscription, so
+      // nothing could ever create the missing one. The money was taken, the
+      // plan was sold, and nothing was ever going to charge it again.
+      console.error(
+        `[Worldpay Order] REPAIRING ${orderId}: it is recorded as Paid and is a subscription order, ` +
+          `but no subscription exists for it. Creating the missing subscription now; the order itself ` +
+          `is left untouched.`
+      );
+      repairMissingSubscription = true;
+      existingPaidOrder = already;
     }
   } catch (_e) {}
 
@@ -667,7 +711,18 @@ async function saveVerifiedOrder(
   const rawEmail = pending?.customerEmail || details.customerEmail || 'customer@pouch-supply.com';
   const customerEmail = String(rawEmail).toLowerCase().trim();
   const destination = pending?.destination || details.destination || 'United Kingdom';
-  const items = (pending?.items && pending.items.length > 0) ? pending.items : (details.items || []);
+  // The order row carries the basket even when the pending checkout is long
+  // gone, which is what makes a repair possible at all: a webhook arriving
+  // after the pending record expired has no items of its own, and that is how
+  // an order gets written with no subscription in the first place.
+  const items =
+    pending?.items && pending.items.length > 0
+      ? pending.items
+      : details.items && details.items.length > 0
+        ? details.items
+        : Array.isArray(existingPaidOrder?.items)
+          ? existingPaidOrder.items
+          : [];
   const total = typeof pending?.total === 'number' ? pending.total : (typeof details.total === 'number' ? details.total : (parseFloat(pending?.total as any) || parseFloat(details.total as any) || 0));
   const storeCreditApplied = pending?.storeCreditApplied || details.storeCreditApplied || 0;
   const discountApplied = pending?.discountApplied || details.discountApplied || null;
@@ -734,17 +789,41 @@ async function saveVerifiedOrder(
       // to nothing — every recurring charge then failed and was masked by a
       // simulated "authorized" response, so subscriptions silently took no money.
       const recurringHref = extractRecurringAuthorizationHref(details.gatewayResponse) || null;
-      const tokenHref =
-        extractTokenHref(details.gatewayResponse) ||
-        // The tokenCreated webhook can arrive before this order is written. If
-        // it did, its token is waiting to be claimed rather than lost.
-        (await claimPendingToken(String(orderId), customerEmail)) ||
-        null;
       const schemeReference =
         extractSchemeReference(details.gatewayResponse) ||
         (details.schemeReference && !isPlaceholderCredential(details.schemeReference)
           ? details.schemeReference
           : null);
+
+      let tokenHref =
+        extractTokenHref(details.gatewayResponse) ||
+        // The tokenCreated webhook can arrive before this order is written. If
+        // it did, its token is waiting to be claimed rather than lost.
+        (await claimPendingToken(String(orderId), customerEmail)) ||
+        null;
+
+      // Neither of those produced a card, so ask Worldpay directly rather than
+      // waiting for a webhook that may never come. The payment has completed by
+      // the time this runs, so the card is already stored on their side — and
+      // the scheme reference from THIS payment is what proves the card we get
+      // back belongs to this subscription and not to an earlier one the same
+      // shopper made.
+      if (!tokenHref && customerEmail) {
+        const tokens = await fetchTokensForNamespace(customerEmail);
+        const selection = selectTokenForSubscription(tokens, {
+          namespace: customerEmail,
+          schemeReference
+        });
+        if (selection.token) {
+          tokenHref = selection.token.href;
+          console.log(
+            `[Worldpay Order] Stored card for order ${orderId} retrieved from the tokens service ` +
+              `(${selection.reason}).`
+          );
+        } else if (selection.ambiguous) {
+          console.warn(`[Worldpay Order] No card assigned to order ${orderId}: ${selection.reason}`);
+        }
+      }
 
       // Worldpay refused to store the card when this checkout was created, so
       // there is no webhook coming and no token to wait for.
@@ -838,7 +917,17 @@ async function saveVerifiedOrder(
         const storedSubs: any[] = (await fetchResource('subscriptions')) || [];
         storedSubs.unshift(subData);
         await saveResource('subscriptions', storedSubs.slice(0, 500));
-      } catch (_e) {}
+      } catch (storeErr: any) {
+        // This was an empty catch. If it fails, the subscription exists in no
+        // store at all while the order is recorded as Paid — the customer has
+        // bought a plan that nothing will ever charge. Silence here is how that
+        // state gets created without anybody noticing.
+        console.error(
+          `[SUBSCRIPTION NOT SAVED] ${subId} for order ${orderId} could not be written to the ` +
+            `subscriptions store: ${storeErr?.message}. The repair sweep will rebuild it from the ` +
+            `order. Payload: ${JSON.stringify(subData)}`
+        );
+      }
 
       // Update customer subscription status in database
       try {
@@ -853,8 +942,16 @@ async function saveVerifiedOrder(
           await saveResource('customers', customers);
         }
       } catch (_e) {}
-    } catch (subErr) {
-      console.warn('[Worldpay Order] Auto-subscription creation warning:', subErr);
+    } catch (subErr: any) {
+      // Logged as an error, with the order it belongs to. This is the exact
+      // failure that leaves a paid order without its plan, so it has to be
+      // findable by order id rather than being one anonymous warning among
+      // thousands. The order still saves below; the repair sweep picks it up.
+      console.error(
+        `[SUBSCRIPTION CREATION FAILED] Order ${orderId} is paid but its subscription could not ` +
+          `be created: ${subErr?.message || subErr}`,
+        subErr?.stack || ""
+      );
     }
   }
 
@@ -916,7 +1013,13 @@ async function saveVerifiedOrder(
     }
   };
 
-  const savedOrder = await saveSingleOrder(formattedOrder);
+  // In repair mode the order is already correct and already Paid; rewriting it
+  // would re-run its side effects (confirmation email, fulfilment hooks) for a
+  // sale the customer completed long ago. The subscription created above points
+  // back with sourceOrderId, which is the link every lookup actually uses.
+  const savedOrder = repairMissingSubscription
+    ? existingPaidOrder
+    : await saveSingleOrder(formattedOrder);
 
   // Clear pending memory store
   pendingCheckoutsMap.delete(orderId);
@@ -1019,6 +1122,15 @@ const handleReconcilePending = async (_req: Request, res: Response) => {
     // that needed reconciling is an order whose webhooks did not land, and the
     // token rides on the same webhook delivery. A subscription left without a
     // card is repaired here rather than at its first failed renewal.
+    // Order first, token second: a subscription that does not exist yet cannot
+    // be given a card, so repairing it before the token sweep means both can
+    // complete in the same pass instead of needing two.
+    const repairResults = await repairOrdersMissingSubscriptions().catch((err: any) => {
+      console.error('[Worldpay Subscription Repair] Failed during reconcile:', err?.message);
+      return [] as Awaited<ReturnType<typeof repairOrdersMissingSubscriptions>>;
+    });
+    const subsRepaired = repairResults.filter(r => r.status === 'repaired').length;
+
     const tokenResults = await recoverMissingSubscriptionTokens().catch((err: any) => {
       console.error('[Worldpay Token Sweep] Sweep failed during reconcile:', err?.message);
       return [] as Awaited<ReturnType<typeof recoverMissingSubscriptionTokens>>;
@@ -1029,8 +1141,10 @@ const handleReconcilePending = async (_req: Request, res: Response) => {
       success: true,
       message:
         `Checked ${results.length} pending order(s); ${reconciled} reconciled. ` +
+        `Repaired ${subsRepaired} paid order(s) that had no subscription. ` +
         `Checked ${tokenResults.length} subscription(s) with no stored card; ${tokensRecovered} recovered.`,
       results,
+      subscriptionRepair: repairResults,
       tokenRecovery: tokenResults
     });
   } catch (err: any) {
@@ -1111,6 +1225,47 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
   for (const sub of needsToken.slice(0, limit)) {
     const reference = String(sub.sourceOrderId || sub.worldpayTransactionId || sub.lastPaymentId || '').trim();
     const id = String(sub.id);
+    const email = String(sub.customerEmail || '').trim().toLowerCase();
+
+    // The tokens service first. It is the authoritative record of what Worldpay
+    // is holding, it does not depend on a webhook having been delivered, and it
+    // carries the scheme transaction reference needed to prove the card belongs
+    // to THIS subscription. The payment query below is kept as a fallback
+    // because it is the only route when a subscription has no email on it.
+    if (email) {
+      const tokens = await fetchTokensForNamespace(email);
+      const selection = selectTokenForSubscription(tokens, {
+        namespace: email,
+        schemeReference: sub.worldpaySchemeReference
+      });
+
+      if (selection.token) {
+        patched.set(id, {
+          tokenHref: selection.token.href,
+          schemeReference: sub.worldpaySchemeReference || selection.token.schemeTransactionReference
+        });
+        changed = true;
+        results.push({ id, reference, status: 'recovered', detail: `tokens service — ${selection.reason}` });
+        console.log(
+          `[Worldpay Token Sweep] Recovered the stored card for subscription ${id} from the tokens ` +
+            `service (${selection.reason}).`
+        );
+        continue;
+      }
+
+      if (selection.ambiguous) {
+        // Worldpay has a card for this shopper but it cannot be tied to this
+        // plan. Assigning it would be a guess, and the wrong guess charges a
+        // card the customer never attached to this subscription. Counted as an
+        // attempt so it stops re-asking, and reported loudly enough to act on.
+        const attempts = Number(sub.tokenLookupAttempts || 0) + 1;
+        attempted.set(id, attempts);
+        changed = true;
+        results.push({ id, reference, status: 'ambiguous', detail: selection.reason });
+        console.warn(`[Worldpay Token Sweep] Subscription ${id} NOT assigned a card: ${selection.reason}`);
+        continue;
+      }
+    }
 
     if (!reference) {
       results.push({ id, reference: '', status: 'skipped', detail: 'no payment reference to query' });
@@ -1125,10 +1280,9 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
 
     const tokenHref = extractTokenHref(payment);
     if (!tokenHref) {
-      // Worth stating plainly: the payment exists and carries no token, so the
-      // card was never stored and no amount of waiting will produce one. Marked
-      // so it is asked once rather than on every sweep. A payment Worldpay has
-      // not published yet returns null above instead and is retried next time.
+      // Neither the tokens service nor the payment itself has a card for this
+      // subscription. Counted rather than treated as final, because one empty
+      // answer is not proof; the budget stops it re-asking forever.
       const attempts = Number(sub.tokenLookupAttempts || 0) + 1;
       attempted.set(id, attempts);
       changed = true;
@@ -1136,14 +1290,13 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
         id,
         reference,
         status: 'no-token',
-        detail: `payment carries no token link (attempt ${attempts}/${TOKEN_SWEEP_MAX_ATTEMPTS})`
+        detail: `no stored card found by namespace or payment (attempt ${attempts}/${TOKEN_SWEEP_MAX_ATTEMPTS})`
       });
       if (attempts >= TOKEN_SWEEP_MAX_ATTEMPTS) {
         console.warn(
           `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) still has no stored card ` +
-            `after ${attempts} lookups. It cannot renew. Either Worldpay never stored the card, or the ` +
-            `payment query does not expose token links on this account — check the tokenCreated webhook ` +
-            `before assuming the customer has to re-subscribe.`
+            `after ${attempts} lookups, by namespace and by payment. It cannot renew — the customer ` +
+            `has to subscribe again.`
         );
       }
       continue;
@@ -1151,7 +1304,7 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
 
     patched.set(id, { tokenHref, schemeReference: extractSchemeReference(payment) });
     changed = true;
-    results.push({ id, reference, status: 'recovered' });
+    results.push({ id, reference, status: 'recovered', detail: 'payment query' });
     console.log(`[Worldpay Token Sweep] Recovered the stored card for subscription ${id} from payment ${reference}.`);
   }
 
@@ -1199,6 +1352,134 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
 
 router.get('/reconcile-pending', handleReconcilePending);
 router.post('/reconcile-pending', handleReconcilePending);
+
+/**
+ * Creates the subscriptions that paid subscription orders should have had.
+ *
+ * A paid order with no subscription is the worst state this system can reach:
+ * the customer has been charged for a plan, believes they are subscribed, and
+ * nothing exists that will ever bill or fulfil it again. It is also invisible —
+ * the order looks perfectly normal.
+ *
+ * Nothing used to re-examine such an order. The reconcile pass only looks at
+ * PENDING checkouts, and every other route into saveVerifiedOrder returned early
+ * the moment it saw the order was already Paid. This closes that gap by finding
+ * them directly.
+ *
+ * The subscription is rebuilt from the order's own items, and the scheme
+ * reference is re-read from Worldpay so the new subscription can later be
+ * matched to the right stored card. No token is attached here — that is
+ * selectTokenForSubscription's job, and it requires the agreement to match.
+ */
+const SUBSCRIPTION_REPAIR_LIMIT = 10;
+
+export async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMIT) {
+  const results: Array<{ orderId: string; status: string; detail?: string }> = [];
+
+  let orders: any[] = [];
+  let subs: any[] = [];
+  try {
+    orders = (await fetchResource('orders')) || [];
+    subs = (await fetchResource('subscriptions')) || [];
+  } catch (err: any) {
+    console.warn('[Worldpay Subscription Repair] Could not read orders/subscriptions:', err?.message);
+    return results;
+  }
+
+  const hasSubscription = new Set(
+    subs.map((s: any) => String(s?.sourceOrderId || '')).filter(Boolean)
+  );
+
+  const isSubscriptionOrder = (order: any): boolean => {
+    if (order?.isSubscription) return true;
+    if (Array.isArray(order?.tags) && order.tags.some((t: any) => /subscription/i.test(String(t)))) return true;
+    if (order?.subscriptionDetails) return true;
+    return (Array.isArray(order?.items) ? order.items : []).some(
+      (it: any) => it?.isSubscription || (typeof it?.productId === 'string' && it.productId.includes('sub-pack'))
+    );
+  };
+
+  const broken = orders.filter(
+    (o: any) =>
+      o &&
+      String(o.paymentStatus || '') === 'Paid' &&
+      isSubscriptionOrder(o) &&
+      !hasSubscription.has(String(o.id)) &&
+      // A renewal order is generated BY a subscription and never creates one.
+      !(Array.isArray(o.tags) && o.tags.some((t: any) => /recurring/i.test(String(t))))
+  );
+
+  if (broken.length === 0) return results;
+
+  console.error(
+    `[Worldpay Subscription Repair] ${broken.length} PAID subscription order(s) have no subscription: ` +
+      broken.slice(0, limit).map((o: any) => o.id).join(', ')
+  );
+
+  for (const order of broken.slice(0, limit)) {
+    const orderId = String(order.id);
+    try {
+      // Re-read the payment so the rebuilt subscription carries the scheme
+      // reference from its OWN payment. Without it the subscription could never
+      // be matched to the right stored card later.
+      const payment = await fetchWorldpayPaymentDetails(orderId);
+
+      await saveVerifiedOrder(orderId, {
+        transactionId: String(order.worldpayTxId || order.gatewayTxId || orderId),
+        authCode: order.worldpayAuthCode || order.gatewayAuthCode || undefined,
+        cardBrand: order.cardBrand || undefined,
+        customerName: order.customerName,
+        customerEmail: order.customerEmail,
+        destination: order.destination,
+        items: Array.isArray(order.items) ? order.items : [],
+        total: typeof order.total === 'number' ? order.total : undefined,
+        shippingCost: typeof order.shippingCost === 'number' ? order.shippingCost : undefined,
+        deliveryCost: typeof order.deliveryCost === 'number' ? order.deliveryCost : undefined,
+        deliveryMethod: order.deliveryMethod,
+        discountApplied: order.discountApplied,
+        gatewayResponse: payment,
+        paymentConfirmed: true
+      });
+
+      const after: any[] = (await fetchResource('subscriptions')) || [];
+      const created = after.find((s: any) => String(s?.sourceOrderId || '') === orderId);
+
+      if (created) {
+        results.push({ orderId, status: 'repaired', detail: `subscription ${created.id}` });
+        console.log(`[Worldpay Subscription Repair] ${orderId} now has subscription ${created.id}.`);
+      } else {
+        results.push({ orderId, status: 'failed', detail: 'no subscription created — check the order items' });
+        console.error(
+          `[Worldpay Subscription Repair] ${orderId} STILL has no subscription. Its items carry no ` +
+            `subscription line, so there is nothing to rebuild a plan from.`
+        );
+      }
+    } catch (err: any) {
+      results.push({ orderId, status: 'error', detail: err?.message });
+      console.error(`[Worldpay Subscription Repair] ${orderId} failed:`, err?.message);
+    }
+  }
+
+  return results;
+}
+
+const handleRepairSubscriptions = async (_req: Request, res: Response) => {
+  try {
+    const results = await repairOrdersMissingSubscriptions();
+    const repaired = results.filter(r => r.status === 'repaired').length;
+    return res.json({
+      success: true,
+      message: `Checked for paid subscription orders with no subscription; ${repaired} repaired.`,
+      results
+    });
+  } catch (err: any) {
+    console.error('[Worldpay Subscription Repair] Failed:', err);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+};
+
+router.get('/repair-subscriptions', handleRepairSubscriptions);
+router.post('/repair-subscriptions', handleRepairSubscriptions);
 
 const handleRecoverTokens = async (_req: Request, res: Response) => {
   try {
@@ -1453,7 +1734,13 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
     // narrowing does not survive into the closure below, so hold it as a const.
     const authHeader = cfg.authHeader;
 
+    // Which body Worldpay actually accepted. The ladder below can send up to
+    // three different ones, and the logging afterwards is only meaningful if it
+    // reports the one that won rather than the one we started with.
+    let lastAttemptedBody: Record<string, unknown> | null = null;
+
     const postPaymentPage = async (payload: Record<string, unknown>) => {
+      lastAttemptedBody = payload;
       const res = await fetch(worldpayUrl, {
         method: 'POST',
         headers: {
@@ -1539,6 +1826,43 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
           });
         }
       }
+    }
+
+    // What Worldpay was asked for, and what it said back.
+    //
+    // A payment page that is created successfully tells you nothing about
+    // whether the card will be stored: Worldpay returns the same 201 and the
+    // same redirect link either way, and the tokenisation request is either
+    // honoured or quietly dropped with no mention in the response. PS65700 was
+    // accepted with customerAgreement AND createToken, came back cardOnFile, and
+    // produced no token — so the response is the only place left to look.
+    if (isSubscriptionCheckout) {
+      const acceptedBody = response.ok ? (lastAttemptedBody as any) : null;
+      console.log(
+        `[Worldpay HPP] TOKENISATION REQUEST for ${transactionReference}: ` +
+          (acceptedBody?.createToken
+            ? JSON.stringify(acceptedBody.createToken)
+            : 'NONE — the accepted request carried no createToken')
+      );
+      console.log(
+        `[Worldpay HPP] TOKENISATION AGREEMENT for ${transactionReference}: ` +
+          (acceptedBody?.customerAgreement
+            ? JSON.stringify(acceptedBody.customerAgreement)
+            : 'NONE — the accepted request carried no customerAgreement')
+      );
+      console.log(
+        `[Worldpay HPP] WORLDPAY RESPONSE for ${transactionReference} (HTTP ${response.status}): ` +
+          JSON.stringify(responseBody).slice(0, 4000)
+      );
+
+      // Worldpay does not acknowledge tokenisation on this response today. If it
+      // ever starts to, this is the line that will show it — and if it never
+      // does, the silence is itself the finding to take to Worldpay support.
+      const echo = JSON.stringify(responseBody || {});
+      console.log(
+        `[Worldpay HPP] Does the response mention a token at all? ` +
+          (/token/i.test(echo) ? 'YES — see the body above' : 'NO')
+      );
     }
 
     if (!response.ok) {
@@ -1832,11 +2156,59 @@ function normalizeWorldpayWebhook(event: any) {
  * This confirms the endpoint is reachable and nothing else. Events are accepted
  * on POST alone.
  */
+/**
+ * A durable record of what Worldpay has actually POSTed to us.
+ *
+ * On a serverless deploy the logs are spread across invocations and expire, so
+ * "I do not see a tokenCreated event" cannot distinguish Worldpay never sending
+ * one from us receiving it and saying nothing useful. Every inbound webhook is
+ * recorded here, whatever its shape and whether or not we act on it, and
+ * GET /api/worldpay/webhook reads it back. That turns the question into one
+ * anybody can answer from a browser.
+ *
+ * Webhook bodies carry no card number — the token href is a reference, not a
+ * PAN — so keeping the raw body is what makes an unrecognised payload shape
+ * fixable instead of merely reportable.
+ */
+const WEBHOOK_LOG_RESOURCE = 'worldpayWebhookLog';
+const WEBHOOK_LOG_KEEP = 50;
+const WEBHOOK_LOG_BODY_LIMIT = 4000;
+
+async function recordWebhookReceipt(entry: {
+  eventType: string | null;
+  status: string | null;
+  orderId: string | null;
+  namespace: string | null;
+  tokenFound: boolean;
+  action: string;
+  rawBody: string;
+}) {
+  try {
+    const existing: any[] = (await fetchResource(WEBHOOK_LOG_RESOURCE)) || [];
+    existing.push({
+      id: `hook_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      receivedAt: new Date().toISOString(),
+      ...entry,
+      rawBody: entry.rawBody.slice(0, WEBHOOK_LOG_BODY_LIMIT)
+    });
+    await saveResource(WEBHOOK_LOG_RESOURCE, existing.slice(-WEBHOOK_LOG_KEEP));
+  } catch (err: any) {
+    console.warn('[Worldpay Webhook] Could not record the receipt:', err?.message);
+  }
+}
+
 router.get('/webhook', async (_req: Request, res: Response) => {
   let heldTokens = 0;
   try {
     heldTokens = ((await fetchResource(PENDING_TOKENS_RESOURCE)) || []).length;
   } catch (_e) {}
+
+  let received: any[] = [];
+  try {
+    received = ((await fetchResource(WEBHOOK_LOG_RESOURCE)) || []).slice().reverse();
+  } catch (_e) {}
+
+  const tokenEvents = received.filter((r: any) => r?.tokenFound || /token/i.test(String(r?.eventType || '')));
 
   return res.status(200).json({
     ok: true,
@@ -1845,21 +2217,90 @@ router.get('/webhook', async (_req: Request, res: Response) => {
     message:
       'Worldpay webhook endpoint is live. Register this exact URL in Developer Tools > Webhooks ' +
       'and make sure tokenCreated is among the subscribed events.',
-    heldTokensAwaitingSubscription: heldTokens
+    heldTokensAwaitingSubscription: heldTokens,
+
+    // The answer to "is Worldpay actually calling us?". A total of 0 means no
+    // webhook of ANY kind has reached this endpoint, which is a Worldpay-side
+    // registration problem and not something this code can fix.
+    webhooksReceivedTotal: received.length,
+    tokenEventsReceived: tokenEvents.length,
+    lastReceivedAt: received[0]?.receivedAt || null,
+    recentEvents: received.slice(0, 20).map((r: any) => ({
+      receivedAt: r.receivedAt,
+      eventType: r.eventType,
+      status: r.status,
+      orderId: r.orderId,
+      tokenFound: r.tokenFound,
+      action: r.action
+    })),
+    // Kept in full so an unrecognised payload shape can be matched against
+    // extractTokenHref rather than guessed at.
+    lastRawBodies: received.slice(0, 3).map((r: any) => r.rawBody)
   });
 });
 
 // POST /api/worldpay/webhook - Official Worldpay Webhook Handler
 router.post('/webhook', async (req: Request, res: Response) => {
+  // Logged before anything is decided, so the log proves receipt even for a
+  // payload this code does not understand. Every earlier exit from this handler
+  // was silent for at least one shape of event, which made "no tokenCreated in
+  // the logs" impossible to tell apart from "Worldpay never sent one".
+  const rawBody = (() => {
+    try {
+      return JSON.stringify(req.body);
+    } catch {
+      return String(req.body);
+    }
+  })();
+
+  console.log(
+    `[Worldpay Webhook] <<< POST RECEIVED (${rawBody.length} bytes) >>> ` + rawBody.slice(0, 4000)
+  );
+
+  /** Records the receipt, then answers. One exit point so nothing goes unlogged. */
+  const finish = async (
+    httpStatus: number,
+    payload: Record<string, unknown>,
+    summary: {
+      action: string;
+      evt?: ReturnType<typeof normalizeWorldpayWebhook> | null;
+      tokenFound?: boolean;
+    }
+  ) => {
+    console.log(
+      `[Worldpay Webhook] --> ${summary.action} ` +
+        `(type=${summary.evt?.eventType || 'unknown'} status=${summary.evt?.status || 'n/a'} ` +
+        `order=${summary.evt?.orderId || 'n/a'} token=${summary.tokenFound ? 'YES' : 'no'})`
+    );
+    await recordWebhookReceipt({
+      eventType: summary.evt?.eventType || null,
+      status: summary.evt?.status || null,
+      orderId: summary.evt?.orderId || null,
+      namespace: summary.evt?.namespace || null,
+      tokenFound: Boolean(summary.tokenFound),
+      action: summary.action,
+      rawBody
+    });
+    return res.status(httpStatus).json(payload);
+  };
+
   try {
     const event = req.body;
     if (!event || typeof event !== 'object') {
-      return res.status(400).json({ error: 'Invalid webhook payload' });
+      return finish(400, { error: 'Invalid webhook payload' }, { action: 'rejected: body is not an object' });
     }
 
     const evt = normalizeWorldpayWebhook(event);
 
     const tokenHref = extractTokenHref(event);
+
+    // Stated explicitly for every event, because a token arriving in a shape
+    // extractTokenHref does not recognise looks identical in the logs to no
+    // token being sent at all.
+    console.log(
+      `[Worldpay Webhook] Tokenisation read: tokenHref=${tokenHref || 'NOT FOUND IN PAYLOAD'} ` +
+        `(eventType=${evt.eventType || 'unknown'}, namespace=${evt.namespace || 'none'})`
+    );
     const isPaymentEvent =
       WEBHOOK_PAID_EVENTS.has(evt.status) || WEBHOOK_FAILED_EVENTS.has(evt.status);
 
@@ -1873,12 +2314,17 @@ router.post('/webhook', async (req: Request, res: Response) => {
         transactionReference: evt.orderId,
         namespace: evt.namespace
       });
-      return res.status(200).json({
-        received: true,
-        processed: recorded,
-        event: evt.eventType || 'tokenCreated',
-        orderId: evt.orderId
-      });
+      return finish(
+        200,
+        { received: true, processed: recorded, event: evt.eventType || 'tokenCreated', orderId: evt.orderId },
+        {
+          action: recorded
+            ? 'token recorded against a subscription'
+            : 'token parked for a subscription that does not exist yet',
+          evt,
+          tokenFound: true
+        }
+      );
     }
 
     if (!tokenHref && isTokenEvent(event)) {
@@ -1887,7 +2333,11 @@ router.post('/webhook', async (req: Request, res: Response) => {
           `readable token href. Renewals depend on this value — raw body follows so the shape ` +
           `can be matched: ${JSON.stringify(event).slice(0, 4000)}`
       );
-      return res.status(200).json({ received: true, processed: false, reason: 'no token href' });
+      return finish(
+        200,
+        { received: true, processed: false, reason: 'no token href' },
+        { action: 'TOKEN EVENT WITH AN UNREADABLE HREF - payload shape needs matching', evt }
+      );
     }
 
     if (!evt.orderId) {
@@ -1895,7 +2345,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
         `[Worldpay Webhook] Ignoring an event with no transaction reference ` +
           `(type: ${evt.eventType || 'unknown'}).`
       );
-      return res.status(200).json({ received: true, ignored: true });
+      return finish(200, { received: true, ignored: true }, { action: 'ignored: no transaction reference', evt });
     }
 
     if (WEBHOOK_PAID_EVENTS.has(evt.status)) {
@@ -1925,7 +2375,11 @@ router.post('/webhook', async (req: Request, res: Response) => {
       );
     }
 
-    return res.status(200).json({ received: true, processed: true, orderId: evt.orderId });
+    return finish(
+      200,
+      { received: true, processed: true, orderId: evt.orderId },
+      { action: 'payment event processed', evt, tokenFound: Boolean(tokenHref) }
+    );
   } catch (error: any) {
     console.error('[Worldpay Webhook] Processing error:', error);
 

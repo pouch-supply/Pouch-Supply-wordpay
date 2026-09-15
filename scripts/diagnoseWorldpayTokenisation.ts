@@ -2,37 +2,36 @@
  * Works out WHY the Hosted Payment Page is not producing a stored card.
  *
  *   npx tsx scripts/diagnoseWorldpayTokenisation.ts
+ *   npx tsx scripts/diagnoseWorldpayTokenisation.ts --namespace=shopper@example.com
  *
  * No payment is taken and no order is created. The probes create Hosted Payment
  * Page sessions that nobody visits, which is the same thing the checkout does
  * before a shopper reaches Worldpay; an unvisited page simply expires.
  *
- * The question it answers
- * -----------------------
- * PS65700 came back from Worldpay as `transactionType: cardOnFile` with no
- * token. cardOnFile proves the request that Worldpay accepted still carried
- * `customerAgreement` — the checkout's last-resort retry strips `customerAgreement`
- * and `createToken` together, so if it had fired the payment would have been
- * `oneTime`. The accepted request therefore carried `createToken` too, and
- * Worldpay returned no token for it.
+ * What the probes established on entity PO4094415264
+ * --------------------------------------------------
+ * The original suspicion was that `createToken` might not be part of the
+ * payment_pages schema at all, and was being silently discarded. That is WRONG,
+ * and the probes below are what disproved it:
  *
- * That leaves two possibilities, and they need different fixes:
+ *   - Probe 2 sends an invalid `optIn`. Worldpay rejects it with
+ *     fieldHasInvalidValue at $.createToken.optIn, so the field is parsed and
+ *     validated.
+ *   - Probe 3 sends an invented top-level field. Worldpay rejects it with
+ *     fieldIsNotAllowed, so this endpoint does not silently ignore anything.
+ *   - Probe 4 sends customerAgreement with no createToken. Worldpay rejects it:
+ *     createToken is MANDATORY whenever customerAgreement is present.
+ *   - Probe 1, the exact request the checkout sends, is ACCEPTED.
  *
- *   A. `createToken` is not part of the payment_pages schema, so Worldpay parses
- *      the request, ignores the field it does not know, and creates an ordinary
- *      page. Tokenisation would then be impossible through the Hosted Payment
- *      Page and the first payment has to move to a flow that supports it.
+ * So the checkout asks for the card correctly, and Worldpay accepts the ask.
+ * The card is therefore either stored-but-never-delivered to us, or not stored
+ * despite a valid request. Probe 2 and 3 cannot tell those apart — only the
+ * tokens service can, which is what --namespace queries.
  *
- *   B. `createToken` is understood but something about it is refused for this
- *      account (opt-in not enabled, tokens not provisioned on the entity).
- *
- * Probe 2 separates them. It sends a deliberately invalid `optIn` value. An API
- * that understands the field rejects the value; an API that ignores the field
- * accepts the request happily. Probe 3 is the control: a top-level field that
- * certainly does not exist, which establishes whether this endpoint rejects
- * unknown fields at all. Without that control, probe 2 on its own proves nothing.
- */
-import 'dotenv/config';
+ * Keep the probes even though the schema question is settled: they are the
+ * regression test for it, and they re-answer it in seconds if Worldpay changes
+ * the schema or the account's entitlements underneath us.
+ */import 'dotenv/config';
 
 const BASE = (process.env.WORLDPAY_BASE_URL || 'https://access.worldpay.com').replace(/\/+$/, '');
 const ENTITY = process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID || '';
@@ -45,11 +44,15 @@ function authHeader(): string | null {
   return 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64');
 }
 
+const args = process.argv.slice(2);
+
 const auth = authHeader();
 if (!auth || !ENTITY) {
   console.error('WORLDPAY_API_USERNAME / WORLDPAY_API_PASSWORD / WORLDPAY_ENTITY must be set.');
   process.exit(1);
 }
+
+const NAMESPACE = (args.find(a => a.startsWith('--namespace=')) || '').split('=').slice(1).join('=') || null;
 
 const ref = () => `DIAG-${Date.now().toString().slice(-8)}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -171,40 +174,129 @@ async function main() {
   };
   const p4 = await postPage('Probe 4: customerAgreement with no createToken', agreementOnly);
 
+  // ------------------------------------------------------- the tokens service
+  //
+  // Worked out from the probes above: on this account `createToken` is a real,
+  // validated, MANDATORY field. So the checkout request is correct and Worldpay
+  // accepts it — yet no token reaches us. The remaining question is whether the
+  // token exists at Worldpay and is simply never delivered, or was never made.
+  //
+  // The tokens service answers that directly, without another order, and if it
+  // can be queried it is also a better capture route than the webhook: it is a
+  // pull we control rather than a push we can only hope arrives.
+  if (NAMESPACE) {
+    console.log(`\n=== Does Worldpay hold a token for "${NAMESPACE}"? ===`);
+
+    const tokenAccepts = [
+      'application/vnd.worldpay.tokens-v3.hal+json',
+      'application/vnd.worldpay.tokens-v2.hal+json',
+      'application/json'
+    ];
+
+    // The service root first: if it advertises its own operations, that beats
+    // guessing at query shapes.
+    for (const accept of tokenAccepts) {
+      try {
+        const res = await fetch(`${BASE}/tokens`, {
+          method: 'GET',
+          headers: { Authorization: auth!, Accept: accept }
+        });
+        const text = await res.text();
+        console.log(`\n  GET /tokens  (Accept: ${accept})`);
+        console.log(`    HTTP ${res.status}`);
+        console.log(`    ${text.slice(0, 600)}`);
+        if (res.ok) break;
+      } catch (err: any) {
+        console.log(`    failed: ${err?.message}`);
+      }
+    }
+
+    // Candidate query shapes. Reported rather than assumed: whichever answers is
+    // the one to wire into the recovery sweep.
+    const candidates = [
+      `${BASE}/tokens?namespace=${encodeURIComponent(NAMESPACE)}`,
+      `${BASE}/tokens/namespaces/${encodeURIComponent(NAMESPACE)}`,
+      `${BASE}/tokens?entityReference=${encodeURIComponent(ENTITY)}&namespace=${encodeURIComponent(NAMESPACE)}`
+    ];
+
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: { Authorization: auth!, Accept: tokenAccepts[0] }
+        });
+        const text = await res.text();
+        console.log(`\n  GET ${url.replace(BASE, '')}`);
+        console.log(`    HTTP ${res.status}`);
+        console.log(`    ${text.slice(0, 800)}`);
+        if (res.ok && /\/tokens\//.test(text)) {
+          console.log('    ^^ this shape returns token references — wire this one in.');
+        }
+      } catch (err: any) {
+        console.log(`    failed: ${err?.message}`);
+      }
+    }
+  } else {
+    console.log('\n=== Tokens service ===');
+    console.log('  Skipped. Re-run with --namespace=<the shopper email used at checkout>');
+    console.log('  to ask Worldpay whether it is holding a card for that shopper, e.g.');
+    console.log('    npx tsx scripts/diagnoseWorldpayTokenisation.ts --namespace=scott@pouch-supply.com');
+  }
+
   // ------------------------------------------------------------------ verdict
   console.log('\n\n=== Verdict ===');
   const ok = (r: { status: number }) => r.status >= 200 && r.status < 300;
 
+  const schemaValidatesToken = !ok(p2);
+  const schemaRejectsUnknown = !ok(p3);
+
   if (!ok(p1)) {
     console.log('  Probe 1 was REJECTED, so the live checkout request is being refused outright.');
     console.log('  Read the error above — that is the reason tokenisation never happens.');
-  } else if (ok(p2) && ok(p3)) {
-    console.log('  Probe 2 (invalid optIn) and Probe 3 (invented field) were both ACCEPTED.');
-    console.log('  This endpoint does not validate fields it does not recognise, and it never');
-    console.log('  complained about createToken either. The most likely reading is that');
-    console.log('  createToken is NOT part of the payment_pages schema and is being silently');
-    console.log('  discarded — which matches PS65700: agreement honoured, no token issued.');
+  } else if (schemaValidatesToken && schemaRejectsUnknown) {
+    console.log('  createToken is a REAL, VALIDATED field on this endpoint:');
+    console.log('    - Probe 2 rejected an invalid optIn at $.createToken.optIn, so the field is parsed.');
+    console.log('    - Probe 3 rejected an invented field, so nothing is silently ignored here.');
+    console.log('    - Probe 1, the exact request the checkout sends, was ACCEPTED.');
     console.log('');
-    console.log('  If so, no amount of adjusting createToken on this request will work, and the');
-    console.log('  first payment has to be taken through a flow that does support tokenisation.');
+    console.log('  So the checkout is asking correctly and Worldpay is accepting the ask. The');
+    console.log('  card is not failing to be requested — it is failing to reach us, or failing');
+    console.log('  to be stored despite a valid request. Those need different fixes:');
+    console.log('');
+    console.log('    1. NOT DELIVERED. The token exists at Worldpay but no tokenCreated webhook');
+    console.log('       reaches the endpoint. Check GET /api/worldpay/webhook on the deployed');
+    console.log('       app: webhooksReceivedTotal 0 means Worldpay is calling nothing at all,');
+    console.log('       which is a registration problem in Developer Tools > Webhooks.');
+    console.log('       Re-run this script with --namespace=<shopper email> to ask the tokens');
+    console.log('       service directly. A token there proves this is the case.');
+    console.log('');
+    console.log('    2. NOT STORED. optIn "Silent" passes schema validation but still has to be');
+    console.log('       enabled on the entity; an account without it may accept the request and');
+    console.log('       store nothing. Set WORLDPAY_TOKEN_OPT_IN=ASK and the shopper is asked on');
+    console.log('       Worldpay\'s own page instead — a one-variable change, no code edit.');
+    console.log('');
     console.log('  Put this to Worldpay support verbatim:');
-    console.log('    "On entity ' + ENTITY + ', does the Hosted Payment Pages API (payment_pages-v1)');
-    console.log('     support creating a token? We send createToken alongside customerAgreement;');
-    console.log('     the payment comes back transactionType cardOnFile but no token is created');
-    console.log('     and no tokenCreated event is delivered. If HPP cannot tokenise, which');
-    console.log('     integration should we use to store the card on the first payment?"');
-  } else if (!ok(p2) && ok(p3)) {
-    console.log('  Probe 2 was REJECTED while Probe 3 was accepted: createToken IS understood');
-    console.log('  and validated, so the field is supported and the problem is its contents or');
-    console.log('  an account permission. The rejection text above names it.');
-  } else if (!ok(p3)) {
-    console.log('  Probe 3 was REJECTED, so this endpoint does reject unknown fields. Since');
-    console.log('  Probe 1 was accepted, createToken is a field Worldpay recognises, and the');
-    console.log('  missing token is an account/permission matter rather than a schema one.');
-    console.log('  Ask Worldpay whether tokens are provisioned on entity ' + ENTITY + '.');
+    console.log(`    "On entity ${ENTITY}, we create a Hosted Payment Page with customerAgreement`);
+    console.log('     (subscription/first) and createToken (type worldpay, optIn Silent). The page');
+    console.log('     is accepted, the shopper pays, and the payment is recorded as cardOnFile with');
+    console.log('     a scheme reference — but no token is created and no tokenCreated event is');
+    console.log('     delivered. Is optIn Silent enabled for this entity, and are tokenCreated');
+    console.log('     webhooks enabled? If a token IS being stored, how should we retrieve its href');
+    console.log('     for subsequent recurring payments?"');
+  } else if (schemaValidatesToken) {
+    console.log('  createToken is understood and validated, so the field is supported and the');
+    console.log('  problem is its contents or an account permission. The rejection above names it.');
+  } else {
+    console.log('  Probe 2 and Probe 3 were both accepted: this endpoint does not validate fields');
+    console.log('  it does not recognise, so createToken may be being discarded silently.');
+    console.log('  Ask Worldpay whether payment_pages supports tokenisation on this entity.');
   }
 
   console.log(`\n  (Probe 4, agreement without a token, returned HTTP ${p4.status}.)`);
+  if (!ok(p4)) {
+    console.log('   -> createToken is MANDATORY alongside customerAgreement on this account,');
+    console.log('      which confirms the checkout could not have taken the agreement without it.');
+  }
   console.log('\n  None of these took a payment. The pages created here were never opened and expire unused.');
 }
 

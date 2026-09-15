@@ -5105,7 +5105,133 @@ async function chargeRecurringSubscription({
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
-var PLACEHOLDER_PATTERNS, TOKEN_HREF_KEYS, PAYMENTS_MEDIA_TYPE, SETTLEMENT_FALLBACK_ORDER;
+function collectTokenObjects(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  if (Array.isArray(payload)) return payload;
+  const candidates = [
+    payload?._embedded?.tokens,
+    payload?._embedded?.token,
+    payload?.tokens,
+    payload?.items,
+    payload?.results
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+    if (candidate && typeof candidate === "object") return [candidate];
+  }
+  if (payload.tokenId || payload.tokenPaymentInstrument || payload.schemeTransactionReference) {
+    return [payload];
+  }
+  return [];
+}
+function toWorldpayToken(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const href = raw?.tokenPaymentInstrument?.href || raw?._links?.["tokens:token"]?.href || raw?._links?.self?.href || raw?.href || null;
+  if (!isUsableTokenHref(href)) return null;
+  const scheme = raw?.schemeTransactionReference || raw?.paymentInstrument?.schemeTransactionReference || raw?.tokenPaymentInstrument?.schemeTransactionReference || null;
+  return {
+    href: String(href).trim(),
+    tokenId: raw?.tokenId ? String(raw.tokenId) : null,
+    namespace: raw?.namespace ? String(raw.namespace) : null,
+    schemeTransactionReference: typeof scheme === "string" && scheme.trim() ? scheme.trim() : null,
+    expiryDateTime: raw?.tokenExpiryDateTime ? String(raw.tokenExpiryDateTime) : null,
+    raw
+  };
+}
+async function fetchTokensForNamespace(namespace) {
+  const cleaned = String(namespace || "").trim().toLowerCase();
+  if (!cleaned) return [];
+  let config;
+  try {
+    config = getWorldpayConfig();
+  } catch (err) {
+    console.warn("[Worldpay Tokens] Cannot look up stored cards:", err?.message);
+    return [];
+  }
+  const url = `${config.baseUrl}/tokens?namespace=${encodeURIComponent(cleaned)}&entityReference=${encodeURIComponent(config.entity)}`;
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: config.authHeader,
+        Accept: TOKENS_MEDIA_TYPE,
+        "WP-CorrelationId": crypto2.randomUUID ? crypto2.randomUUID() : `tok-${Date.now()}`
+      }
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.warn(
+        `[Worldpay Tokens] Lookup for "${cleaned}" returned HTTP ${response.status}. ${detail.slice(0, 300)}`
+      );
+      return [];
+    }
+    const data = await response.json().catch(() => null);
+    const tokens = collectTokenObjects(data).map(toWorldpayToken).filter((t) => Boolean(t));
+    console.log(
+      `[Worldpay Tokens] ${tokens.length} stored card(s) for "${cleaned}": ` + tokens.map((t) => `${t.tokenId || "no-id"}/${t.schemeTransactionReference || "no-scheme"}`).join(", ")
+    );
+    return tokens;
+  } catch (err) {
+    console.warn(`[Worldpay Tokens] Lookup for "${cleaned}" failed:`, err?.message);
+    return [];
+  }
+}
+function selectTokenForSubscription(tokens, criteria) {
+  const wantedNamespace = String(criteria.namespace || "").trim().toLowerCase();
+  if (!wantedNamespace) {
+    return { token: null, reason: "the subscription has no customer email to look up", ambiguous: false };
+  }
+  const mine = tokens.filter((t) => {
+    if (!isUsableTokenHref(t.href)) return false;
+    if (!t.namespace) return true;
+    return t.namespace.trim().toLowerCase() === wantedNamespace;
+  });
+  const foreign = tokens.length - mine.length;
+  if (foreign > 0) {
+    console.warn(
+      `[Worldpay Tokens] Discarded ${foreign} token(s) filed under a namespace other than "${wantedNamespace}".`
+    );
+  }
+  if (mine.length === 0) {
+    return { token: null, reason: `Worldpay holds no stored card for "${wantedNamespace}"`, ambiguous: false };
+  }
+  const wantedScheme = String(criteria.schemeReference || "").trim();
+  if (wantedScheme) {
+    const exact = mine.filter((t) => (t.schemeTransactionReference || "").trim() === wantedScheme);
+    if (exact.length === 1) {
+      return {
+        token: exact[0],
+        reason: `matched on scheme transaction reference ${wantedScheme}`,
+        ambiguous: false
+      };
+    }
+    if (exact.length > 1) {
+      return {
+        token: null,
+        reason: `${exact.length} stored cards share scheme reference ${wantedScheme} \u2014 cannot tell them apart`,
+        ambiguous: true
+      };
+    }
+    return {
+      token: null,
+      reason: `Worldpay holds ${mine.length} stored card(s) for "${wantedNamespace}", but none was created under this subscription's agreement (${wantedScheme}). Found: ` + mine.map((t) => t.schemeTransactionReference || "no scheme reference").join(", ") + ". Not assigned \u2014 a human has to confirm which card this plan should charge.",
+      ambiguous: true
+    };
+  }
+  if (mine.length === 1) {
+    return {
+      token: mine[0],
+      reason: `the only stored card for "${wantedNamespace}" and the subscription has no scheme reference to match`,
+      ambiguous: false
+    };
+  }
+  return {
+    token: null,
+    reason: `Worldpay holds ${mine.length} stored cards for "${wantedNamespace}" and this subscription has no scheme reference to identify which one belongs to it. Not assigned.`,
+    ambiguous: true
+  };
+}
+var PLACEHOLDER_PATTERNS, TOKEN_HREF_KEYS, PAYMENTS_MEDIA_TYPE, SETTLEMENT_FALLBACK_ORDER, TOKENS_MEDIA_TYPE;
 var init_worldpaySubscription = __esm({
   "backend/services/worldpaySubscription.ts"() {
     PLACEHOLDER_PATTERNS = [
@@ -5135,6 +5261,7 @@ var init_worldpaySubscription = __esm({
       "requestAutoSettlement",
       "none"
     ];
+    TOKENS_MEDIA_TYPE = "application/vnd.worldpay.tokens-v3.hal+json";
   }
 });
 
@@ -8468,13 +8595,35 @@ async function getPendingCheckout(orderId) {
 async function saveVerifiedOrder(orderId, details) {
   const pending = details.pendingData || await getPendingCheckout(orderId);
   const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
+  let repairMissingSubscription = false;
+  let existingPaidOrder = null;
+  const looksLikeSubscriptionOrder = (order, candidateItems) => {
+    if (!order && !candidateItems?.length) return false;
+    if (order?.isSubscription) return true;
+    if (Array.isArray(order?.tags) && order.tags.some((t) => /subscription/i.test(String(t)))) return true;
+    if (order?.subscriptionDetails) return true;
+    const all = [...Array.isArray(order?.items) ? order.items : [], ...candidateItems || []];
+    return all.some(
+      (it) => it?.isSubscription || typeof it?.productId === "string" && it.productId.includes("sub-pack")
+    );
+  };
   try {
     const existingOrders = await fetchResource("orders") || [];
     const already = existingOrders.find((o) => String(o.id) === String(orderId));
     if (already && already.paymentStatus === "Paid") {
-      console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid \u2014 skipping duplicate creation.`);
-      await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
-      return already;
+      const existingSubs = await fetchResource("subscriptions") || [];
+      const hasSubscription = existingSubs.some((s) => String(s?.sourceOrderId || "") === String(orderId));
+      const wantsSubscription = looksLikeSubscriptionOrder(already, details.items || pending?.items || []);
+      if (hasSubscription || !wantsSubscription) {
+        console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid \u2014 skipping duplicate creation.`);
+        await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
+        return already;
+      }
+      console.error(
+        `[Worldpay Order] REPAIRING ${orderId}: it is recorded as Paid and is a subscription order, but no subscription exists for it. Creating the missing subscription now; the order itself is left untouched.`
+      );
+      repairMissingSubscription = true;
+      existingPaidOrder = already;
     }
   } catch (_e) {
   }
@@ -8494,7 +8643,7 @@ async function saveVerifiedOrder(orderId, details) {
   const rawEmail = pending?.customerEmail || details.customerEmail || "customer@pouch-supply.com";
   const customerEmail = String(rawEmail).toLowerCase().trim();
   const destination = pending?.destination || details.destination || "United Kingdom";
-  const items = pending?.items && pending.items.length > 0 ? pending.items : details.items || [];
+  const items = pending?.items && pending.items.length > 0 ? pending.items : details.items && details.items.length > 0 ? details.items : Array.isArray(existingPaidOrder?.items) ? existingPaidOrder.items : [];
   const total = typeof pending?.total === "number" ? pending.total : typeof details.total === "number" ? details.total : parseFloat(pending?.total) || parseFloat(details.total) || 0;
   const storeCreditApplied = pending?.storeCreditApplied || details.storeCreditApplied || 0;
   const discountApplied = pending?.discountApplied || details.discountApplied || null;
@@ -8515,10 +8664,25 @@ async function saveVerifiedOrder(orderId, details) {
       const billingInterval = normalizeBillingInterval(rawFrequency);
       const nextBillingDate = calculateNextBillingDate(billingInterval, /* @__PURE__ */ new Date());
       const recurringHref = extractRecurringAuthorizationHref(details.gatewayResponse) || null;
-      const tokenHref = extractTokenHref(details.gatewayResponse) || // The tokenCreated webhook can arrive before this order is written. If
+      const schemeReference = extractSchemeReference(details.gatewayResponse) || (details.schemeReference && !isPlaceholderCredential(details.schemeReference) ? details.schemeReference : null);
+      let tokenHref = extractTokenHref(details.gatewayResponse) || // The tokenCreated webhook can arrive before this order is written. If
       // it did, its token is waiting to be claimed rather than lost.
       await claimPendingToken(String(orderId), customerEmail) || null;
-      const schemeReference = extractSchemeReference(details.gatewayResponse) || (details.schemeReference && !isPlaceholderCredential(details.schemeReference) ? details.schemeReference : null);
+      if (!tokenHref && customerEmail) {
+        const tokens = await fetchTokensForNamespace(customerEmail);
+        const selection = selectTokenForSubscription(tokens, {
+          namespace: customerEmail,
+          schemeReference
+        });
+        if (selection.token) {
+          tokenHref = selection.token.href;
+          console.log(
+            `[Worldpay Order] Stored card for order ${orderId} retrieved from the tokens service (${selection.reason}).`
+          );
+        } else if (selection.ambiguous) {
+          console.warn(`[Worldpay Order] No card assigned to order ${orderId}: ${selection.reason}`);
+        }
+      }
       const tokenisationDowngraded = Boolean(pending?.tokenisationDowngraded);
       if (!tokenHref && tokenisationDowngraded) {
         console.error(
@@ -8586,7 +8750,10 @@ async function saveVerifiedOrder(orderId, details) {
         const storedSubs = await fetchResource("subscriptions") || [];
         storedSubs.unshift(subData);
         await saveResource("subscriptions", storedSubs.slice(0, 500));
-      } catch (_e) {
+      } catch (storeErr) {
+        console.error(
+          `[SUBSCRIPTION NOT SAVED] ${subId} for order ${orderId} could not be written to the subscriptions store: ${storeErr?.message}. The repair sweep will rebuild it from the order. Payload: ${JSON.stringify(subData)}`
+        );
       }
       try {
         const customers = await fetchResource("customers") || [];
@@ -8602,7 +8769,10 @@ async function saveVerifiedOrder(orderId, details) {
       } catch (_e) {
       }
     } catch (subErr) {
-      console.warn("[Worldpay Order] Auto-subscription creation warning:", subErr);
+      console.error(
+        `[SUBSCRIPTION CREATION FAILED] Order ${orderId} is paid but its subscription could not be created: ${subErr?.message || subErr}`,
+        subErr?.stack || ""
+      );
     }
   }
   const tags = ["Storefront", pending?.isTestMode ? "Worldpay Test Order" : "Worldpay Live Order"];
@@ -8658,7 +8828,7 @@ async function saveVerifiedOrder(orderId, details) {
       subtotal: calculatedSubtotal
     }
   };
-  const savedOrder = await saveSingleOrder2(formattedOrder);
+  const savedOrder = repairMissingSubscription ? existingPaidOrder : await saveSingleOrder2(formattedOrder);
   pendingCheckoutsMap.delete(orderId);
   try {
     const { getRoyalMailSettings: getRoyalMailSettings2, createRoyalMailShipment: createRoyalMailShipment2 } = await Promise.resolve().then(() => (init_royalMailService(), royalMailService_exports));
@@ -8722,6 +8892,11 @@ var handleReconcilePending = async (_req, res) => {
   try {
     const results = await reconcilePendingWorldpayOrders();
     const reconciled = results.filter((r) => r.status === "reconciled").length;
+    const repairResults = await repairOrdersMissingSubscriptions().catch((err) => {
+      console.error("[Worldpay Subscription Repair] Failed during reconcile:", err?.message);
+      return [];
+    });
+    const subsRepaired = repairResults.filter((r) => r.status === "repaired").length;
     const tokenResults = await recoverMissingSubscriptionTokens().catch((err) => {
       console.error("[Worldpay Token Sweep] Sweep failed during reconcile:", err?.message);
       return [];
@@ -8729,8 +8904,9 @@ var handleReconcilePending = async (_req, res) => {
     const tokensRecovered = tokenResults.filter((r) => r.status === "recovered").length;
     return res.json({
       success: true,
-      message: `Checked ${results.length} pending order(s); ${reconciled} reconciled. Checked ${tokenResults.length} subscription(s) with no stored card; ${tokensRecovered} recovered.`,
+      message: `Checked ${results.length} pending order(s); ${reconciled} reconciled. Repaired ${subsRepaired} paid order(s) that had no subscription. Checked ${tokenResults.length} subscription(s) with no stored card; ${tokensRecovered} recovered.`,
       results,
+      subscriptionRepair: repairResults,
       tokenRecovery: tokenResults
     });
   } catch (err) {
@@ -8768,6 +8944,34 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
   for (const sub of needsToken.slice(0, limit)) {
     const reference = String(sub.sourceOrderId || sub.worldpayTransactionId || sub.lastPaymentId || "").trim();
     const id = String(sub.id);
+    const email = String(sub.customerEmail || "").trim().toLowerCase();
+    if (email) {
+      const tokens = await fetchTokensForNamespace(email);
+      const selection = selectTokenForSubscription(tokens, {
+        namespace: email,
+        schemeReference: sub.worldpaySchemeReference
+      });
+      if (selection.token) {
+        patched.set(id, {
+          tokenHref: selection.token.href,
+          schemeReference: sub.worldpaySchemeReference || selection.token.schemeTransactionReference
+        });
+        changed = true;
+        results.push({ id, reference, status: "recovered", detail: `tokens service \u2014 ${selection.reason}` });
+        console.log(
+          `[Worldpay Token Sweep] Recovered the stored card for subscription ${id} from the tokens service (${selection.reason}).`
+        );
+        continue;
+      }
+      if (selection.ambiguous) {
+        const attempts = Number(sub.tokenLookupAttempts || 0) + 1;
+        attempted.set(id, attempts);
+        changed = true;
+        results.push({ id, reference, status: "ambiguous", detail: selection.reason });
+        console.warn(`[Worldpay Token Sweep] Subscription ${id} NOT assigned a card: ${selection.reason}`);
+        continue;
+      }
+    }
     if (!reference) {
       results.push({ id, reference: "", status: "skipped", detail: "no payment reference to query" });
       continue;
@@ -8786,18 +8990,18 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
         id,
         reference,
         status: "no-token",
-        detail: `payment carries no token link (attempt ${attempts}/${TOKEN_SWEEP_MAX_ATTEMPTS})`
+        detail: `no stored card found by namespace or payment (attempt ${attempts}/${TOKEN_SWEEP_MAX_ATTEMPTS})`
       });
       if (attempts >= TOKEN_SWEEP_MAX_ATTEMPTS) {
         console.warn(
-          `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) still has no stored card after ${attempts} lookups. It cannot renew. Either Worldpay never stored the card, or the payment query does not expose token links on this account \u2014 check the tokenCreated webhook before assuming the customer has to re-subscribe.`
+          `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) still has no stored card after ${attempts} lookups, by namespace and by payment. It cannot renew \u2014 the customer has to subscribe again.`
         );
       }
       continue;
     }
     patched.set(id, { tokenHref, schemeReference: extractSchemeReference(payment) });
     changed = true;
-    results.push({ id, reference, status: "recovered" });
+    results.push({ id, reference, status: "recovered", detail: "payment query" });
     console.log(`[Worldpay Token Sweep] Recovered the stored card for subscription ${id} from payment ${reference}.`);
   }
   if (!changed) return results;
@@ -8835,6 +9039,91 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
 }
 router10.get("/reconcile-pending", handleReconcilePending);
 router10.post("/reconcile-pending", handleReconcilePending);
+var SUBSCRIPTION_REPAIR_LIMIT = 10;
+async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMIT) {
+  const results = [];
+  let orders = [];
+  let subs = [];
+  try {
+    orders = await fetchResource("orders") || [];
+    subs = await fetchResource("subscriptions") || [];
+  } catch (err) {
+    console.warn("[Worldpay Subscription Repair] Could not read orders/subscriptions:", err?.message);
+    return results;
+  }
+  const hasSubscription = new Set(
+    subs.map((s) => String(s?.sourceOrderId || "")).filter(Boolean)
+  );
+  const isSubscriptionOrder2 = (order) => {
+    if (order?.isSubscription) return true;
+    if (Array.isArray(order?.tags) && order.tags.some((t) => /subscription/i.test(String(t)))) return true;
+    if (order?.subscriptionDetails) return true;
+    return (Array.isArray(order?.items) ? order.items : []).some(
+      (it) => it?.isSubscription || typeof it?.productId === "string" && it.productId.includes("sub-pack")
+    );
+  };
+  const broken = orders.filter(
+    (o) => o && String(o.paymentStatus || "") === "Paid" && isSubscriptionOrder2(o) && !hasSubscription.has(String(o.id)) && // A renewal order is generated BY a subscription and never creates one.
+    !(Array.isArray(o.tags) && o.tags.some((t) => /recurring/i.test(String(t))))
+  );
+  if (broken.length === 0) return results;
+  console.error(
+    `[Worldpay Subscription Repair] ${broken.length} PAID subscription order(s) have no subscription: ` + broken.slice(0, limit).map((o) => o.id).join(", ")
+  );
+  for (const order of broken.slice(0, limit)) {
+    const orderId = String(order.id);
+    try {
+      const payment = await fetchWorldpayPaymentDetails(orderId);
+      await saveVerifiedOrder(orderId, {
+        transactionId: String(order.worldpayTxId || order.gatewayTxId || orderId),
+        authCode: order.worldpayAuthCode || order.gatewayAuthCode || void 0,
+        cardBrand: order.cardBrand || void 0,
+        customerName: order.customerName,
+        customerEmail: order.customerEmail,
+        destination: order.destination,
+        items: Array.isArray(order.items) ? order.items : [],
+        total: typeof order.total === "number" ? order.total : void 0,
+        shippingCost: typeof order.shippingCost === "number" ? order.shippingCost : void 0,
+        deliveryCost: typeof order.deliveryCost === "number" ? order.deliveryCost : void 0,
+        deliveryMethod: order.deliveryMethod,
+        discountApplied: order.discountApplied,
+        gatewayResponse: payment,
+        paymentConfirmed: true
+      });
+      const after = await fetchResource("subscriptions") || [];
+      const created = after.find((s) => String(s?.sourceOrderId || "") === orderId);
+      if (created) {
+        results.push({ orderId, status: "repaired", detail: `subscription ${created.id}` });
+        console.log(`[Worldpay Subscription Repair] ${orderId} now has subscription ${created.id}.`);
+      } else {
+        results.push({ orderId, status: "failed", detail: "no subscription created \u2014 check the order items" });
+        console.error(
+          `[Worldpay Subscription Repair] ${orderId} STILL has no subscription. Its items carry no subscription line, so there is nothing to rebuild a plan from.`
+        );
+      }
+    } catch (err) {
+      results.push({ orderId, status: "error", detail: err?.message });
+      console.error(`[Worldpay Subscription Repair] ${orderId} failed:`, err?.message);
+    }
+  }
+  return results;
+}
+var handleRepairSubscriptions = async (_req, res) => {
+  try {
+    const results = await repairOrdersMissingSubscriptions();
+    const repaired = results.filter((r) => r.status === "repaired").length;
+    return res.json({
+      success: true,
+      message: `Checked for paid subscription orders with no subscription; ${repaired} repaired.`,
+      results
+    });
+  } catch (err) {
+    console.error("[Worldpay Subscription Repair] Failed:", err);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+};
+router10.get("/repair-subscriptions", handleRepairSubscriptions);
+router10.post("/repair-subscriptions", handleRepairSubscriptions);
 var handleRecoverTokens = async (_req, res) => {
   try {
     const results = await recoverMissingSubscriptionTokens();
@@ -9026,7 +9315,9 @@ async function handleCreateHostedPaymentPage(req, res) {
     const worldpayUrl = `${cfg.baseUrl}/payment_pages`;
     console.log(`[Worldpay HPP ${cfg.environment.toUpperCase()}] POST ${worldpayUrl} for Order: ${transactionReference}`);
     const authHeader = cfg.authHeader;
+    let lastAttemptedBody = null;
     const postPaymentPage = async (payload) => {
+      lastAttemptedBody = payload;
       const res2 = await fetch(worldpayUrl, {
         method: "POST",
         headers: {
@@ -9074,6 +9365,22 @@ async function handleCreateHostedPaymentPage(req, res) {
           });
         }
       }
+    }
+    if (isSubscriptionCheckout) {
+      const acceptedBody = response.ok ? lastAttemptedBody : null;
+      console.log(
+        `[Worldpay HPP] TOKENISATION REQUEST for ${transactionReference}: ` + (acceptedBody?.createToken ? JSON.stringify(acceptedBody.createToken) : "NONE \u2014 the accepted request carried no createToken")
+      );
+      console.log(
+        `[Worldpay HPP] TOKENISATION AGREEMENT for ${transactionReference}: ` + (acceptedBody?.customerAgreement ? JSON.stringify(acceptedBody.customerAgreement) : "NONE \u2014 the accepted request carried no customerAgreement")
+      );
+      console.log(
+        `[Worldpay HPP] WORLDPAY RESPONSE for ${transactionReference} (HTTP ${response.status}): ` + JSON.stringify(responseBody).slice(0, 4e3)
+      );
+      const echo = JSON.stringify(responseBody || {});
+      console.log(
+        `[Worldpay HPP] Does the response mention a token at all? ` + (/token/i.test(echo) ? "YES \u2014 see the body above" : "NO")
+      );
     }
     if (!response.ok) {
       const errMsg = responseBody?.description || responseBody?.message || "Hosted Payment Pages creation failed.";
@@ -9273,52 +9580,127 @@ function normalizeWorldpayWebhook(event) {
     payload: Object.keys(details).length > 0 ? details : attributes
   };
 }
+var WEBHOOK_LOG_RESOURCE = "worldpayWebhookLog";
+var WEBHOOK_LOG_KEEP = 50;
+var WEBHOOK_LOG_BODY_LIMIT = 4e3;
+async function recordWebhookReceipt(entry) {
+  try {
+    const existing = await fetchResource(WEBHOOK_LOG_RESOURCE) || [];
+    existing.push({
+      id: `hook_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      receivedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      ...entry,
+      rawBody: entry.rawBody.slice(0, WEBHOOK_LOG_BODY_LIMIT)
+    });
+    await saveResource(WEBHOOK_LOG_RESOURCE, existing.slice(-WEBHOOK_LOG_KEEP));
+  } catch (err) {
+    console.warn("[Worldpay Webhook] Could not record the receipt:", err?.message);
+  }
+}
 router10.get("/webhook", async (_req, res) => {
   let heldTokens = 0;
   try {
     heldTokens = (await fetchResource(PENDING_TOKENS_RESOURCE) || []).length;
   } catch (_e) {
   }
+  let received = [];
+  try {
+    received = (await fetchResource(WEBHOOK_LOG_RESOURCE) || []).slice().reverse();
+  } catch (_e) {
+  }
+  const tokenEvents = received.filter((r) => r?.tokenFound || /token/i.test(String(r?.eventType || "")));
   return res.status(200).json({
     ok: true,
     endpoint: "/api/worldpay/webhook",
     method: "POST",
     message: "Worldpay webhook endpoint is live. Register this exact URL in Developer Tools > Webhooks and make sure tokenCreated is among the subscribed events.",
-    heldTokensAwaitingSubscription: heldTokens
+    heldTokensAwaitingSubscription: heldTokens,
+    // The answer to "is Worldpay actually calling us?". A total of 0 means no
+    // webhook of ANY kind has reached this endpoint, which is a Worldpay-side
+    // registration problem and not something this code can fix.
+    webhooksReceivedTotal: received.length,
+    tokenEventsReceived: tokenEvents.length,
+    lastReceivedAt: received[0]?.receivedAt || null,
+    recentEvents: received.slice(0, 20).map((r) => ({
+      receivedAt: r.receivedAt,
+      eventType: r.eventType,
+      status: r.status,
+      orderId: r.orderId,
+      tokenFound: r.tokenFound,
+      action: r.action
+    })),
+    // Kept in full so an unrecognised payload shape can be matched against
+    // extractTokenHref rather than guessed at.
+    lastRawBodies: received.slice(0, 3).map((r) => r.rawBody)
   });
 });
 router10.post("/webhook", async (req, res) => {
+  const rawBody = (() => {
+    try {
+      return JSON.stringify(req.body);
+    } catch {
+      return String(req.body);
+    }
+  })();
+  console.log(
+    `[Worldpay Webhook] <<< POST RECEIVED (${rawBody.length} bytes) >>> ` + rawBody.slice(0, 4e3)
+  );
+  const finish = async (httpStatus, payload, summary) => {
+    console.log(
+      `[Worldpay Webhook] --> ${summary.action} (type=${summary.evt?.eventType || "unknown"} status=${summary.evt?.status || "n/a"} order=${summary.evt?.orderId || "n/a"} token=${summary.tokenFound ? "YES" : "no"})`
+    );
+    await recordWebhookReceipt({
+      eventType: summary.evt?.eventType || null,
+      status: summary.evt?.status || null,
+      orderId: summary.evt?.orderId || null,
+      namespace: summary.evt?.namespace || null,
+      tokenFound: Boolean(summary.tokenFound),
+      action: summary.action,
+      rawBody
+    });
+    return res.status(httpStatus).json(payload);
+  };
   try {
     const event = req.body;
     if (!event || typeof event !== "object") {
-      return res.status(400).json({ error: "Invalid webhook payload" });
+      return finish(400, { error: "Invalid webhook payload" }, { action: "rejected: body is not an object" });
     }
     const evt = normalizeWorldpayWebhook(event);
     const tokenHref = extractTokenHref(event);
+    console.log(
+      `[Worldpay Webhook] Tokenisation read: tokenHref=${tokenHref || "NOT FOUND IN PAYLOAD"} (eventType=${evt.eventType || "unknown"}, namespace=${evt.namespace || "none"})`
+    );
     const isPaymentEvent = WEBHOOK_PAID_EVENTS.has(evt.status) || WEBHOOK_FAILED_EVENTS.has(evt.status);
     if (tokenHref && !isPaymentEvent) {
       const recorded = await recordTokenForSubscription(tokenHref, {
         transactionReference: evt.orderId,
         namespace: evt.namespace
       });
-      return res.status(200).json({
-        received: true,
-        processed: recorded,
-        event: evt.eventType || "tokenCreated",
-        orderId: evt.orderId
-      });
+      return finish(
+        200,
+        { received: true, processed: recorded, event: evt.eventType || "tokenCreated", orderId: evt.orderId },
+        {
+          action: recorded ? "token recorded against a subscription" : "token parked for a subscription that does not exist yet",
+          evt,
+          tokenFound: true
+        }
+      );
     }
     if (!tokenHref && isTokenEvent(event)) {
       console.error(
         `[Worldpay Webhook] A token event (${evt.eventType || "unknown type"}) arrived with no readable token href. Renewals depend on this value \u2014 raw body follows so the shape can be matched: ${JSON.stringify(event).slice(0, 4e3)}`
       );
-      return res.status(200).json({ received: true, processed: false, reason: "no token href" });
+      return finish(
+        200,
+        { received: true, processed: false, reason: "no token href" },
+        { action: "TOKEN EVENT WITH AN UNREADABLE HREF - payload shape needs matching", evt }
+      );
     }
     if (!evt.orderId) {
       console.warn(
         `[Worldpay Webhook] Ignoring an event with no transaction reference (type: ${evt.eventType || "unknown"}).`
       );
-      return res.status(200).json({ received: true, ignored: true });
+      return finish(200, { received: true, ignored: true }, { action: "ignored: no transaction reference", evt });
     }
     if (WEBHOOK_PAID_EVENTS.has(evt.status)) {
       await saveVerifiedOrder(evt.orderId, {
@@ -9342,7 +9724,11 @@ router10.post("/webhook", async (req, res) => {
         `[Worldpay Webhook] No action for event "${evt.eventType || evt.status}" on ${evt.orderId}.`
       );
     }
-    return res.status(200).json({ received: true, processed: true, orderId: evt.orderId });
+    return finish(
+      200,
+      { received: true, processed: true, orderId: evt.orderId },
+      { action: "payment event processed", evt, tokenFound: Boolean(tokenHref) }
+    );
   } catch (error) {
     console.error("[Worldpay Webhook] Processing error:", error);
     return res.status(500).json({ received: true, processed: false, error: error.message });

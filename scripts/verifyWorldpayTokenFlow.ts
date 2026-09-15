@@ -27,6 +27,10 @@ import path from 'path';
 const TOKEN_A = 'https://access.worldpay.com/tokens/6a1f9c2d4b8e47f0';
 const TOKEN_B = 'https://access.worldpay.com/tokens/b73e5a19cc0d42aa';
 const TOKEN_C = 'https://access.worldpay.com/tokens/f10c8d7e2a934bb6';
+const TOKEN_D = 'https://access.worldpay.com/tokens/9926000855699364922';
+const TOKEN_E = 'https://access.worldpay.com/tokens/1111111111111111111';
+const TOKEN_F = 'https://access.worldpay.com/tokens/2222222222222222222';
+const TOKEN_G = 'https://access.worldpay.com/tokens/3333333333333333333';
 /** Space-padded exactly as the card schemes return it. */
 const SCHEME_REF = 'MRLZRGKT60908  ';
 
@@ -37,14 +41,28 @@ type Scenario = {
   mandateRejected: boolean;
   /** Token link the payment query publishes, if any. */
   queryToken: string | null;
+  /** What GET /tokens?namespace=... returns, keyed by namespace. */
+  tokens: Record<string, any[]>;
+  /** Scheme reference the payment and the authorization report. */
+  schemeReference: string;
+  /** A different token handed back on a recurring charge, if any. */
+  rotatedToken: string | null;
 };
 
-const scenario: Scenario = { silentRejected: true, mandateRejected: false, queryToken: null };
+const scenario: Scenario = {
+  silentRejected: true,
+  mandateRejected: false,
+  queryToken: null,
+  tokens: {},
+  schemeReference: SCHEME_REF,
+  rotatedToken: null
+};
 
 const calls = {
   paymentPages: [] as any[],
   authorizations: [] as any[],
-  queries: [] as string[]
+  queries: [] as string[],
+  tokenLookups: [] as string[]
 };
 
 let passed = 0;
@@ -107,6 +125,13 @@ async function main() {
       });
     }
 
+    // GET /tokens?namespace=... — the stored cards Worldpay holds for a shopper.
+    if (url.includes('/tokens')) {
+      calls.tokenLookups.push(url);
+      const ns = decodeURIComponent((url.match(/namespace=([^&]+)/) || [])[1] || '');
+      return json(200, { _embedded: { tokens: scenario.tokens[ns] || [] } });
+    }
+
     if (url.includes('/paymentQueries/payments')) {
       calls.queries.push(url);
       const payment: any = {
@@ -114,7 +139,7 @@ async function main() {
         lastEvent: 'settlementRequestSubmitted',
         transactionType: 'cardOnFile',
         authorizationCode: 'AUTH123',
-        scheme: { reference: SCHEME_REF },
+        scheme: { reference: scenario.schemeReference },
         paymentInstrument: { card: { brand: 'visa' } }
       };
       if (scenario.queryToken) payment._links = { 'tokens:token': { href: scenario.queryToken } };
@@ -123,12 +148,17 @@ async function main() {
 
     if (url.includes('/payments/authorizations')) {
       calls.authorizations.push(body);
-      return json(201, {
+      const authResponse: any = {
         id: 'auth-harness-0001',
         outcome: 'authorized',
         authorizationCode: 'AUTH999',
-        scheme: { reference: SCHEME_REF }
-      });
+        scheme: { reference: scenario.schemeReference }
+      };
+      // Worldpay can hand back a different token on a charge.
+      if (scenario.rotatedToken) {
+        authResponse._links = { 'tokens:token': { href: scenario.rotatedToken } };
+      }
+      return json(201, authResponse);
     }
 
     // Proves the run reaches nothing but Worldpay.
@@ -136,7 +166,7 @@ async function main() {
   }) as any;
 
   const { createExpressApp } = await import('../serverApp');
-  const { fetchResource } = await import('../serverDb');
+  const { fetchResource, saveResource } = await import('../serverDb');
   const { toSubscriptionRow } = await import('../src/lib/subscriptionRow');
 
   const app = await createExpressApp();
@@ -349,6 +379,210 @@ async function main() {
     const queriesBeforeLast = calls.queries.length;
     await post('/api/worldpay/recover-tokens', {});
     check('and is not asked about again', calls.queries.length === queriesBeforeLast, `${calls.queries.length - queriesBeforeLast} extra quer(ies)`);
+
+    console.log('\n=== 10. Every inbound webhook is recorded, whatever its shape ===');
+    const getJson = async (route: string) => {
+      const res = await realFetch(`${base}${route}`);
+      return { status: res.status, body: await res.json().catch(() => ({})) };
+    };
+
+    const before = await getJson('/api/worldpay/webhook');
+    const countBefore = Number(before.body?.webhooksReceivedTotal || 0);
+
+    // A shape this code does not understand at all. It must still be visible,
+    // because an unrecognised payload is exactly the case that used to vanish.
+    const odd = await post('/api/worldpay/webhook', { somethingWorldpayMightSend: { nested: true } });
+    check('an unrecognised webhook still gets a 2xx', odd.status === 200, `status ${odd.status}`);
+
+    const after = await getJson('/api/worldpay/webhook');
+    check(
+      'it was counted as received',
+      Number(after.body?.webhooksReceivedTotal || 0) === countBefore + 1,
+      `${countBefore} -> ${after.body?.webhooksReceivedTotal}`
+    );
+    check('its raw body was kept for shape-matching', JSON.stringify(after.body?.lastRawBodies || []).includes('somethingWorldpayMightSend'));
+    check('the diagnostic says what was done with it', typeof after.body?.recentEvents?.[0]?.action === 'string', JSON.stringify(after.body?.recentEvents?.[0]));
+
+    // A token event whose href sits somewhere unrecognised must be called out
+    // rather than silently treated as "no token was sent".
+    await post('/api/worldpay/webhook', {
+      eventDetails: { type: 'tokenCreated', transactionReference: 'PS90007', somewhereUnexpected: 'not-a-url' }
+    });
+    const afterOdd = await getJson('/api/worldpay/webhook');
+    const unreadableFlagged = (afterOdd.body?.recentEvents || []).find((e: any) => /UNREADABLE/i.test(String(e?.action || '')));
+    check('a token event with an unreadable href is flagged as such', Boolean(unreadableFlagged), JSON.stringify(afterOdd.body?.recentEvents?.[0]));
+
+    check('token events are counted separately', Number(afterOdd.body?.tokenEventsReceived || 0) >= 1, JSON.stringify(afterOdd.body?.tokenEventsReceived));
+
+    console.log('\n=== 11. The tokens service supplies the card when no webhook does ===');
+    const ORDER_7 = 'PS90008';
+    const EMAIL_7 = 'harness.seven@pouch-supply.com';
+    scenario.queryToken = null;
+    // Worldpay is holding a card for this shopper, stored under this payment's
+    // own agreement.
+    scenario.tokens[EMAIL_7] = [
+      {
+        tokenId: '9926000855699364922',
+        namespace: EMAIL_7,
+        schemeTransactionReference: SCHEME_REF.trim(),
+        tokenExpiryDateTime: '2030-09-08T13:28:09Z',
+        tokenPaymentInstrument: { href: TOKEN_D }
+      }
+    ];
+
+    await post('/api/worldpay/session', checkoutBody(ORDER_7, EMAIL_7));
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_7, status: 'SUCCESS' });
+
+    const fromTokensApi = await subscriptionFor(ORDER_7);
+    check('the card was retrieved without any webhook at all', fromTokensApi?.worldpayTokenHref === TOKEN_D, `got ${fromTokensApi?.worldpayTokenHref}`);
+
+    console.log('\n=== 12. A card from a DIFFERENT agreement is refused ===');
+    const ORDER_8 = 'PS90009';
+    const EMAIL_8 = 'harness.eight@pouch-supply.com';
+    // Exactly the PS65700 shape: Worldpay holds a card for this shopper, but it
+    // was created under an earlier payment's agreement.
+    scenario.tokens[EMAIL_8] = [
+      {
+        tokenId: '1111111111111111111',
+        namespace: EMAIL_8,
+        schemeTransactionReference: 'MRLZRGKT60908',
+        tokenPaymentInstrument: { href: TOKEN_E }
+      }
+    ];
+    scenario.schemeReference = 'MRLDDX5E80915';
+
+    await post('/api/worldpay/session', checkoutBody(ORDER_8, EMAIL_8));
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_8, status: 'SUCCESS' });
+
+    const mismatched = await subscriptionFor(ORDER_8);
+    check(
+      'a card from another agreement is NOT attached',
+      !mismatched?.worldpayTokenHref,
+      `wrongly attached ${mismatched?.worldpayTokenHref}`
+    );
+    scenario.schemeReference = SCHEME_REF;
+
+    console.log('\n=== 13. One shopper\'s card is never given to another ===');
+    const ORDER_9 = 'PS90010';
+    const EMAIL_9 = 'harness.nine@pouch-supply.com';
+    // Worldpay answers the query with a card filed under somebody else. This
+    // should never happen, and it must never be trusted if it does.
+    scenario.tokens[EMAIL_9] = [
+      {
+        tokenId: '2222222222222222222',
+        namespace: 'someone.else@pouch-supply.com',
+        schemeTransactionReference: SCHEME_REF.trim(),
+        tokenPaymentInstrument: { href: TOKEN_F }
+      }
+    ];
+
+    await post('/api/worldpay/session', checkoutBody(ORDER_9, EMAIL_9));
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_9, status: 'SUCCESS' });
+
+    const foreign = await subscriptionFor(ORDER_9);
+    check(
+      "another shopper's card is never attached",
+      foreign?.worldpayTokenHref !== TOKEN_F,
+      `attached a foreign card: ${foreign?.worldpayTokenHref}`
+    );
+
+    console.log('\n=== 14. Two cards, no way to tell them apart, nothing assigned ===');
+    const ORDER_10 = 'PS90011';
+    const EMAIL_10 = 'harness.ten@pouch-supply.com';
+    scenario.tokens[EMAIL_10] = [
+      { tokenId: 'a', namespace: EMAIL_10, schemeTransactionReference: 'MRLOLD111', tokenPaymentInstrument: { href: TOKEN_E } },
+      { tokenId: 'b', namespace: EMAIL_10, schemeTransactionReference: 'MRLOLD222', tokenPaymentInstrument: { href: TOKEN_F } }
+    ];
+    scenario.schemeReference = 'MRLNEW999';
+
+    await post('/api/worldpay/session', checkoutBody(ORDER_10, EMAIL_10));
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_10, status: 'SUCCESS' });
+
+    const ambiguous = await subscriptionFor(ORDER_10);
+    check('nothing is assigned when the right card cannot be identified', !ambiguous?.worldpayTokenHref, `got ${ambiguous?.worldpayTokenHref}`);
+    scenario.schemeReference = SCHEME_REF;
+
+    console.log('\n=== 15. A rotated token from a renewal is persisted ===');
+    // Worldpay may hand back a different token on the charge; the next renewal
+    // has to present the current card, not the retired one.
+    scenario.tokens[EMAIL_7] = [];
+    scenario.rotatedToken = TOKEN_G;
+    calls.authorizations.length = 0;
+    const rotate = await post('/api/subscriptions/charge', { subscriptionId: fromTokensApi?.id });
+    check('the renewal succeeded', rotate.body?.success === true, JSON.stringify(rotate.body).slice(0, 160));
+    check('it presented the card it had', calls.authorizations[0]?.instruction?.paymentInstrument?.href === TOKEN_D);
+
+    const rotated = await subscriptionFor(ORDER_7);
+    check('the rotated token replaced the old one', rotated?.worldpayTokenHref === TOKEN_G, `got ${rotated?.worldpayTokenHref}`);
+    scenario.rotatedToken = null;
+
+    console.log('\n=== 16. PS65700: a paid order whose subscription was never created ===');
+    const ORDER_11 = 'PS90012';
+    const EMAIL_11 = 'harness.eleven@pouch-supply.com';
+    scenario.tokens[EMAIL_11] = [];
+    scenario.queryToken = null;
+
+    // The checkout happens normally, so the basket IS a subscription.
+    await post('/api/worldpay/session', checkoutBody(ORDER_11, EMAIL_11));
+
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_11, status: 'SUCCESS' });
+
+    // Reproduce PS65700 exactly: the order is Paid and carries subscription
+    // items, but no subscription row exists. In production this comes from the
+    // subscription write failing after the order was saved — which used to be
+    // swallowed by an empty catch. Removing the row here reaches the same state
+    // deterministically, without having to force an exception.
+    const strandedSubs: any[] = (await fetchResource('subscriptions')) || [];
+    await saveResource(
+      'subscriptions',
+      strandedSubs.filter((s: any) => String(s?.sourceOrderId) !== ORDER_11)
+    );
+    check('the subscription is gone, leaving a paid order alone', !(await subscriptionFor(ORDER_11)));
+
+    const paidOrders: any[] = (await fetchResource('orders')) || [];
+    const strandedOrder = paidOrders.find((o: any) => String(o.id) === ORDER_11);
+    check('the order exists and is Paid', strandedOrder?.paymentStatus === 'Paid', JSON.stringify(strandedOrder?.paymentStatus));
+
+    // Before the fix this returned early forever and nothing could recover it.
+    const repair = await post('/api/worldpay/repair-subscriptions', {});
+    check('the repair sweep ran', repair.status === 200, `status ${repair.status}`);
+
+    const rebuilt = await subscriptionFor(ORDER_11);
+    check('the missing subscription is created', Boolean(rebuilt), 'still no subscription');
+    check('it is active', rebuilt?.status === 'active', JSON.stringify(rebuilt?.status));
+    check('it carries the scheme reference from its own payment', String(rebuilt?.worldpaySchemeReference || '').trim() === SCHEME_REF.trim());
+    check('it has no card attached, because none could be proven', !rebuilt?.worldpayTokenHref, `wrongly attached ${rebuilt?.worldpayTokenHref}`);
+
+    console.log('\n=== 17. Repair is idempotent and never duplicates a plan ===');
+    await post('/api/worldpay/repair-subscriptions', {});
+    await post('/api/worldpay/repair-subscriptions', {});
+    const allSubs: any[] = (await fetchResource('subscriptions')) || [];
+    const forOrder11 = allSubs.filter((s: any) => String(s?.sourceOrderId) === ORDER_11);
+    check('exactly one subscription exists for the order', forOrder11.length === 1, `${forOrder11.length} subscriptions`);
+
+    // A plain duplicate callback must still not create a second plan.
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_11, status: 'SUCCESS' });
+    const afterReplay: any[] = (await fetchResource('subscriptions')) || [];
+    check(
+      'replaying the payment callback does not create a second plan',
+      afterReplay.filter((s: any) => String(s?.sourceOrderId) === ORDER_11).length === 1,
+      `${afterReplay.filter((s: any) => String(s?.sourceOrderId) === ORDER_11).length} subscriptions`
+    );
+
+    console.log('\n=== 18. A one-off order is never given a subscription ===');
+    const ORDER_12 = 'PS90013';
+    const EMAIL_12 = 'harness.twelve@pouch-supply.com';
+    await post('/api/worldpay/verify-payment', {
+      orderId: ORDER_12,
+      status: 'SUCCESS',
+      customerEmail: EMAIL_12,
+      customerName: 'One Off',
+      total: 19.99,
+      items: [{ productId: 'plain-product', productTitle: 'Just a tin', price: 19.99, quantity: 1 }]
+    });
+    await post('/api/worldpay/repair-subscriptions', {});
+    const oneOff = await subscriptionFor(ORDER_12);
+    check('a non-subscription order gets no subscription', !oneOff, `created ${oneOff?.id}`);
   } catch (err: any) {
     failures.push(`harness threw: ${err?.stack || err?.message || err}`);
     console.error('\n[verify] threw:', err);
