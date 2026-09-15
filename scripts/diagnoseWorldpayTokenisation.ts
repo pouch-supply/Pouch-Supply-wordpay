@@ -31,7 +31,8 @@
  * Keep the probes even though the schema question is settled: they are the
  * regression test for it, and they re-answer it in seconds if Worldpay changes
  * the schema or the account's entitlements underneath us.
- */import 'dotenv/config';
+ */
+import 'dotenv/config';
 
 const BASE = (process.env.WORLDPAY_BASE_URL || 'https://access.worldpay.com').replace(/\/+$/, '');
 const ENTITY = process.env.WORLDPAY_ENTITY || process.env.WORLDPAY_ENTITY_ID || '';
