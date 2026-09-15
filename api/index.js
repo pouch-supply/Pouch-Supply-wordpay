@@ -2166,7 +2166,7 @@ var init_serverDb = __esm({
       customPages: [...DEFAULT_PAGES],
       blogs: [...INITIAL_BLOGS]
     };
-    BACKUP_FILE_PATH = path.join(process.cwd(), "local_store_data.json");
+    BACKUP_FILE_PATH = process.env.LOCAL_STORE_PATH ? path.resolve(process.env.LOCAL_STORE_PATH) : path.join(process.cwd(), "local_store_data.json");
     loadMemoryCacheFromBackup();
     isTablesInitialized = false;
     ensureNeonTablesExist().then(() => {
@@ -8519,7 +8519,12 @@ async function saveVerifiedOrder(orderId, details) {
       // it did, its token is waiting to be claimed rather than lost.
       await claimPendingToken(String(orderId), customerEmail) || null;
       const schemeReference = extractSchemeReference(details.gatewayResponse) || (details.schemeReference && !isPlaceholderCredential(details.schemeReference) ? details.schemeReference : null);
-      if (!tokenHref) {
+      const tokenisationDowngraded = Boolean(pending?.tokenisationDowngraded);
+      if (!tokenHref && tokenisationDowngraded) {
+        console.error(
+          `[Worldpay Order] Subscription for order ${orderId} was taken as a ONE-OFF payment because Worldpay refused to store the card. No tokenCreated webhook will arrive and this plan cannot renew. Enable customer agreements / tokenisation on the account, then ask this customer to re-subscribe.`
+        );
+      } else if (!tokenHref) {
         console.log(
           `[Worldpay Order] Subscription for order ${orderId} has no stored card token yet \u2014 awaiting the tokenCreated webhook at /api/worldpay/webhook.`
         );
@@ -8557,6 +8562,9 @@ async function saveVerifiedOrder(orderId, details) {
         nextBillingDate,
         worldpayTransactionId: details.transactionId || orderId,
         worldpayTokenHref: tokenHref,
+        // Truthful state for a plan that can never charge again, so it is not
+        // left indistinguishable from one that is simply waiting for its webhook.
+        tokenisationDowngraded: tokenisationDowngraded && !tokenHref,
         worldpayRecurringHref: recurringHref,
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: "authorized",
@@ -8714,18 +8722,120 @@ var handleReconcilePending = async (_req, res) => {
   try {
     const results = await reconcilePendingWorldpayOrders();
     const reconciled = results.filter((r) => r.status === "reconciled").length;
+    const tokenResults = await recoverMissingSubscriptionTokens().catch((err) => {
+      console.error("[Worldpay Token Sweep] Sweep failed during reconcile:", err?.message);
+      return [];
+    });
+    const tokensRecovered = tokenResults.filter((r) => r.status === "recovered").length;
     return res.json({
       success: true,
-      message: `Checked ${results.length} pending order(s); ${reconciled} reconciled.`,
-      results
+      message: `Checked ${results.length} pending order(s); ${reconciled} reconciled. Checked ${tokenResults.length} subscription(s) with no stored card; ${tokensRecovered} recovered.`,
+      results,
+      tokenRecovery: tokenResults
     });
   } catch (err) {
     console.error("[Worldpay Reconcile] Failed:", err);
     return res.status(500).json({ success: false, error: err?.message });
   }
 };
+var TOKEN_SWEEP_LIMIT = 25;
+var LIVE_SUB_STATUSES_FOR_SWEEP = ["active", "subscribed", "paused", "trialing"];
+async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
+  const results = [];
+  let subs = [];
+  try {
+    subs = await fetchResource("subscriptions") || [];
+  } catch (err) {
+    console.warn("[Worldpay Token Sweep] Could not read subscriptions:", err?.message);
+    return results;
+  }
+  const needsToken = subs.filter((sub) => {
+    if (!sub) return false;
+    if (!LIVE_SUB_STATUSES_FOR_SWEEP.includes(String(sub.status || "").toLowerCase())) return false;
+    if (isUsableTokenHref(sub.worldpayTokenHref)) return false;
+    if (sub.tokenisationDowngraded) return false;
+    if (sub.tokenLookupExhaustedAt) return false;
+    return true;
+  });
+  if (needsToken.length === 0) return results;
+  console.log(
+    `[Worldpay Token Sweep] ${needsToken.length} live subscription(s) have no stored card. Re-reading their original payments for a token.`
+  );
+  let changed = false;
+  const patched = /* @__PURE__ */ new Map();
+  const exhausted = /* @__PURE__ */ new Set();
+  for (const sub of needsToken.slice(0, limit)) {
+    const reference = String(sub.sourceOrderId || sub.worldpayTransactionId || sub.lastPaymentId || "").trim();
+    const id = String(sub.id);
+    if (!reference) {
+      results.push({ id, reference: "", status: "skipped", detail: "no payment reference to query" });
+      continue;
+    }
+    const payment = await fetchWorldpayPaymentDetails(reference);
+    if (!payment) {
+      results.push({ id, reference, status: "not-found" });
+      continue;
+    }
+    const tokenHref = extractTokenHref(payment);
+    if (!tokenHref) {
+      exhausted.add(id);
+      changed = true;
+      results.push({ id, reference, status: "no-token", detail: "payment carries no token link" });
+      console.warn(
+        `[Worldpay Token Sweep] Subscription ${id} (payment ${reference}) has no stored card and Worldpay holds no token for it. It cannot renew \u2014 the customer has to re-subscribe.`
+      );
+      continue;
+    }
+    patched.set(id, { tokenHref, schemeReference: extractSchemeReference(payment) });
+    changed = true;
+    results.push({ id, reference, status: "recovered" });
+    console.log(`[Worldpay Token Sweep] Recovered the stored card for subscription ${id} from payment ${reference}.`);
+  }
+  if (!changed) return results;
+  try {
+    const next = subs.map((sub) => {
+      const id = String(sub?.id);
+      if (exhausted.has(id)) {
+        return { ...sub, tokenLookupExhaustedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      }
+      const found = patched.get(id);
+      if (!found) return sub;
+      return {
+        ...sub,
+        worldpayTokenHref: found.tokenHref,
+        worldpaySchemeReference: sub.worldpaySchemeReference || found.schemeReference || null,
+        tokenRecordedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    });
+    await saveResource("subscriptions", next);
+  } catch (err) {
+    console.error("[Worldpay Token Sweep] Failed to save recovered tokens:", err?.message);
+    return results;
+  }
+  for (const [id, found] of patched) {
+    await prisma.subscription.update({ where: { id }, data: { worldpayTokenHref: found.tokenHref } }).catch(() => {
+    });
+  }
+  return results;
+}
 router10.get("/reconcile-pending", handleReconcilePending);
 router10.post("/reconcile-pending", handleReconcilePending);
+var handleRecoverTokens = async (_req, res) => {
+  try {
+    const results = await recoverMissingSubscriptionTokens();
+    const recovered = results.filter((r) => r.status === "recovered").length;
+    return res.json({
+      success: true,
+      message: `Checked ${results.length} subscription(s) with no stored card; ${recovered} recovered.`,
+      results
+    });
+  } catch (err) {
+    console.error("[Worldpay Token Sweep] Failed:", err);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+};
+router10.get("/recover-tokens", handleRecoverTokens);
+router10.post("/recover-tokens", handleRecoverTokens);
 router10.get("/config", (_req, res) => {
   const cfg = getEnvironmentConfig();
   res.json({
@@ -8918,14 +9028,37 @@ async function handleCreateHostedPaymentPage(req, res) {
     };
     let { res: response, parsed: responseBody } = await postPaymentPage(body);
     if (!response.ok && isSubscriptionCheckout) {
-      const rejection = String(responseBody?.description || responseBody?.message || responseBody?.errorName || "");
-      console.error(
-        `[Worldpay HPP] Subscription mandate rejected for ${transactionReference} (${response.status}): ${rejection}. Retrying as a one-off payment \u2014 this subscription will NOT be able to take recurring payments until customer agreements / tokenisation are enabled on entity ${cfg.entity}.`
-      );
-      const fallbackBody = { ...body };
-      delete fallbackBody.customerAgreement;
-      delete fallbackBody.createToken;
-      ({ res: response, parsed: responseBody } = await postPaymentPage(fallbackBody));
+      const describe = (parsedBody) => String(parsedBody?.description || parsedBody?.message || parsedBody?.errorName || "");
+      const askBody = {
+        ...body,
+        createToken: { ...body.createToken, optIn: "ASK" }
+      };
+      if (tokenOptIn() !== "ASK") {
+        console.warn(
+          `[Worldpay HPP] Mandate request rejected for ${transactionReference} (${response.status}): ${describe(responseBody)}. Retrying with optIn "ASK" before giving up the stored card.`
+        );
+        ({ res: response, parsed: responseBody } = await postPaymentPage(askBody));
+        if (response.ok) {
+          console.warn(
+            `[Worldpay HPP] ${transactionReference} was accepted with optIn "ASK". "Silent" is not enabled on entity ${cfg.entity} \u2014 set WORLDPAY_TOKEN_OPT_IN=ASK so every future subscription is tokenised on the first attempt.`
+          );
+        }
+      }
+      if (!response.ok) {
+        console.error(
+          `[Worldpay HPP] Subscription mandate rejected for ${transactionReference} (${response.status}): ${describe(responseBody)}. Retrying as a one-off payment \u2014 this subscription will NOT be able to take recurring payments until customer agreements / tokenisation are enabled on entity ${cfg.entity}.`
+        );
+        const fallbackBody = { ...body };
+        delete fallbackBody.customerAgreement;
+        delete fallbackBody.createToken;
+        ({ res: response, parsed: responseBody } = await postPaymentPage(fallbackBody));
+        if (response.ok) {
+          await savePendingCheckout(transactionReference, {
+            ...pendingPayload,
+            tokenisationDowngraded: true
+          });
+        }
+      }
     }
     if (!response.ok) {
       const errMsg = responseBody?.description || responseBody?.message || "Hosted Payment Pages creation failed.";

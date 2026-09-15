@@ -31,7 +31,18 @@ const memoryCache: Record<string, any[]> = {
   blogs: [...INITIAL_BLOGS],
 };
 
-const BACKUP_FILE_PATH = path.join(process.cwd(), 'local_store_data.json');
+/**
+ * The local mirror of the store.
+ *
+ * Defaults to local_store_data.json beside the running app. LOCAL_STORE_PATH
+ * redirects it, which is what lets a test drive the real app against a throwaway
+ * store instead of this file — pointing the whole process at a different working
+ * directory is the alternative, and on Windows that trips a libuv file-watcher
+ * assertion mid-run.
+ */
+const BACKUP_FILE_PATH = process.env.LOCAL_STORE_PATH
+  ? path.resolve(process.env.LOCAL_STORE_PATH)
+  : path.join(process.cwd(), 'local_store_data.json');
 
 function loadMemoryCacheFromBackup() {
   try {
