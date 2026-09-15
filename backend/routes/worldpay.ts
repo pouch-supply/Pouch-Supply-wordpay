@@ -301,7 +301,7 @@ async function holdUnmatchedToken(
 
 /**
  * Takes a held token belonging to this order or shopper, if one is waiting.
- * Claimed tokens are removed so a later subscription cannot pick up a card that
+ * A claimed token is retired so a later subscription cannot pick up a card that
  * is already spoken for.
  */
 async function claimPendingToken(orderId: string, customerEmail?: string | null): Promise<string | null> {
@@ -322,10 +322,27 @@ async function claimPendingToken(orderId: string, customerEmail?: string | null)
     );
     if (!match) return null;
 
-    await saveResource(
-      PENDING_TOKENS_RESOURCE,
-      held.filter((entry: any) => entry?.id !== match.id)
+    // The claimed entry is blanked in place rather than dropped from the list.
+    // saveResource only deletes rows absent from a NON-EMPTY list, so removing
+    // the last held token would leave its row in Neon for the next request to
+    // read back — and a later subscription for the same shopper would claim a
+    // card that is already spoken for. Overwriting the row cannot be skipped.
+    // The matcher above requires a usable href, so a blanked entry is inert,
+    // and holdUnmatchedToken's TTL sweep clears it once it ages out.
+    const consumed = held.map((entry: any) =>
+      entry?.id === match.id
+        ? {
+            id: entry.id,
+            tokenHref: null,
+            reference: entry.reference || null,
+            namespace: entry.namespace || null,
+            receivedAt: entry.receivedAt || new Date().toISOString(),
+            claimedAt: new Date().toISOString()
+          }
+        : entry
     );
+
+    await saveResource(PENDING_TOKENS_RESOURCE, consumed);
 
     console.log(
       `[Worldpay Order] Claimed a held card token for order ${reference || email}: ${match.tokenHref}`

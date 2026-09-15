@@ -589,6 +589,7 @@ var init_subscriptionRow = __esm({
       "currency",
       "billingInterval",
       "worldpayTransactionId",
+      "worldpayTokenHref",
       "worldpayRecurringHref",
       "worldpaySchemeReference",
       "lastPaymentStatus",
@@ -850,6 +851,7 @@ async function ensureNeonTablesExist() {
         "billingInterval" TEXT NOT NULL DEFAULT 'month',
         "nextBillingDate" TIMESTAMP(3),
         "worldpayTransactionId" TEXT,
+        "worldpayTokenHref" TEXT,
         "worldpayRecurringHref" TEXT,
         "worldpaySchemeReference" TEXT,
         "lastPaymentStatus" TEXT,
@@ -859,6 +861,9 @@ async function ensureNeonTablesExist() {
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Subscription" ADD COLUMN IF NOT EXISTS "worldpayTokenHref" TEXT;
     `);
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "BlogPost" (
@@ -1522,6 +1527,7 @@ async function fetchFromPrismaModel(resource) {
         billingInterval: s.billingInterval,
         nextBillingDate: s.nextBillingDate ? s.nextBillingDate.toISOString() : null,
         worldpayTransactionId: s.worldpayTransactionId,
+        worldpayTokenHref: s.worldpayTokenHref,
         worldpayRecurringHref: s.worldpayRecurringHref,
         worldpaySchemeReference: s.worldpaySchemeReference,
         lastPaymentStatus: s.lastPaymentStatus,
@@ -4764,6 +4770,77 @@ function isUsableRecurringHref(href) {
   if (/\/payments\/recurring\/(wp-|mock-)/i.test(href)) return false;
   return true;
 }
+function isUsableTokenHref(href) {
+  if (!href || typeof href !== "string") return false;
+  const trimmed = href.trim();
+  if (!trimmed.startsWith("http")) return false;
+  if (isPlaceholderCredential(trimmed)) return false;
+  return /\/tokens?\//i.test(trimmed);
+}
+function tokenOptIn() {
+  const configured = String(process.env.WORLDPAY_TOKEN_OPT_IN || "Silent").trim();
+  return /^(ask|silent)$/i.test(configured) ? configured.toUpperCase() === "ASK" ? "ASK" : "Silent" : "Silent";
+}
+function findTokenHrefDeep(node, depth, seen) {
+  if (depth > 6 || node === null || node === void 0) return null;
+  if (typeof node === "string") return isUsableTokenHref(node) ? node.trim() : null;
+  if (typeof node !== "object") return null;
+  if (seen.has(node)) return null;
+  seen.add(node);
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      const found = findTokenHrefDeep(entry, depth + 1, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (!TOKEN_HREF_KEYS.has(key.toLowerCase())) continue;
+    const found = findTokenHrefDeep(value, depth + 1, seen);
+    if (found) return found;
+  }
+  for (const value of Object.values(node)) {
+    const found = findTokenHrefDeep(value, depth + 1, seen);
+    if (found) return found;
+  }
+  return null;
+}
+function extractTokenHref(payload) {
+  if (!payload) return null;
+  if (typeof payload === "string") return isUsableTokenHref(payload) ? payload.trim() : null;
+  if (typeof payload !== "object") return null;
+  const preferred = [
+    // Access webhook: { eventDetails: { type: "tokenCreated", ... } }
+    payload?.eventDetails?.tokenHref,
+    payload?.eventDetails?.token?.href,
+    payload?.eventDetails?.tokenPaymentInstrument?.href,
+    payload?.eventDetails?._links?.["tokens:token"]?.href,
+    // Flattened webhook bodies.
+    payload?.tokenHref,
+    payload?.token?.href,
+    payload?.attributes?.tokenHref,
+    payload?.data?.attributes?.tokenHref,
+    // Payment authorization / payment query responses.
+    payload?._links?.["tokens:token"]?.href,
+    payload?._links?.token?.href,
+    payload?.paymentInstrument?.href,
+    payload?.paymentInstrument?.token?.href,
+    payload?.instruction?.paymentInstrument?.href,
+    payload?._embedded?.payments?.[0]?._links?.["tokens:token"]?.href,
+    payload?._embedded?.payments?.[0]?.paymentInstrument?.href
+  ];
+  for (const value of preferred) {
+    if (isUsableTokenHref(value)) return String(value).trim();
+  }
+  return findTokenHrefDeep(payload, 0, /* @__PURE__ */ new Set());
+}
+function isTokenEvent(payload) {
+  const type = String(
+    payload?.eventDetails?.type || payload?.eventType || payload?.type || payload?.data?.type || ""
+  ).toLowerCase();
+  if (type.includes("token")) return true;
+  return Boolean(extractTokenHref(payload));
+}
 function getWorldpayConfig() {
   const username = process.env.WORLDPAY_API_USERNAME;
   const password = process.env.WORLDPAY_API_PASSWORD;
@@ -4782,6 +4859,43 @@ function getWorldpayConfig() {
 }
 function authorizationsUrl(config) {
   return `${config.baseUrl}/payments/authorizations`;
+}
+function settlementShapesToTry() {
+  const configured = String(process.env.WORLDPAY_SETTLEMENT_SHAPE || "auto").trim();
+  if (configured && configured !== "auto") {
+    if (SETTLEMENT_FALLBACK_ORDER.includes(configured)) {
+      return [configured];
+    }
+    console.warn(
+      `[Worldpay Subscription] Ignoring unknown WORLDPAY_SETTLEMENT_SHAPE "${configured}". Expected one of: ${SETTLEMENT_FALLBACK_ORDER.join(", ")}, auto.`
+    );
+  }
+  if (String(process.env.WORLDPAY_AUTO_SETTLE || "true").toLowerCase() === "false") {
+    return ["none"];
+  }
+  return [...SETTLEMENT_FALLBACK_ORDER];
+}
+function applySettlement(instruction, shape) {
+  delete instruction.settlement;
+  delete instruction.requestAutoSettlement;
+  if (shape === "settlement") {
+    instruction.settlement = {
+      auto: true,
+      cancelOn: {
+        // A stored-card MIT presents neither a CVC nor an address, so cancelling
+        // the payment because they did not match would decline every renewal.
+        cvcNotMatched: "disabled",
+        avsNotMatched: "disabled"
+      }
+    };
+  } else if (shape === "requestAutoSettlement") {
+    instruction.requestAutoSettlement = { enabled: true };
+  }
+}
+function isSchemaRejection(status, data) {
+  if (status !== 400 && status !== 415 && status !== 422) return false;
+  const text = JSON.stringify(data || {}).toLowerCase();
+  return text.includes("settlement") || text.includes("schema") || text.includes("unrecognised") || text.includes("unrecognized") || text.includes("unexpected") || text.includes("notsupported") || text.includes("invalidvalue") || text.includes("bodydoesnotmatch");
 }
 function getHeaders(config) {
   const correlationId = crypto2.randomUUID ? crypto2.randomUUID() : `sub-${Math.random().toString(36).substring(2, 10)}`;
@@ -4851,6 +4965,7 @@ function extractRecurringAuthorizationHref(response) {
   return isUsableRecurringHref(direct) ? direct : null;
 }
 async function chargeRecurringSubscription({
+  tokenHref,
   recurringHref,
   transactionReference,
   amount,
@@ -4867,6 +4982,7 @@ async function chargeRecurringSubscription({
     configError = cfgErr.message;
     console.warn("[Worldpay Subscription] Credentials note:", cfgErr.message);
   }
+  const usableToken = isUsableTokenHref(tokenHref);
   const usableHref = isUsableRecurringHref(recurringHref);
   const usableScheme = Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
   const usablePreviousTx = Boolean(previousTransactionId) && !isPlaceholderCredential(previousTransactionId);
@@ -4875,46 +4991,86 @@ async function chargeRecurringSubscription({
       configError || "Worldpay credentials are not configured, so no recurring payment can be taken."
     );
   }
-  if (!usableHref && !usableScheme && !usablePreviousTx) {
+  if (!usableToken && !usableHref && !usableScheme && !usablePreviousTx) {
     throw new Error(
-      "No Worldpay stored credential is available for this subscription. The initial payment must be taken with a customer agreement so Worldpay returns a scheme transaction reference to reuse for recurring charges."
+      "No Worldpay stored credential is available for this subscription. The initial payment must be taken with createToken and a customer agreement so Worldpay stores the card and sends a tokenCreated webhook carrying the token href."
     );
   }
-  const targetUrl = usableHref ? recurringHref : authorizationsUrl(config);
+  if (!usableToken) {
+    console.warn(
+      `[Worldpay Subscription] ${transactionReference} has no stored card token. Falling back to the scheme reference alone, which Worldpay may refuse \u2014 the tokenCreated webhook for this subscription was never received or never stored.`
+    );
+  }
+  const targetUrl = usableToken || !usableHref ? authorizationsUrl(config) : recurringHref;
   console.log(
-    `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ${transactionReference} (\xA3${amount})`
+    `[Worldpay Subscription] Initiating MIT recurring charge via ${targetUrl} for ${transactionReference} (\xA3${amount})${usableToken ? " using the stored card token" : ""}`
   );
-  const instruction = {
-    narrative: { line1: "Pouch Supply Sub" },
-    value: {
-      currency,
-      amount: Math.round(amount * 100)
-    },
-    debtRepayment: false,
-    customerAgreement: {
-      type: "subscription",
-      storedCardUsage: "subsequent"
+  const buildInstruction = () => {
+    const instruction = {
+      narrative: { line1: "Pouch Supply Sub" },
+      value: {
+        currency,
+        amount: Math.round(amount * 100)
+      },
+      debtRepayment: false,
+      customerAgreement: {
+        type: "subscription",
+        storedCardUsage: "subsequent"
+      }
+    };
+    if (usableToken) {
+      instruction.paymentInstrument = {
+        type: "card/token",
+        href: String(tokenHref).trim()
+      };
     }
+    if (usableScheme) {
+      instruction.customerAgreement.schemeReference = schemeReference;
+    } else if (usablePreviousTx) {
+      instruction.customerAgreement.schemeReference = previousTransactionId;
+    }
+    return instruction;
   };
-  if (usableScheme) {
-    instruction.customerAgreement.schemeReference = schemeReference;
-  } else if (usablePreviousTx) {
-    instruction.customerAgreement.schemeReference = previousTransactionId;
+  const shapes = settlementShapesToTry();
+  let response;
+  let data = {};
+  for (let attempt = 0; attempt < shapes.length; attempt++) {
+    const shape = shapes[attempt];
+    const instruction = buildInstruction();
+    applySettlement(instruction, shape);
+    const mitPayload = {
+      transactionReference,
+      merchant: { entity: config.entity },
+      instruction
+    };
+    if (customerEmail) {
+      mitPayload.customer = { email: customerEmail };
+    }
+    response = await fetch(targetUrl, {
+      method: "POST",
+      headers: getHeaders(config),
+      body: JSON.stringify(mitPayload)
+    });
+    data = await response.json().catch(() => ({}));
+    if (response.ok) {
+      if (attempt > 0) {
+        console.warn(
+          `[Worldpay Subscription] Settlement directive "${shapes[attempt - 1]}" was rejected by this account; "${shape}" was accepted. Set WORLDPAY_SETTLEMENT_SHAPE=${shape} to skip the rejected attempt on every future renewal.`
+        );
+      }
+      if (shape === "none") {
+        console.warn(
+          `[Worldpay Subscription] ${transactionReference} was authorised WITHOUT an auto-settlement directive. Confirm the account settles automatically, or the money will be reserved and released rather than collected.`
+        );
+      }
+      break;
+    }
+    const retryable = attempt < shapes.length - 1 && isSchemaRejection(response.status, data);
+    if (!retryable) break;
+    console.warn(
+      `[Worldpay Subscription] Settlement shape "${shape}" rejected for ${transactionReference} (${response.status}: ${data?.description || data?.message || data?.errorName || "schema error"}). Retrying as "${shapes[attempt + 1]}".`
+    );
   }
-  const mitPayload = {
-    transactionReference,
-    merchant: { entity: config.entity },
-    instruction
-  };
-  if (customerEmail) {
-    mitPayload.customer = { email: customerEmail };
-  }
-  const response = await fetch(targetUrl, {
-    method: "POST",
-    headers: getHeaders(config),
-    body: JSON.stringify(mitPayload)
-  });
-  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const errMsg = data?.description || data?.message || `Worldpay returned HTTP ${response.status}`;
     console.error(
@@ -4942,11 +5098,14 @@ async function chargeRecurringSubscription({
     currency,
     authCode: data?.authorizationCode || data?.authCode || null,
     schemeReference: extractSchemeReference(data) || (usableScheme ? schemeReference : null),
+    // Worldpay can return a rotated token href on the charge. Keeping it means
+    // the next renewal presents the current card rather than a retired one.
+    tokenHref: extractTokenHref(data) || (usableToken ? String(tokenHref).trim() : null),
     rawResponse: data,
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
-var PLACEHOLDER_PATTERNS, PAYMENTS_MEDIA_TYPE;
+var PLACEHOLDER_PATTERNS, TOKEN_HREF_KEYS, PAYMENTS_MEDIA_TYPE, SETTLEMENT_FALLBACK_ORDER;
 var init_worldpaySubscription = __esm({
   "backend/services/worldpaySubscription.ts"() {
     PLACEHOLDER_PATTERNS = [
@@ -4962,7 +5121,20 @@ var init_worldpaySubscription = __esm({
       /mock/i,
       /test-simulation/i
     ];
+    TOKEN_HREF_KEYS = /* @__PURE__ */ new Set([
+      "href",
+      "tokenhref",
+      "tokenpaymentinstrument",
+      "token",
+      "tokens:token",
+      "payments:token"
+    ]);
     PAYMENTS_MEDIA_TYPE = "application/vnd.worldpay.payments-v6+json";
+    SETTLEMENT_FALLBACK_ORDER = [
+      "settlement",
+      "requestAutoSettlement",
+      "none"
+    ];
   }
 });
 
@@ -6390,6 +6562,7 @@ async function processDueSubscriptions() {
       const customerEmail = String(sub.customerEmail || "").toLowerCase().trim();
       const recurringHref = sub.worldpayRecurringHref || sub.recurringHref;
       const schemeReference = sub.worldpaySchemeReference;
+      const tokenHref = sub.worldpayTokenHref || sub.tokenHref;
       const amount = Number(sub.amount || 25);
       const currency = sub.currency || "GBP";
       const planName = planTitleFromSubscription(sub);
@@ -6397,10 +6570,10 @@ async function processDueSubscriptions() {
       console.log(
         `[Subscription Worker] Processing renewal for sub ${subId} (${customerEmail}) \u2014 \xA3${amount.toFixed(2)} every ${interval}`
       );
-      const hasUsableCredential = isUsableRecurringHref(recurringHref) || Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
+      const hasUsableCredential = isUsableTokenHref(tokenHref) || isUsableRecurringHref(recurringHref) || Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
       if (!hasUsableCredential) {
         console.warn(
-          `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential (href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). The initial payment must be taken with a customer agreement so Worldpay returns a reusable reference.`
+          `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential (token=${tokenHref || "none"}, href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). The initial payment must be taken with createToken and a customer agreement so Worldpay stores the card and sends the tokenCreated webhook.`
         );
         failed++;
         await persistSubscriptionUpdate(subId, {
@@ -6415,6 +6588,7 @@ async function processDueSubscriptions() {
       const transactionReference = `SUB-ORD-${Math.floor(1e4 + Math.random() * 9e4)}-${Date.now().toString().slice(-4)}`;
       try {
         const chargeResult = await chargeRecurringSubscription({
+          tokenHref,
           recurringHref,
           transactionReference,
           amount,
@@ -6500,6 +6674,7 @@ async function processDueSubscriptions() {
           lastPaymentId: chargeResult?.id || transactionReference,
           lastPaymentAt: /* @__PURE__ */ new Date(),
           worldpayTransactionId: chargeResult?.id || sub.worldpayTransactionId,
+          worldpayTokenHref: chargeResult?.tokenHref || tokenHref || null,
           worldpaySchemeReference: chargeResult?.schemeReference || schemeReference,
           nextBillingDate: claimedNextBilling,
           failedPaymentCount: 0
@@ -6592,6 +6767,7 @@ var init_subscriptionCron = __esm({
       "billingInterval",
       "nextBillingDate",
       "worldpayTransactionId",
+      "worldpayTokenHref",
       "worldpayRecurringHref",
       "worldpaySchemeReference",
       "lastPaymentStatus",
@@ -8035,20 +8211,23 @@ function extractWorldpayRedirectUrl(responseBody) {
 async function backfillSubscriptionCredential(orderId, gatewayResponse) {
   const href = extractRecurringAuthorizationHref(gatewayResponse);
   const scheme = extractSchemeReference(gatewayResponse);
-  if (!href && !scheme) return false;
+  const tokenHref = extractTokenHref(gatewayResponse);
+  if (!href && !scheme && !tokenHref) return false;
   let updated = false;
   try {
     const storedSubs = await fetchResource("subscriptions") || [];
     const next = storedSubs.map((sub) => {
       if (String(sub?.sourceOrderId || sub?.worldpayTransactionId || "") !== String(orderId)) return sub;
+      const needsToken = Boolean(tokenHref) && !isUsableTokenHref(sub.worldpayTokenHref);
       const hasUsable = isUsableRecurringHref(sub.worldpayRecurringHref) || Boolean(sub.worldpaySchemeReference) && !isPlaceholderCredential(sub.worldpaySchemeReference);
-      if (hasUsable) return sub;
+      if (hasUsable && !needsToken) return sub;
       updated = true;
       console.log(
-        `[Worldpay Order] Recording Worldpay stored credential for subscription ${sub.id} from a later gateway response for order ${orderId}.`
+        `[Worldpay Order] Recording Worldpay stored credential for subscription ${sub.id} from a later gateway response for order ${orderId}` + (needsToken ? " (including the stored card token)." : ".")
       );
       return {
         ...sub,
+        worldpayTokenHref: tokenHref || sub.worldpayTokenHref || null,
         worldpayRecurringHref: href || sub.worldpayRecurringHref || null,
         worldpaySchemeReference: scheme || sub.worldpaySchemeReference || null
       };
@@ -8063,6 +8242,7 @@ async function backfillSubscriptionCredential(orderId, gatewayResponse) {
           await prisma.subscription.update({
             where: { id: String(target.id) },
             data: {
+              worldpayTokenHref: target.worldpayTokenHref,
               worldpayRecurringHref: target.worldpayRecurringHref,
               worldpaySchemeReference: target.worldpaySchemeReference
             }
@@ -8074,6 +8254,116 @@ async function backfillSubscriptionCredential(orderId, gatewayResponse) {
   } catch (_e) {
   }
   return updated;
+}
+var PENDING_TOKENS_RESOURCE = "worldpayPendingTokens";
+var PENDING_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+async function holdUnmatchedToken(tokenHref, hints) {
+  try {
+    const held = await fetchResource(PENDING_TOKENS_RESOURCE) || [];
+    const cutoff = Date.now() - PENDING_TOKEN_TTL_MS;
+    const kept = held.filter(
+      (entry) => entry && entry.tokenHref !== tokenHref && new Date(entry.receivedAt || 0).getTime() > cutoff
+    );
+    kept.push({
+      id: `tok_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      tokenHref,
+      reference: hints.reference || null,
+      namespace: hints.namespace || null,
+      receivedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    await saveResource(PENDING_TOKENS_RESOURCE, kept.slice(-200));
+    console.warn(
+      `[Worldpay Webhook] tokenCreated arrived for reference "${hints.reference || "n/a"}" / namespace "${hints.namespace || "n/a"}" before its subscription existed. Held for the subscription to claim. Token: ${tokenHref}`
+    );
+  } catch (err) {
+    console.error(
+      `[Worldpay Webhook] COULD NOT PARK an unmatched card token \u2014 it is lost unless recovered from this line. reference="${hints.reference || "n/a"}" namespace="${hints.namespace || "n/a"}" token=${tokenHref} error=${err?.message}`
+    );
+  }
+}
+async function claimPendingToken(orderId, customerEmail) {
+  const reference = String(orderId || "").trim();
+  const email = String(customerEmail || "").trim().toLowerCase();
+  if (!reference && !email) return null;
+  try {
+    const held = await fetchResource(PENDING_TOKENS_RESOURCE) || [];
+    if (held.length === 0) return null;
+    const match = held.find(
+      (entry) => entry && isUsableTokenHref(entry.tokenHref) && (reference && String(entry.reference || "").trim() === reference || email && String(entry.namespace || "").trim().toLowerCase() === email)
+    );
+    if (!match) return null;
+    const consumed = held.map(
+      (entry) => entry?.id === match.id ? {
+        id: entry.id,
+        tokenHref: null,
+        reference: entry.reference || null,
+        namespace: entry.namespace || null,
+        receivedAt: entry.receivedAt || (/* @__PURE__ */ new Date()).toISOString(),
+        claimedAt: (/* @__PURE__ */ new Date()).toISOString()
+      } : entry
+    );
+    await saveResource(PENDING_TOKENS_RESOURCE, consumed);
+    console.log(
+      `[Worldpay Order] Claimed a held card token for order ${reference || email}: ${match.tokenHref}`
+    );
+    return match.tokenHref;
+  } catch (err) {
+    console.warn("[Worldpay Order] Could not read held card tokens:", err?.message);
+    return null;
+  }
+}
+async function recordTokenForSubscription(tokenHref, hints) {
+  const reference = String(hints.transactionReference || "").trim();
+  const namespace = String(hints.namespace || "").trim().toLowerCase();
+  if (!isUsableTokenHref(tokenHref)) return false;
+  const matches = (sub) => {
+    if (!sub) return false;
+    if (reference) {
+      const refs = [sub.sourceOrderId, sub.worldpayTransactionId, sub.lastPaymentId].map((v) => String(v || "").trim()).filter(Boolean);
+      if (refs.some((r) => r === reference)) return true;
+    }
+    if (namespace) {
+      const email = String(sub.customerEmail || "").trim().toLowerCase();
+      if (email && email === namespace) return true;
+    }
+    return false;
+  };
+  let updatedId = null;
+  try {
+    const storedSubs = await fetchResource("subscriptions") || [];
+    const candidates = storedSubs.filter(matches);
+    if (candidates.length === 0) {
+      await holdUnmatchedToken(tokenHref, { reference, namespace });
+      return false;
+    }
+    const target = candidates.sort((a, b) => {
+      const at = new Date(a?.createdAt || 0).getTime();
+      const bt = new Date(b?.createdAt || 0).getTime();
+      return bt - at;
+    })[0];
+    if (String(target.worldpayTokenHref || "") === tokenHref) return false;
+    updatedId = String(target.id);
+    const next = storedSubs.map(
+      (sub) => String(sub.id) === updatedId ? { ...sub, worldpayTokenHref: tokenHref, tokenRecordedAt: (/* @__PURE__ */ new Date()).toISOString() } : sub
+    );
+    await saveResource("subscriptions", next);
+    console.log(
+      `[Worldpay Webhook] Stored card token recorded for subscription ${updatedId} (${target.customerEmail}). Renewals can now present the card.`
+    );
+  } catch (err) {
+    console.error("[Worldpay Webhook] Failed to record token against a subscription:", err?.message);
+    return false;
+  }
+  if (updatedId) {
+    try {
+      await prisma.subscription.update({
+        where: { id: updatedId },
+        data: { worldpayTokenHref: tokenHref }
+      });
+    } catch (_e) {
+    }
+  }
+  return Boolean(updatedId);
 }
 var PAYMENT_QUERY_ACCEPT = "application/vnd.worldpay.payment-queries-v1.hal+json";
 var PAYMENT_QUERY_ATTEMPTS = 3;
@@ -8225,7 +8515,15 @@ async function saveVerifiedOrder(orderId, details) {
       const billingInterval = normalizeBillingInterval(rawFrequency);
       const nextBillingDate = calculateNextBillingDate(billingInterval, /* @__PURE__ */ new Date());
       const recurringHref = extractRecurringAuthorizationHref(details.gatewayResponse) || null;
+      const tokenHref = extractTokenHref(details.gatewayResponse) || // The tokenCreated webhook can arrive before this order is written. If
+      // it did, its token is waiting to be claimed rather than lost.
+      await claimPendingToken(String(orderId), customerEmail) || null;
       const schemeReference = extractSchemeReference(details.gatewayResponse) || (details.schemeReference && !isPlaceholderCredential(details.schemeReference) ? details.schemeReference : null);
+      if (!tokenHref) {
+        console.log(
+          `[Worldpay Order] Subscription for order ${orderId} has no stored card token yet \u2014 awaiting the tokenCreated webhook at /api/worldpay/webhook.`
+        );
+      }
       if (!recurringHref && !schemeReference) {
         console.warn(
           `[Worldpay Order] Subscription for order ${orderId} has no Worldpay stored-credential reference. Recurring renewals cannot be charged until the initial payment returns a scheme transaction reference (the Hosted Payment Page must be created with a customer agreement).`
@@ -8258,6 +8556,7 @@ async function saveVerifiedOrder(orderId, details) {
         billingInterval,
         nextBillingDate,
         worldpayTransactionId: details.transactionId || orderId,
+        worldpayTokenHref: tokenHref,
         worldpayRecurringHref: recurringHref,
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: "authorized",
@@ -8591,8 +8890,10 @@ async function handleCreateHostedPaymentPage(req, res) {
         namespace: String(customerEmail || transactionReference).toLowerCase().slice(0, 64),
         description: "Pouch Supply subscription",
         // Consent for the stored card is taken in our own checkout terms, so the
-        // shopper is not asked a second time on Worldpay's page.
-        optIn: "Silent"
+        // shopper is not asked a second time on Worldpay's page. `Silent` has to
+        // be enabled on the account — set WORLDPAY_TOKEN_OPT_IN=ASK if Worldpay
+        // rejects it, rather than losing the token and the renewal with it.
+        optIn: tokenOptIn()
       };
     }
     const correlationId = crypto3.randomUUID ? crypto3.randomUUID() : `hpp-${Math.random().toString(36).slice(2, 12)}`;
@@ -8785,36 +9086,118 @@ var handleWorldpayCallback = async (req, res) => {
 };
 router10.get("/callback", handleWorldpayCallback);
 router10.post("/callback", handleWorldpayCallback);
+var WEBHOOK_PAID_EVENTS = /* @__PURE__ */ new Set([
+  "authorized",
+  "authorised",
+  "captured",
+  "settled",
+  "charged",
+  "sentforsettlement",
+  "settlementrequestsubmitted",
+  "settlementsubmitted"
+]);
+var WEBHOOK_FAILED_EVENTS = /* @__PURE__ */ new Set([
+  "failed",
+  "refused",
+  "declined",
+  "error",
+  "expired",
+  "cancelled",
+  "canceled",
+  "sentforrefund"
+]);
+function normalizeWorldpayWebhook(event) {
+  const details = event?.eventDetails || {};
+  const attributes = event?.data?.attributes || {};
+  const eventType = String(details.type || event?.eventType || event?.type || "").trim();
+  const status = String(attributes.status || details.lastEvent || eventType || "").toLowerCase().replace(/[\s_-]/g, "");
+  const orderId = attributes?.metadata?.orderId || attributes?.reference || details.transactionReference || event?.transactionReference || null;
+  return {
+    eventType,
+    status,
+    orderId: orderId ? String(orderId) : null,
+    transactionId: attributes.transactionId || details.paymentId || details.transactionId || event?.data?.id || event?.eventId || null,
+    authCode: attributes.authCode || details.authorizationCode || null,
+    cardBrand: attributes?.paymentMethod?.card?.brand || details?.paymentInstrument?.card?.brand || null,
+    namespace: details.namespace || details.tokenNamespace || attributes?.namespace || null,
+    eventId: event?.eventId || event?.data?.id || null,
+    // The raw half of the payload that carries the stored-credential references.
+    payload: Object.keys(details).length > 0 ? details : attributes
+  };
+}
+router10.get("/webhook", async (_req, res) => {
+  let heldTokens = 0;
+  try {
+    heldTokens = (await fetchResource(PENDING_TOKENS_RESOURCE) || []).length;
+  } catch (_e) {
+  }
+  return res.status(200).json({
+    ok: true,
+    endpoint: "/api/worldpay/webhook",
+    method: "POST",
+    message: "Worldpay webhook endpoint is live. Register this exact URL in Developer Tools > Webhooks and make sure tokenCreated is among the subscribed events.",
+    heldTokensAwaitingSubscription: heldTokens
+  });
+});
 router10.post("/webhook", async (req, res) => {
   try {
     const event = req.body;
-    if (!event || !event.type || !event.data) {
+    if (!event || typeof event !== "object") {
       return res.status(400).json({ error: "Invalid webhook payload" });
     }
-    const orderId = event.data.attributes?.metadata?.orderId || event.data.attributes?.reference;
-    if (!orderId) {
+    const evt = normalizeWorldpayWebhook(event);
+    const tokenHref = extractTokenHref(event);
+    const isPaymentEvent = WEBHOOK_PAID_EVENTS.has(evt.status) || WEBHOOK_FAILED_EVENTS.has(evt.status);
+    if (tokenHref && !isPaymentEvent) {
+      const recorded = await recordTokenForSubscription(tokenHref, {
+        transactionReference: evt.orderId,
+        namespace: evt.namespace
+      });
+      return res.status(200).json({
+        received: true,
+        processed: recorded,
+        event: evt.eventType || "tokenCreated",
+        orderId: evt.orderId
+      });
+    }
+    if (!tokenHref && isTokenEvent(event)) {
+      console.error(
+        `[Worldpay Webhook] A token event (${evt.eventType || "unknown type"}) arrived with no readable token href. Renewals depend on this value \u2014 raw body follows so the shape can be matched: ${JSON.stringify(event).slice(0, 4e3)}`
+      );
+      return res.status(200).json({ received: true, processed: false, reason: "no token href" });
+    }
+    if (!evt.orderId) {
+      console.warn(
+        `[Worldpay Webhook] Ignoring an event with no transaction reference (type: ${evt.eventType || "unknown"}).`
+      );
       return res.status(200).json({ received: true, ignored: true });
     }
-    const paymentStatus = event.data.attributes?.status;
-    const transactionId = event.data.attributes?.transactionId || event.data.id;
-    const authCode = event.data.attributes?.authCode;
-    const cardBrand = event.data.attributes?.paymentMethod?.card?.brand;
-    if (paymentStatus === "authorized" || paymentStatus === "captured" || paymentStatus === "settled") {
-      await saveVerifiedOrder(orderId, {
-        transactionId,
-        authCode,
-        cardBrand,
+    if (WEBHOOK_PAID_EVENTS.has(evt.status)) {
+      await saveVerifiedOrder(evt.orderId, {
+        transactionId: String(evt.transactionId || evt.orderId),
+        authCode: evt.authCode || void 0,
+        cardBrand: evt.cardBrand || void 0,
         // Carries any stored-credential reference Worldpay included in the event.
-        gatewayResponse: event.data.attributes,
-        webhookEventId: event.data.id
+        gatewayResponse: evt.payload,
+        webhookEventId: evt.eventId || void 0
       });
-    } else if (paymentStatus === "failed") {
-      pendingCheckoutsMap.delete(orderId);
+      if (tokenHref) {
+        await recordTokenForSubscription(tokenHref, {
+          transactionReference: evt.orderId,
+          namespace: evt.namespace
+        });
+      }
+    } else if (WEBHOOK_FAILED_EVENTS.has(evt.status)) {
+      pendingCheckoutsMap.delete(evt.orderId);
+    } else {
+      console.log(
+        `[Worldpay Webhook] No action for event "${evt.eventType || evt.status}" on ${evt.orderId}.`
+      );
     }
-    return res.status(200).json({ received: true, processed: true, orderId });
+    return res.status(200).json({ received: true, processed: true, orderId: evt.orderId });
   } catch (error) {
     console.error("[Worldpay Webhook] Processing error:", error);
-    return res.status(200).json({ received: true, processed: false, error: error.message });
+    return res.status(500).json({ received: true, processed: false, error: error.message });
   }
 });
 router10.get("/status", async (req, res) => {
@@ -8992,7 +9375,8 @@ function canChargeRecurring(sub) {
   if (!sub) return false;
   const href = sub.worldpayRecurringHref || sub.recurringHref;
   const scheme = sub.worldpaySchemeReference;
-  return isUsableRecurringHref(href) || Boolean(scheme) && !isPlaceholderCredential(scheme);
+  const token = sub.worldpayTokenHref || sub.tokenHref;
+  return isUsableTokenHref(token) || isUsableRecurringHref(href) || Boolean(scheme) && !isPlaceholderCredential(scheme);
 }
 var LIVE_SUB_STATUSES = ["active", "subscribed", "paused", "trialing"];
 var DELETED_SUB_STATUS = "deleted";
@@ -9364,6 +9748,7 @@ router11.post(
       }
       const recurringHref = extractRecurringAuthorizationHref(worldpayResponse);
       const schemeReference = extractSchemeReference(worldpayResponse);
+      const tokenHref = extractTokenHref(worldpayResponse);
       const transactionId = worldpayResponse?.id || worldpayResponse?.transactionReference || null;
       if (!recurringHref && !schemeReference) {
         console.warn(
@@ -9394,6 +9779,7 @@ router11.post(
         billingInterval: normalizedInterval,
         nextBillingDate,
         worldpayTransactionId: transactionId,
+        worldpayTokenHref: tokenHref || null,
         worldpayRecurringHref: recurringHref,
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: "authorized",
@@ -9478,15 +9864,16 @@ router11.post(
           message: `Subscription is ${subscription.status}.`
         });
       }
-      if (!subscription.worldpayRecurringHref && !subscription.worldpaySchemeReference) {
+      if (!canChargeRecurring(subscription)) {
         return res.status(400).json({
           success: false,
-          message: "This subscription has no Worldpay stored credential, so no recurring payment can be taken."
+          message: "This subscription has no Worldpay stored credential, so no recurring payment can be taken. Worldpay must store the card on the first payment and deliver its token href to the tokenCreated webhook."
         });
       }
       const transactionReference = `SUB-${Date.now()}-${crypto4.randomBytes(4).toString("hex").toUpperCase()}`;
       const chargeAmount = Number(subscription.amount);
       const result = await chargeRecurringSubscription({
+        tokenHref: subscription.worldpayTokenHref,
         recurringHref: subscription.worldpayRecurringHref,
         transactionReference,
         amount: chargeAmount,
@@ -9503,6 +9890,9 @@ router11.post(
         lastPaymentStatus: "authorized",
         lastPaymentId: result?.id || transactionReference,
         lastPaymentAt: /* @__PURE__ */ new Date(),
+        // Worldpay can rotate the stored card token on a charge; keeping the
+        // returned one means the next renewal presents the current card.
+        worldpayTokenHref: result?.tokenHref || subscription.worldpayTokenHref || null,
         nextBillingDate,
         failedPaymentCount: 0
       };
