@@ -583,6 +583,71 @@ async function main() {
     await post('/api/worldpay/repair-subscriptions', {});
     const oneOff = await subscriptionFor(ORDER_12);
     check('a non-subscription order gets no subscription', !oneOff, `created ${oneOff?.id}`);
+
+    console.log('\n=== 19. PS65700\'s real shape: tagged a subscription, but no line says so ===');
+    const ORDER_13 = 'PS90014';
+    const EMAIL_13 = 'harness.thirteen@pouch-supply.com';
+
+    // Exactly what the three production orders look like: orders.ts labelled it
+    // a subscription (tag + isSubscription + subscriptionDetails) because the
+    // vendor says "Subscription Pack", while the line carries no isSubscription
+    // flag and no sub-pack id.
+    const { saveSingleOrder } = await import('../backend/routes/orders');
+    await saveSingleOrder({
+      id: ORDER_13,
+      customerName: 'Harness Thirteen',
+      customerEmail: EMAIL_13,
+      paymentStatus: 'Paid',
+      total: 25,
+      shippingCost: 2.99,
+      worldpayTxId: 'pay-harness-0001',
+      destination: '39 Tonks Drive, Telford, TF4 2TQ, United Kingdom',
+      items: [
+        {
+          productId: '77-52-mg',
+          sku: 'PCH-563404',
+          productTitle: '77 5.2 mg — Watermelon ice',
+          vendor: 'Subscription Pack',
+          price: 22.01,
+          quantity: 1
+        }
+      ]
+    });
+
+    const taggedOrder: any[] = (await fetchResource('orders')) || [];
+    const t13 = taggedOrder.find((o: any) => String(o.id) === ORDER_13);
+    check('the order is labelled a subscription', Boolean(t13?.isSubscription), JSON.stringify(t13?.isSubscription));
+    check('and it has no subscription', !(await subscriptionFor(ORDER_13)));
+
+    const repair13 = await post('/api/worldpay/repair-subscriptions', {});
+    check('the repair sweep ran', repair13.status === 200);
+
+    const rebuilt13 = await subscriptionFor(ORDER_13);
+    check('the subscription is rebuilt from the order', Boolean(rebuilt13), JSON.stringify(repair13.body?.results));
+    check('it kept the plan it was sold as', String(rebuilt13?.planName || '').length > 0, JSON.stringify(rebuilt13?.planName));
+    check('it still has no card attached', !rebuilt13?.worldpayTokenHref);
+
+    console.log('\n=== 20. A six-pack of tins is NOT a subscription ===');
+    const ORDER_14 = 'PS90015';
+    const EMAIL_14 = 'harness.fourteen@pouch-supply.com';
+    await post('/api/worldpay/verify-payment', {
+      orderId: ORDER_14,
+      status: 'SUCCESS',
+      customerEmail: EMAIL_14,
+      customerName: 'Six Pack Buyer',
+      total: 24,
+      items: [
+        {
+          productId: 'tins-variety',
+          productTitle: 'Variety six pack of tins',
+          vendor: 'Pouch Supply',
+          price: 24,
+          quantity: 1
+        }
+      ]
+    });
+    const sixPack = await subscriptionFor(ORDER_14);
+    check('a "pack" in the title does not create a billing schedule', !sixPack, `created ${sixPack?.id}`);
   } catch (err: any) {
     failures.push(`harness threw: ${err?.stack || err?.message || err}`);
     console.error('\n[verify] threw:', err);

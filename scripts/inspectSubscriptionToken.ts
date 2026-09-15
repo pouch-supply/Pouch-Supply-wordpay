@@ -22,7 +22,13 @@
 import 'dotenv/config';
 import { fetchResource, saveResource } from '../serverDb';
 import { prisma } from '../src/lib/prisma';
-import { extractSchemeReference, extractTokenHref, isUsableTokenHref } from '../backend/services/worldpaySubscription';
+import {
+  extractSchemeReference,
+  extractTokenHref,
+  fetchTokensForNamespace,
+  isUsableTokenHref,
+  selectTokenForSubscription
+} from '../backend/services/worldpaySubscription';
 
 const args = process.argv.slice(2);
 const ORDER_ID = args.find(a => !a.startsWith('--'));
@@ -140,12 +146,42 @@ async function main() {
       console.log(`  scheme.reference : ${extractSchemeReference(payment) || 'none'}`);
       console.log(`  token on payment : ${token || 'NONE'}`);
       if (!token) {
-        console.log('  -> Worldpay did not store a card for this payment. It cannot be recovered;');
-        console.log('     the customer has to subscribe again once tokenisation is working.');
+        // Established on entity PO4094415264: a payment query does NOT expose a
+        // token link even when Worldpay is holding a card. This used to tell
+        // people the card was gone and the customer had to re-subscribe, which
+        // was wrong and would have cost a sale. The tokens service is the
+        // authority, so ask it instead of concluding anything here.
+        console.log("  -> A payment query does not expose token links on this account, so this");
+        console.log("     proves nothing either way. The tokens service below is the authority.");
       }
     }
   }
 
+
+  // What Worldpay is actually holding for this shopper, and whether any of it
+  // can be proven to belong to this subscription.
+  for (const s of matches) {
+    const email = String(s.customerEmail || '').trim().toLowerCase();
+    if (!email) continue;
+    console.log(`\n=== Stored cards Worldpay holds for ${email} ===`);
+    const tokens = await fetchTokensForNamespace(email);
+    if (!tokens.length) {
+      console.log('  none');
+      continue;
+    }
+    for (const t of tokens) {
+      console.log(
+        `  tokenId=${t.tokenId || '?'}  scheme=${t.schemeTransactionReference || 'none'}  expires=${t.expiryDateTime || '?'}`
+      );
+      console.log(`    ${t.href}`);
+    }
+    const selection = selectTokenForSubscription(tokens, {
+      namespace: email,
+      schemeReference: s.worldpaySchemeReference
+    });
+    console.log(`  MATCH: ${selection.token ? selection.token.href : 'none'}`);
+    console.log(`  WHY  : ${selection.reason}`);
+  }
 
   // ------------------------------------------------------- deliberate assignment
   //

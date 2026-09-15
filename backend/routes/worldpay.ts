@@ -602,6 +602,27 @@ async function getPendingCheckout(orderId: string): Promise<PendingCheckout | un
 }
 
 // Helper to save a verified successful order directly into Prisma and StoreResource
+/**
+ * Is this basket line a subscription plan?
+ *
+ * This decides whether a RECURRING CHARGE gets created, so it is deliberately
+ * stricter than the detector in orders.ts that only labels an order. That one
+ * also treats any title containing "pack" as a subscription, which is fine for
+ * a badge and unacceptable here: it would put a customer who bought a six-pack
+ * of tins onto a monthly billing schedule.
+ *
+ * `vendor === "Subscription Pack"` and a sub-pack sku ARE safe to add, and
+ * their absence is what broke PS35806, PS56514 and PS65700: orders.ts tagged
+ * them "Subscription Order" and built subscriptionDetails for them, while this
+ * side found no matching item and created no subscription at all.
+ */
+function isSubscriptionLine(item: any): boolean {
+  if (!item) return false;
+  if (item.isSubscription) return true;
+  if (String(item.vendor || "").trim().toLowerCase() === "subscription pack") return true;
+  const ids = [item.productId, item.sku].map(v => String(v || "").toLowerCase());
+  return ids.some(v => v.includes("sub-pack"));
+}
 async function saveVerifiedOrder(
   orderId: string,
   details: {
@@ -728,8 +749,8 @@ async function saveVerifiedOrder(
   const discountApplied = pending?.discountApplied || details.discountApplied || null;
 
   // Calculate items subtotal
-  const subItemsList = items.filter((it: any) => it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack'))));
-  const subItem = subItemsList[0] || items.find((it: any) => it.isSubscription || (it.productId && (it.productId.startsWith('sub-pack') || it.productId.includes('sub-pack'))));
+  const subItemsList = items.filter(isSubscriptionLine);
+  const subItem = subItemsList[0];
   const subItemsTotal = subItemsList.reduce((sum: number, it: any) => sum + (Number(it.price || 0) * (Number(it.quantity) || 1)), 0);
 
   // Extract shipping charges from the first order to ensure it remains in all auto recurring subscription payments
@@ -1424,6 +1445,65 @@ export async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPA
       // be matched to the right stored card later.
       const payment = await fetchWorldpayPaymentDetails(orderId);
 
+      // The order says it is a subscription but carries no line this side
+      // recognises as one. Its subscriptionDetails still hold the plan and the
+      // cadence it was sold on, which is enough to rebuild from — and is far
+      // better evidence than guessing at a product title.
+      const orderItems: any[] = Array.isArray(order.items) ? order.items : [];
+      let rebuildItems = orderItems;
+
+      if (!orderItems.some(isSubscriptionLine)) {
+        const d: any = order.subscriptionDetails;
+        if (!d?.planName) {
+          results.push({
+            orderId,
+            status: 'failed',
+            detail:
+              `no subscription line and no plan details to rebuild from. items=` +
+              JSON.stringify(
+                orderItems.map((i: any) => ({
+                  productId: i?.productId,
+                  vendor: i?.vendor,
+                  isSubscription: i?.isSubscription,
+                  productTitle: String(i?.productTitle || "").slice(0, 60)
+                }))
+              ).slice(0, 600)
+          });
+          console.error(
+            `[Worldpay Subscription Repair] ${orderId} cannot be rebuilt: no subscription line and ` +
+              `no subscriptionDetails.planName.`
+          );
+          continue;
+        }
+
+        const shipping = Number(order.shippingCost ?? order.deliveryCost ?? 0) || 0;
+        const planPrice = Math.max(Number(order.total || 0) - shipping, 0);
+
+        rebuildItems = [
+          {
+            // The sub-pack id is what marks this as the plan line; the rest is
+            // copied from what the order was actually sold as.
+            productId: `sub-pack-recovered-${orderId}`,
+            sku: `sub-pack-recovered-${orderId}`,
+            productTitle: d.planName,
+            subscriptionPlan: d.planName,
+            subscriptionFrequency: d.frequency || "month",
+            frequencyDiscount: d.frequencyDiscount || undefined,
+            subscriptionItems: Array.isArray(d.items) && d.items.length ? d.items : d.selectedProducts || [],
+            vendor: "Subscription Pack",
+            isSubscription: true,
+            price: planPrice,
+            quantity: 1
+          },
+          ...orderItems
+        ];
+
+        console.log(
+          `[Worldpay Subscription Repair] ${orderId} has no recognisable subscription line; ` +
+            `rebuilding from subscriptionDetails (plan "${d.planName}", ${d.frequency || "month"}).`
+        );
+      }
+
       await saveVerifiedOrder(orderId, {
         transactionId: String(order.worldpayTxId || order.gatewayTxId || orderId),
         authCode: order.worldpayAuthCode || order.gatewayAuthCode || undefined,
@@ -1431,7 +1511,7 @@ export async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPA
         customerName: order.customerName,
         customerEmail: order.customerEmail,
         destination: order.destination,
-        items: Array.isArray(order.items) ? order.items : [],
+        items: rebuildItems,
         total: typeof order.total === 'number' ? order.total : undefined,
         shippingCost: typeof order.shippingCost === 'number' ? order.shippingCost : undefined,
         deliveryCost: typeof order.deliveryCost === 'number' ? order.deliveryCost : undefined,
@@ -1448,7 +1528,19 @@ export async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPA
         results.push({ orderId, status: 'repaired', detail: `subscription ${created.id}` });
         console.log(`[Worldpay Subscription Repair] ${orderId} now has subscription ${created.id}.`);
       } else {
-        results.push({ orderId, status: 'failed', detail: 'no subscription created — check the order items' });
+        results.push({
+          orderId,
+          status: 'failed',
+          detail:
+            'saveVerifiedOrder created no subscription. items=' +
+            JSON.stringify(
+              rebuildItems.map((i: any) => ({
+                productId: i?.productId,
+                vendor: i?.vendor,
+                isSubscription: i?.isSubscription
+              }))
+            ).slice(0, 600)
+        });
         console.error(
           `[Worldpay Subscription Repair] ${orderId} STILL has no subscription. Its items carry no ` +
             `subscription line, so there is nothing to rebuild a plan from.`

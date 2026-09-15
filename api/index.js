@@ -8592,6 +8592,13 @@ async function getPendingCheckout(orderId) {
   }
   return void 0;
 }
+function isSubscriptionLine(item) {
+  if (!item) return false;
+  if (item.isSubscription) return true;
+  if (String(item.vendor || "").trim().toLowerCase() === "subscription pack") return true;
+  const ids = [item.productId, item.sku].map((v) => String(v || "").toLowerCase());
+  return ids.some((v) => v.includes("sub-pack"));
+}
 async function saveVerifiedOrder(orderId, details) {
   const pending = details.pendingData || await getPendingCheckout(orderId);
   const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
@@ -8647,8 +8654,8 @@ async function saveVerifiedOrder(orderId, details) {
   const total = typeof pending?.total === "number" ? pending.total : typeof details.total === "number" ? details.total : parseFloat(pending?.total) || parseFloat(details.total) || 0;
   const storeCreditApplied = pending?.storeCreditApplied || details.storeCreditApplied || 0;
   const discountApplied = pending?.discountApplied || details.discountApplied || null;
-  const subItemsList = items.filter((it) => it.isSubscription || it.productId && (it.productId.startsWith("sub-pack") || it.productId.includes("sub-pack")));
-  const subItem = subItemsList[0] || items.find((it) => it.isSubscription || it.productId && (it.productId.startsWith("sub-pack") || it.productId.includes("sub-pack")));
+  const subItemsList = items.filter(isSubscriptionLine);
+  const subItem = subItemsList[0];
   const subItemsTotal = subItemsList.reduce((sum, it) => sum + Number(it.price || 0) * (Number(it.quantity) || 1), 0);
   const effectiveShipping = typeof pending?.shippingCost === "number" ? pending.shippingCost : typeof pending?.deliveryCost === "number" ? pending.deliveryCost : typeof details.shippingCost === "number" ? details.shippingCost : typeof details.deliveryCost === "number" ? details.deliveryCost : total > subItemsTotal && subItemsTotal > 0 ? Number((total - subItemsTotal).toFixed(2)) : total >= 40 ? 0 : 2.99;
   const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || "Royal Mail Tracked 24/48";
@@ -9074,6 +9081,52 @@ async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMI
     const orderId = String(order.id);
     try {
       const payment = await fetchWorldpayPaymentDetails(orderId);
+      const orderItems = Array.isArray(order.items) ? order.items : [];
+      let rebuildItems = orderItems;
+      if (!orderItems.some(isSubscriptionLine)) {
+        const d = order.subscriptionDetails;
+        if (!d?.planName) {
+          results.push({
+            orderId,
+            status: "failed",
+            detail: `no subscription line and no plan details to rebuild from. items=` + JSON.stringify(
+              orderItems.map((i) => ({
+                productId: i?.productId,
+                vendor: i?.vendor,
+                isSubscription: i?.isSubscription,
+                productTitle: String(i?.productTitle || "").slice(0, 60)
+              }))
+            ).slice(0, 600)
+          });
+          console.error(
+            `[Worldpay Subscription Repair] ${orderId} cannot be rebuilt: no subscription line and no subscriptionDetails.planName.`
+          );
+          continue;
+        }
+        const shipping = Number(order.shippingCost ?? order.deliveryCost ?? 0) || 0;
+        const planPrice = Math.max(Number(order.total || 0) - shipping, 0);
+        rebuildItems = [
+          {
+            // The sub-pack id is what marks this as the plan line; the rest is
+            // copied from what the order was actually sold as.
+            productId: `sub-pack-recovered-${orderId}`,
+            sku: `sub-pack-recovered-${orderId}`,
+            productTitle: d.planName,
+            subscriptionPlan: d.planName,
+            subscriptionFrequency: d.frequency || "month",
+            frequencyDiscount: d.frequencyDiscount || void 0,
+            subscriptionItems: Array.isArray(d.items) && d.items.length ? d.items : d.selectedProducts || [],
+            vendor: "Subscription Pack",
+            isSubscription: true,
+            price: planPrice,
+            quantity: 1
+          },
+          ...orderItems
+        ];
+        console.log(
+          `[Worldpay Subscription Repair] ${orderId} has no recognisable subscription line; rebuilding from subscriptionDetails (plan "${d.planName}", ${d.frequency || "month"}).`
+        );
+      }
       await saveVerifiedOrder(orderId, {
         transactionId: String(order.worldpayTxId || order.gatewayTxId || orderId),
         authCode: order.worldpayAuthCode || order.gatewayAuthCode || void 0,
@@ -9081,7 +9134,7 @@ async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMI
         customerName: order.customerName,
         customerEmail: order.customerEmail,
         destination: order.destination,
-        items: Array.isArray(order.items) ? order.items : [],
+        items: rebuildItems,
         total: typeof order.total === "number" ? order.total : void 0,
         shippingCost: typeof order.shippingCost === "number" ? order.shippingCost : void 0,
         deliveryCost: typeof order.deliveryCost === "number" ? order.deliveryCost : void 0,
@@ -9096,7 +9149,17 @@ async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMI
         results.push({ orderId, status: "repaired", detail: `subscription ${created.id}` });
         console.log(`[Worldpay Subscription Repair] ${orderId} now has subscription ${created.id}.`);
       } else {
-        results.push({ orderId, status: "failed", detail: "no subscription created \u2014 check the order items" });
+        results.push({
+          orderId,
+          status: "failed",
+          detail: "saveVerifiedOrder created no subscription. items=" + JSON.stringify(
+            rebuildItems.map((i) => ({
+              productId: i?.productId,
+              vendor: i?.vendor,
+              isSubscription: i?.isSubscription
+            }))
+          ).slice(0, 600)
+        });
         console.error(
           `[Worldpay Subscription Repair] ${orderId} STILL has no subscription. Its items carry no subscription line, so there is nothing to rebuild a plan from.`
         );
