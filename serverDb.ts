@@ -1048,7 +1048,23 @@ async function fetchFromPrismaModel(resource: string): Promise<any[]> {
         lastPaymentAt: s.lastPaymentAt ? s.lastPaymentAt.toISOString() : null,
         failedPaymentCount: s.failedPaymentCount,
         createdAt: s.createdAt.toISOString(),
-        updatedAt: s.updatedAt.toISOString()
+        updatedAt: s.updatedAt.toISOString(),
+        // Every lookup that ties a subscription to its order matches on
+        // sourceOrderId: the duplicate guard, the repair sweep, token matching
+        // and the inspection script. This mapping used to omit it, so a
+        // subscription whose StoreResource copy was missing or overwritten came
+        // back from here with no order at all — invisible to all of them, while
+        // the renewal cron, which reads this table directly, still billed it.
+        //
+        // Spread only when present: this object is merged OVER the StoreResource
+        // copy, so emitting a null would erase a value the other copy holds.
+        ...(s.sourceOrderId ? { sourceOrderId: s.sourceOrderId } : {}),
+        ...(s.items ? { items: s.items } : {}),
+        ...(s.itemPrice !== null && s.itemPrice !== undefined ? { itemPrice: Number(s.itemPrice) } : {}),
+        ...(s.shippingCost !== null && s.shippingCost !== undefined ? { shippingCost: Number(s.shippingCost) } : {}),
+        ...(s.shippingAddress ? { shippingAddress: s.shippingAddress } : {}),
+        ...(s.deliveryMethod ? { deliveryMethod: s.deliveryMethod } : {}),
+        ...(s.cansCount !== null && s.cansCount !== undefined ? { cansCount: s.cansCount } : {})
       }));
     } else if (norm === 'products') {
       const items = await prisma.product.findMany();

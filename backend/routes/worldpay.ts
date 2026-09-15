@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../../src/lib/prisma';
-import { fetchResource, saveResource } from '../../serverDb';
+import { fetchResource, getDb, saveResource } from '../../serverDb';
 import {
   extractRecurringAuthorizationHref,
   extractSchemeReference,
@@ -936,8 +936,16 @@ async function saveVerifiedOrder(
 
       try {
         const storedSubs: any[] = (await fetchResource('subscriptions')) || [];
-        storedSubs.unshift(subData);
-        await saveResource('subscriptions', storedSubs.slice(0, 500));
+        // The typed row was written a moment ago, so this read already contains
+        // the new subscription — as a copy mapped from the typed table, which
+        // is missing fields the full subData carries. Adding subData on top used
+        // to put the same id in the list TWICE, and saveResource wrote both in
+        // one parallel batch onto the same StoreResource row. Whichever write
+        // landed last won; when it was the stripped copy, the subscription lost
+        // its sourceOrderId and no lookup by order could ever find it again.
+        const withoutThis = storedSubs.filter((existing: any) => String(existing?.id) !== String(subId));
+        withoutThis.unshift(subData);
+        await saveResource('subscriptions', withoutThis.slice(0, 500));
       } catch (storeErr: any) {
         // This was an empty catch. If it fails, the subscription exists in no
         // store at all while the order is recorded as Paid — the customer has
@@ -1374,6 +1382,74 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
 router.get('/reconcile-pending', handleReconcilePending);
 router.post('/reconcile-pending', handleReconcilePending);
 
+const SUBSCRIPTION_REPAIR_LIMIT = 10;
+
+type RepairResult = {
+  orderId: string;
+  status: string;
+  detail?: string;
+  /** What the typed Subscription table — the one the renewal cron bills from — holds for this order. */
+  billableRows?: Array<{
+    id: string;
+    status: string;
+    createdAt: string;
+    billingInterval: string | null;
+    nextBillingDate: string | null;
+    scheme: string | null;
+    hasCard: boolean;
+  }>;
+};
+
+/**
+ * What the renewal cron would actually bill for one order.
+ *
+ * Deliberately read from the typed table and not through fetchResource: the
+ * cron reads this table directly, and fetchResource used to drop sourceOrderId
+ * from these rows, so a subscription could be billable and still invisible to
+ * every lookup by order — including this sweep's own duplicate guard.
+ */
+async function billableSubscriptionsFor(orderId: string) {
+  // With no database there is no second table to disagree with the store: the
+  // store IS what the renewal cron falls back to, so it is the authority.
+  if (!(await getDb())) {
+    const stored: any[] = (await fetchResource('subscriptions')) || [];
+    return stored
+      .filter((s: any) => String(s?.sourceOrderId || '') === orderId)
+      .map((s: any) => ({
+        id: String(s.id),
+        status: String(s.status || ''),
+        createdAt: String(s.createdAt || ''),
+        billingInterval: s.billingInterval || null,
+        nextBillingDate: s.nextBillingDate ? new Date(s.nextBillingDate).toISOString() : null,
+        scheme: s.worldpaySchemeReference || null,
+        hasCard: isUsableTokenHref(s.worldpayTokenHref)
+      }));
+  }
+
+  const rows = await prisma.subscription.findMany({
+    where: { sourceOrderId: orderId },
+    select: {
+      id: true,
+      status: true,
+      createdAt: true,
+      billingInterval: true,
+      nextBillingDate: true,
+      worldpaySchemeReference: true,
+      worldpayTokenHref: true
+    },
+    orderBy: { createdAt: 'asc' }
+  });
+  return rows.map(r => ({
+    id: r.id,
+    status: r.status,
+    createdAt: r.createdAt.toISOString(),
+    billingInterval: r.billingInterval || null,
+    nextBillingDate: r.nextBillingDate ? r.nextBillingDate.toISOString() : null,
+    scheme: r.worldpaySchemeReference || null,
+    hasCard: isUsableTokenHref(r.worldpayTokenHref)
+  }));
+}
+
 /**
  * Creates the subscriptions that paid subscription orders should have had.
  *
@@ -1382,20 +1458,25 @@ router.post('/reconcile-pending', handleReconcilePending);
  * nothing exists that will ever bill or fulfil it again. It is also invisible —
  * the order looks perfectly normal.
  *
- * Nothing used to re-examine such an order. The reconcile pass only looks at
- * PENDING checkouts, and every other route into saveVerifiedOrder returned early
- * the moment it saw the order was already Paid. This closes that gap by finding
- * them directly.
+ * The typed Subscription table is checked FIRST and is the only thing trusted to
+ * say whether a subscription exists. An earlier version trusted fetchResource,
+ * which could not see a subscription whose StoreResource copy had lost its
+ * sourceOrderId; it then reported "created no subscription" while having
+ * created one, and a second run would create another. Against a table the
+ * renewal cron bills from, that is how a customer gets charged twice.
  *
- * The subscription is rebuilt from the order's own items, and the scheme
- * reference is re-read from Worldpay so the new subscription can later be
- * matched to the right stored card. No token is attached here — that is
+ * So this never creates a subscription for an order that already has one, never
+ * touches duplicates it finds (a human decides which to keep), and in dry-run
+ * mode writes nothing at all. No token is attached here — that stays
  * selectTokenForSubscription's job, and it requires the agreement to match.
  */
-const SUBSCRIPTION_REPAIR_LIMIT = 10;
-
-export async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMIT) {
-  const results: Array<{ orderId: string; status: string; detail?: string }> = [];
+export async function repairOrdersMissingSubscriptions(
+  limit = SUBSCRIPTION_REPAIR_LIMIT,
+  options: { dryRun?: boolean; orderIds?: string[] } = {}
+) {
+  const dryRun = Boolean(options.dryRun);
+  const requested = (options.orderIds || []).map(id => String(id).trim()).filter(Boolean);
+  const results: RepairResult[] = [];
 
   let orders: any[] = [];
   let subs: any[] = [];
@@ -1407,102 +1488,153 @@ export async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPA
     return results;
   }
 
-  const hasSubscription = new Set(
-    subs.map((s: any) => String(s?.sourceOrderId || '')).filter(Boolean)
-  );
+  const visibleByOrder = new Set(subs.map((s: any) => String(s?.sourceOrderId || '')).filter(Boolean));
 
   const isSubscriptionOrder = (order: any): boolean => {
     if (order?.isSubscription) return true;
     if (Array.isArray(order?.tags) && order.tags.some((t: any) => /subscription/i.test(String(t)))) return true;
     if (order?.subscriptionDetails) return true;
-    return (Array.isArray(order?.items) ? order.items : []).some(
-      (it: any) => it?.isSubscription || (typeof it?.productId === 'string' && it.productId.includes('sub-pack'))
-    );
+    return (Array.isArray(order?.items) ? order.items : []).some(isSubscriptionLine);
   };
 
-  const broken = orders.filter(
-    (o: any) =>
-      o &&
-      String(o.paymentStatus || '') === 'Paid' &&
-      isSubscriptionOrder(o) &&
-      !hasSubscription.has(String(o.id)) &&
-      // A renewal order is generated BY a subscription and never creates one.
-      !(Array.isArray(o.tags) && o.tags.some((t: any) => /recurring/i.test(String(t))))
+  const isRenewalOrder = (order: any): boolean =>
+    Array.isArray(order?.tags) && order.tags.some((t: any) => /recurring/i.test(String(t)));
+
+  // Explicitly named orders are always examined, even when they look healthy,
+  // so their real state can be reported rather than inferred from a list.
+  const candidates = requested.length
+    ? requested.map(id => orders.find((o: any) => String(o?.id) === id) || { id, __missing: true })
+    : orders.filter(
+        (o: any) =>
+          o &&
+          String(o.paymentStatus || '') === 'Paid' &&
+          isSubscriptionOrder(o) &&
+          !isRenewalOrder(o) &&
+          !visibleByOrder.has(String(o.id))
+      );
+
+  if (candidates.length === 0) return results;
+
+  console.log(
+    `[Worldpay Subscription Repair] ${dryRun ? 'DRY RUN — ' : ''}examining ${Math.min(candidates.length, limit)} ` +
+      `order(s): ${candidates.slice(0, limit).map((o: any) => o.id).join(', ')}`
   );
 
-  if (broken.length === 0) return results;
-
-  console.error(
-    `[Worldpay Subscription Repair] ${broken.length} PAID subscription order(s) have no subscription: ` +
-      broken.slice(0, limit).map((o: any) => o.id).join(', ')
-  );
-
-  for (const order of broken.slice(0, limit)) {
+  for (const order of candidates.slice(0, limit)) {
     const orderId = String(order.id);
+
+    if (order.__missing) {
+      results.push({ orderId, status: 'order-not-found' });
+      continue;
+    }
+
+    let billable: RepairResult['billableRows'] = [];
     try {
-      // Re-read the payment so the rebuilt subscription carries the scheme
-      // reference from its OWN payment. Without it the subscription could never
-      // be matched to the right stored card later.
-      const payment = await fetchWorldpayPaymentDetails(orderId);
+      billable = await billableSubscriptionsFor(orderId);
+    } catch (err: any) {
+      // Without the authoritative answer, creating anything risks a duplicate.
+      results.push({ orderId, status: 'error', detail: `could not read the Subscription table: ${err?.message}` });
+      continue;
+    }
 
-      // The order says it is a subscription but carries no line this side
-      // recognises as one. Its subscriptionDetails still hold the plan and the
-      // cadence it was sold on, which is enough to rebuild from — and is far
-      // better evidence than guessing at a product title.
-      const orderItems: any[] = Array.isArray(order.items) ? order.items : [];
-      let rebuildItems = orderItems;
+    if (billable.length > 1) {
+      // The dangerous case. Every one of these is billable. Nothing is changed:
+      // which plan to keep is a decision about a customer's money.
+      results.push({
+        orderId,
+        status: 'DUPLICATES',
+        detail:
+          `${billable.length} subscriptions exist for this one order, and the renewal cron bills every ` +
+          `active one. Cancel all but one before the earliest nextBillingDate. Nothing was changed.`,
+        billableRows: billable
+      });
+      console.error(
+        `[Worldpay Subscription Repair] ${orderId} has ${billable.length} subscriptions: ` +
+          billable.map(b => `${b.id} (${b.status}, next ${b.nextBillingDate})`).join(', ')
+      );
+      continue;
+    }
 
-      if (!orderItems.some(isSubscriptionLine)) {
-        const d: any = order.subscriptionDetails;
-        if (!d?.planName) {
-          results.push({
-            orderId,
-            status: 'failed',
-            detail:
-              `no subscription line and no plan details to rebuild from. items=` +
-              JSON.stringify(
-                orderItems.map((i: any) => ({
-                  productId: i?.productId,
-                  vendor: i?.vendor,
-                  isSubscription: i?.isSubscription,
-                  productTitle: String(i?.productTitle || "").slice(0, 60)
-                }))
-              ).slice(0, 600)
-          });
-          console.error(
-            `[Worldpay Subscription Repair] ${orderId} cannot be rebuilt: no subscription line and ` +
-              `no subscriptionDetails.planName.`
-          );
+    if (billable.length === 1) {
+      // It exists; it simply could not be found by order. Heal that instead of
+      // creating a second one.
+      const detail = visibleByOrder.has(orderId)
+        ? 'subscription exists and is visible'
+        : 'subscription EXISTS but was invisible to lookups by order (its StoreResource copy had lost sourceOrderId)';
+
+      if (!dryRun && !visibleByOrder.has(orderId)) {
+        try {
+          // fetchResource now carries sourceOrderId through from the typed row, so
+          // re-saving the list writes it back onto the StoreResource copy.
+          const fresh: any[] = (await fetchResource('subscriptions')) || [];
+          await saveResource('subscriptions', fresh);
+        } catch (err: any) {
+          results.push({ orderId, status: 'error', detail: `found but could not heal: ${err?.message}`, billableRows: billable });
           continue;
         }
-
-        const shipping = Number(order.shippingCost ?? order.deliveryCost ?? 0) || 0;
-        const planPrice = Math.max(Number(order.total || 0) - shipping, 0);
-
-        rebuildItems = [
-          {
-            // The sub-pack id is what marks this as the plan line; the rest is
-            // copied from what the order was actually sold as.
-            productId: `sub-pack-recovered-${orderId}`,
-            sku: `sub-pack-recovered-${orderId}`,
-            productTitle: d.planName,
-            subscriptionPlan: d.planName,
-            subscriptionFrequency: d.frequency || "month",
-            frequencyDiscount: d.frequencyDiscount || undefined,
-            subscriptionItems: Array.isArray(d.items) && d.items.length ? d.items : d.selectedProducts || [],
-            vendor: "Subscription Pack",
-            isSubscription: true,
-            price: planPrice,
-            quantity: 1
-          },
-          ...orderItems
-        ];
-
-        console.log(
-          `[Worldpay Subscription Repair] ${orderId} has no recognisable subscription line; ` +
-            `rebuilding from subscriptionDetails (plan "${d.planName}", ${d.frequency || "month"}).`
-        );
       }
+
+      results.push({
+        orderId,
+        status: visibleByOrder.has(orderId) ? 'ok' : dryRun ? 'exists-invisible' : 'healed',
+        detail,
+        billableRows: billable
+      });
+      continue;
+    }
+
+    // No subscription anywhere. This is the only case that creates one.
+    const orderItems: any[] = Array.isArray(order.items) ? order.items : [];
+    let rebuildItems = orderItems;
+
+    if (!orderItems.some(isSubscriptionLine)) {
+      const d: any = order.subscriptionDetails;
+      if (!d?.planName) {
+        results.push({
+          orderId,
+          status: 'failed',
+          detail:
+            'no subscription line and no plan details to rebuild from. items=' +
+            JSON.stringify(
+              orderItems.map((i: any) => ({ productId: i?.productId, vendor: i?.vendor, isSubscription: i?.isSubscription }))
+            ).slice(0, 600)
+        });
+        continue;
+      }
+
+      const shipping = Number(order.shippingCost ?? order.deliveryCost ?? 0) || 0;
+      rebuildItems = [
+        {
+          productId: `sub-pack-recovered-${orderId}`,
+          sku: `sub-pack-recovered-${orderId}`,
+          productTitle: d.planName,
+          subscriptionPlan: d.planName,
+          subscriptionFrequency: d.frequency || 'month',
+          frequencyDiscount: d.frequencyDiscount || undefined,
+          subscriptionItems: Array.isArray(d.items) && d.items.length ? d.items : d.selectedProducts || [],
+          vendor: 'Subscription Pack',
+          isSubscription: true,
+          price: Math.max(Number(order.total || 0) - shipping, 0),
+          quantity: 1
+        },
+        ...orderItems
+      ];
+    }
+
+    if (dryRun) {
+      results.push({
+        orderId,
+        status: 'would-create',
+        detail: `no subscription exists in any store; a repair would create one from ${
+          rebuildItems === orderItems ? 'the order items' : 'subscriptionDetails'
+        }`,
+        billableRows: []
+      });
+      continue;
+    }
+
+    try {
+      const payment = await fetchWorldpayPaymentDetails(orderId);
 
       await saveVerifiedOrder(orderId, {
         transactionId: String(order.worldpayTxId || order.gatewayTxId || orderId),
@@ -1521,47 +1653,44 @@ export async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPA
         paymentConfirmed: true
       });
 
-      const after: any[] = (await fetchResource('subscriptions')) || [];
-      const created = after.find((s: any) => String(s?.sourceOrderId || '') === orderId);
-
-      if (created) {
-        results.push({ orderId, status: 'repaired', detail: `subscription ${created.id}` });
-        console.log(`[Worldpay Subscription Repair] ${orderId} now has subscription ${created.id}.`);
+      // Judged by the table that gets billed, not by a merged read.
+      const after = await billableSubscriptionsFor(orderId);
+      if (after.length === 1) {
+        results.push({ orderId, status: 'repaired', detail: `subscription ${after[0].id}`, billableRows: after });
+      } else if (after.length > 1) {
+        results.push({ orderId, status: 'DUPLICATES', detail: 'repair produced more than one subscription', billableRows: after });
       } else {
         results.push({
           orderId,
           status: 'failed',
-          detail:
-            'saveVerifiedOrder created no subscription. items=' +
-            JSON.stringify(
-              rebuildItems.map((i: any) => ({
-                productId: i?.productId,
-                vendor: i?.vendor,
-                isSubscription: i?.isSubscription
-              }))
-            ).slice(0, 600)
+          detail: 'saveVerifiedOrder ran but no Subscription row exists — see [SUBSCRIPTION CREATION FAILED] / [SUBSCRIPTION NOT PERSISTED] in the logs for this invocation'
         });
-        console.error(
-          `[Worldpay Subscription Repair] ${orderId} STILL has no subscription. Its items carry no ` +
-            `subscription line, so there is nothing to rebuild a plan from.`
-        );
       }
     } catch (err: any) {
       results.push({ orderId, status: 'error', detail: err?.message });
-      console.error(`[Worldpay Subscription Repair] ${orderId} failed:`, err?.message);
     }
   }
 
   return results;
 }
 
-const handleRepairSubscriptions = async (_req: Request, res: Response) => {
+const handleRepairSubscriptions = async (req: Request, res: Response) => {
   try {
-    const results = await repairOrdersMissingSubscriptions();
-    const repaired = results.filter(r => r.status === 'repaired').length;
+    const flag = (v: any) => ['1', 'true', 'yes'].includes(String(v ?? '').toLowerCase());
+    const dryRun = flag(req.query?.dryRun) || flag((req.body as any)?.dryRun);
+    const rawOrders = String(req.query?.orders ?? (req.body as any)?.orders ?? '');
+    const orderIds = rawOrders.split(',').map(s => s.trim()).filter(Boolean);
+
+    const results = await repairOrdersMissingSubscriptions(SUBSCRIPTION_REPAIR_LIMIT, { dryRun, orderIds });
+    const count = (status: string) => results.filter(r => r.status === status).length;
+
     return res.json({
       success: true,
-      message: `Checked for paid subscription orders with no subscription; ${repaired} repaired.`,
+      dryRun,
+      message:
+        `${dryRun ? 'DRY RUN, nothing written. ' : ''}Examined ${results.length} order(s): ` +
+        `${count('repaired')} repaired, ${count('healed')} healed, ${count('exists-invisible')} exist but invisible, ` +
+        `${count('would-create')} would be created, ${count('DUPLICATES')} with DUPLICATES, ${count('failed') + count('error')} failed.`,
       results
     });
   } catch (err: any) {
@@ -1570,7 +1699,8 @@ const handleRepairSubscriptions = async (_req: Request, res: Response) => {
   }
 };
 
-router.get('/repair-subscriptions', handleRepairSubscriptions);
+// POST only. This endpoint can create subscriptions, and a GET is the kind of
+// request a crawler, a link preview or a browser prefetch sends unprompted.
 router.post('/repair-subscriptions', handleRepairSubscriptions);
 
 const handleRecoverTokens = async (_req: Request, res: Response) => {

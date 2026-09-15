@@ -648,6 +648,60 @@ async function main() {
     });
     const sixPack = await subscriptionFor(ORDER_14);
     check('a "pack" in the title does not create a billing schedule', !sixPack, `created ${sixPack?.id}`);
+
+    console.log('\n=== 21. A dry run reports and writes nothing ===');
+    const ORDER_15 = 'PS90016';
+    const EMAIL_15 = 'harness.fifteen@pouch-supply.com';
+    await post('/api/worldpay/session', checkoutBody(ORDER_15, EMAIL_15));
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_15, status: 'SUCCESS' });
+    const beforeDry: any[] = (await fetchResource('subscriptions')) || [];
+    await saveResource('subscriptions', beforeDry.filter((s: any) => String(s?.sourceOrderId) !== ORDER_15));
+
+    const dry = await post('/api/worldpay/repair-subscriptions', { dryRun: true, orders: ORDER_15 });
+    const dryRow = (dry.body?.results || []).find((r: any) => r.orderId === ORDER_15);
+    check('the dry run flags itself', dry.body?.dryRun === true, JSON.stringify(dry.body?.dryRun));
+    check('it says a subscription would be created', dryRow?.status === 'would-create', JSON.stringify(dryRow));
+    check('and creates nothing', !(await subscriptionFor(ORDER_15)));
+
+    console.log('\n=== 22. Duplicates are reported and left untouched ===');
+    const ORDER_16 = 'PS90017';
+    const EMAIL_16 = 'harness.sixteen@pouch-supply.com';
+    await post('/api/worldpay/session', checkoutBody(ORDER_16, EMAIL_16));
+    await post('/api/worldpay/verify-payment', { orderId: ORDER_16, status: 'SUCCESS' });
+
+    // Two billable subscriptions for one order: what repeated repairs against
+    // the invisible-write race could have left behind.
+    const withOne: any[] = (await fetchResource('subscriptions')) || [];
+    const original = withOne.find((s: any) => String(s?.sourceOrderId) === ORDER_16);
+    await saveResource('subscriptions', [{ ...original, id: `${original.id}_dupe` }, ...withOne]);
+
+    const dupeRun = await post('/api/worldpay/repair-subscriptions', { orders: ORDER_16 });
+    const dupeRow = (dupeRun.body?.results || []).find((r: any) => r.orderId === ORDER_16);
+    check('two subscriptions for one order are reported as DUPLICATES', dupeRow?.status === 'DUPLICATES', JSON.stringify(dupeRow?.status));
+    check('both are listed so a human can choose', (dupeRow?.billableRows || []).length === 2, JSON.stringify(dupeRow?.billableRows));
+
+    const afterDupe: any[] = (await fetchResource('subscriptions')) || [];
+    check(
+      'neither is removed and no third is created',
+      afterDupe.filter((s: any) => String(s?.sourceOrderId) === ORDER_16).length === 2,
+      `${afterDupe.filter((s: any) => String(s?.sourceOrderId) === ORDER_16).length} subscriptions`
+    );
+
+    console.log('\n=== 23. An existing subscription is never created twice ===');
+    const existingRun = await post('/api/worldpay/repair-subscriptions', { orders: ORDER_7 });
+    const existingRow = (existingRun.body?.results || []).find((r: any) => r.orderId === ORDER_7);
+    check('an order that already has its plan is reported ok', existingRow?.status === 'ok', JSON.stringify(existingRow));
+    const stillOne: any[] = (await fetchResource('subscriptions')) || [];
+    check('and still has exactly one', stillOne.filter((s: any) => String(s?.sourceOrderId) === ORDER_7).length === 1);
+
+    console.log('\n=== 24. A new subscription is saved once, not twice ===');
+    const ids = stillOne.map((s: any) => String(s?.id));
+    check('no subscription id appears twice in the store', new Set(ids).size === ids.length, `${ids.length - new Set(ids).size} repeated id(s)`);
+
+    console.log('\n=== 25. The repair cannot be triggered by a GET ===');
+    const getAttempt = await realFetch(`${base}/api/worldpay/repair-subscriptions`);
+    const getBody = await getAttempt.text();
+    check('a GET does not run the repair', !/Examined \d+ order/.test(getBody), getBody.slice(0, 120));
   } catch (err: any) {
     failures.push(`harness threw: ${err?.stack || err?.message || err}`);
     console.error('\n[verify] threw:', err);
