@@ -51,6 +51,14 @@ export async function createExpressApp() {
     }
     express.json({
       limit: "1000mb",
+      // Worldpay posts its webhooks under versioned vendor media types such as
+      // application/vnd.worldpay.webhooks-v1.hal+json, not application/json.
+      // express.json() matches only application/json by default, so it skipped
+      // those bodies and left req.body as {} — the handler logged 15 receipts
+      // with a null eventType and an empty rawBody, which is indistinguishable
+      // from Worldpay sending nothing. Any +json structured-syntax suffix is
+      // parsed here for that reason.
+      type: ['application/json', 'application/*+json'],
       verify: (req: any, _res, buf) => {
         req.rawBody = buf;
       }

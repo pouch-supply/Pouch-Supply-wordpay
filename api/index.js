@@ -9752,7 +9752,8 @@ async function recordWebhookReceipt(entry) {
 var handlerInvocations = 0;
 var lastHandlerRanAt = null;
 var lastReceiptWriteError = null;
-var WEBHOOK_BUILD_MARKER = "webhook-instrumentation-2026-09-16";
+var lastContentType = null;
+var WEBHOOK_BUILD_MARKER = "webhook-vendor-json-parse-2026-09-16";
 router10.get("/webhook", async (_req, res) => {
   let heldTokens = 0;
   try {
@@ -9781,6 +9782,7 @@ router10.get("/webhook", async (_req, res) => {
     handlerInvocationsThisInstance: handlerInvocations,
     lastHandlerRanAtThisInstance: lastHandlerRanAt,
     lastReceiptWriteError,
+    lastContentTypeThisInstance: lastContentType,
     // The answer to "is Worldpay actually calling us?". A total of 0 means no
     // webhook of ANY kind has reached this endpoint, which is a Worldpay-side
     // registration problem and not something this code can fix.
@@ -9793,7 +9795,8 @@ router10.get("/webhook", async (_req, res) => {
       status: r.status,
       orderId: r.orderId,
       tokenFound: r.tokenFound,
-      action: r.action
+      action: r.action,
+      contentType: r.contentType || null
     })),
     // Kept in full so an unrecognised payload shape can be matched against
     // extractTokenHref rather than guessed at.
@@ -9801,6 +9804,19 @@ router10.get("/webhook", async (_req, res) => {
   });
 });
 router10.post("/webhook", async (req, res) => {
+  const contentType = String(req.headers["content-type"] || "none");
+  if ((!req.body || typeof req.body === "object" && Object.keys(req.body).length === 0) && req.rawBody) {
+    try {
+      const recovered = JSON.parse(Buffer.from(req.rawBody).toString("utf8"));
+      if (recovered && typeof recovered === "object") {
+        req.body = recovered;
+        console.warn(
+          `[Worldpay Webhook] Body was not parsed by the media type "${contentType}" \u2014 recovered from raw bytes.`
+        );
+      }
+    } catch (_e) {
+    }
+  }
   const rawBody = (() => {
     try {
       return JSON.stringify(req.body);
@@ -9810,6 +9826,7 @@ router10.post("/webhook", async (req, res) => {
   })();
   handlerInvocations += 1;
   lastHandlerRanAt = (/* @__PURE__ */ new Date()).toISOString();
+  lastContentType = contentType;
   console.log(
     `[Worldpay Webhook] <<< POST RECEIVED (${rawBody.length} bytes) >>> ` + rawBody.slice(0, 4e3)
   );
@@ -9824,7 +9841,8 @@ router10.post("/webhook", async (req, res) => {
       namespace: summary.evt?.namespace || null,
       tokenFound: Boolean(summary.tokenFound),
       action: summary.action,
-      rawBody
+      rawBody,
+      contentType
     });
     return res.status(httpStatus).json(payload);
   };
@@ -13040,6 +13058,14 @@ async function createExpressApp() {
     }
     express.json({
       limit: "1000mb",
+      // Worldpay posts its webhooks under versioned vendor media types such as
+      // application/vnd.worldpay.webhooks-v1.hal+json, not application/json.
+      // express.json() matches only application/json by default, so it skipped
+      // those bodies and left req.body as {} — the handler logged 15 receipts
+      // with a null eventType and an empty rawBody, which is indistinguishable
+      // from Worldpay sending nothing. Any +json structured-syntax suffix is
+      // parsed here for that reason.
+      type: ["application/json", "application/*+json"],
       verify: (req2, _res, buf) => {
         req2.rawBody = buf;
       }

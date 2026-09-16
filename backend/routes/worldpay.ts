@@ -2404,6 +2404,8 @@ async function recordWebhookReceipt(entry: {
   tokenFound: boolean;
   action: string;
   rawBody: string;
+  /** What Worldpay actually sent it as — the field that identified the parser gap. */
+  contentType?: string | null;
 }) {
   try {
     const existing: any[] = (await fetchResource(WEBHOOK_LOG_RESOURCE)) || [];
@@ -2436,13 +2438,14 @@ async function recordWebhookReceipt(entry: {
 let handlerInvocations = 0;
 let lastHandlerRanAt: string | null = null;
 let lastReceiptWriteError: string | null = null;
+let lastContentType: string | null = null;
 
 /**
  * Bumped by hand whenever this handler changes. The deployed bundle is a build
  * artifact, so without this there is no way to tell from the outside whether a
  * test exercised the code being reasoned about or a stale deploy.
  */
-const WEBHOOK_BUILD_MARKER = 'webhook-instrumentation-2026-09-16';
+const WEBHOOK_BUILD_MARKER = 'webhook-vendor-json-parse-2026-09-16';
 
 router.get('/webhook', async (_req: Request, res: Response) => {
   let heldTokens = 0;
@@ -2478,6 +2481,7 @@ router.get('/webhook', async (_req: Request, res: Response) => {
     handlerInvocationsThisInstance: handlerInvocations,
     lastHandlerRanAtThisInstance: lastHandlerRanAt,
     lastReceiptWriteError,
+    lastContentTypeThisInstance: lastContentType,
 
     // The answer to "is Worldpay actually calling us?". A total of 0 means no
     // webhook of ANY kind has reached this endpoint, which is a Worldpay-side
@@ -2491,7 +2495,8 @@ router.get('/webhook', async (_req: Request, res: Response) => {
       status: r.status,
       orderId: r.orderId,
       tokenFound: r.tokenFound,
-      action: r.action
+      action: r.action,
+      contentType: r.contentType || null
     })),
     // Kept in full so an unrecognised payload shape can be matched against
     // extractTokenHref rather than guessed at.
@@ -2505,6 +2510,27 @@ router.post('/webhook', async (req: Request, res: Response) => {
   // payload this code does not understand. Every earlier exit from this handler
   // was silent for at least one shape of event, which made "no tokenCreated in
   // the logs" impossible to tell apart from "Worldpay never sent one".
+  const contentType = String(req.headers['content-type'] || 'none');
+
+  // Last-resort parse. If the body parser did not recognise the media type,
+  // req.body is {} and the event is invisible; the raw bytes are still the
+  // truth. Recovering them here means an unrecognised content type degrades
+  // to "parsed anyway" rather than "silently discarded".
+  if (
+    (!req.body || (typeof req.body === 'object' && Object.keys(req.body).length === 0)) &&
+    (req as any).rawBody
+  ) {
+    try {
+      const recovered = JSON.parse(Buffer.from((req as any).rawBody).toString('utf8'));
+      if (recovered && typeof recovered === 'object') {
+        req.body = recovered;
+        console.warn(
+          `[Worldpay Webhook] Body was not parsed by the media type "${contentType}" — recovered from raw bytes.`
+        );
+      }
+    } catch (_e) {}
+  }
+
   const rawBody = (() => {
     try {
       return JSON.stringify(req.body);
@@ -2515,6 +2541,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
   handlerInvocations += 1;
   lastHandlerRanAt = new Date().toISOString();
+  lastContentType = contentType;
 
   console.log(
     `[Worldpay Webhook] <<< POST RECEIVED (${rawBody.length} bytes) >>> ` + rawBody.slice(0, 4000)
@@ -2542,7 +2569,8 @@ router.post('/webhook', async (req: Request, res: Response) => {
       namespace: summary.evt?.namespace || null,
       tokenFound: Boolean(summary.tokenFound),
       action: summary.action,
-      rawBody
+      rawBody,
+      contentType
     });
     return res.status(httpStatus).json(payload);
   };
