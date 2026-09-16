@@ -1646,7 +1646,13 @@ export default function App() {
         subCansCount: hasSubscription ? (subItem?.quantity || 8) : (loggedInCustomer.subCansCount || 8),
         subPrice: hasSubscription ? (subItem?.price || 35.99) : (loggedInCustomer.subPrice || 35.99),
         nextPayment: hasSubscription ? new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : (loggedInCustomer.nextPayment || ''),
-        nextDelivery: hasSubscription ? new Date(Date.now() + 32 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : (loggedInCustomer.nextDelivery || '')
+        // Deliberately NOT written at checkout. This used to be "today + 32
+        // days", a guess with no connection to Royal Mail or to the plan's
+        // schedule, and once persisted it never moved — so the account page
+        // went on advertising a delivery date long after it had passed. The
+        // account reads Royal Mail's own dispatch state instead, and any value
+        // already stored here is left alone rather than refreshed with another.
+        nextDelivery: loggedInCustomer.nextDelivery || ''
       };
 
       // Check if this customer was referred and is placing an order using their 10% welcome coupon

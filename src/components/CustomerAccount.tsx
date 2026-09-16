@@ -1150,6 +1150,59 @@ export default function CustomerAccount({
   })();
 
   /**
+   * What Royal Mail actually says about this plan's most recent dispatch.
+   *
+   * The console used to print `custState.nextDelivery`, which is the order date
+   * plus a fixed offset (App.tsx adds 32 days outright). That is a guess, it is
+   * account-wide rather than per-plan, and once it is persisted on the customer
+   * profile it never moves again — which is how a live plan came to advertise a
+   * delivery date in the PAST while its next payment was still weeks away.
+   *
+   * Royal Mail is the only source that knows. It publishes a dispatch STATE
+   * rather than a future date, so that is what is shown; when it has no record
+   * of the parcel yet, this returns null and the console says so instead of
+   * inventing a date.
+   */
+  const managedPlanDelivery: { label: string; detail: string | null } | null = (() => {
+    const planId = String(managedSubscription?.id || '');
+    if (!planId) return null;
+
+    const planOrders = (myOrders || [])
+      .filter((o: any) => String(o?.subscriptionId || '') === planId)
+      .sort((a: any, b: any) => {
+        const at = new Date(a?.createdAt || a?.date || 0).getTime();
+        const bt = new Date(b?.createdAt || b?.date || 0).getTime();
+        return bt - at;
+      });
+
+    const latest: any = planOrders[0];
+    if (!latest) return null;
+
+    const rm = latest?.data?.royalMail;
+    const tracking = latest?.trackingNumber || latest?.trackingId || rm?.trackingNumber || null;
+    const fulfilment = String(latest?.fulfillmentStatus || '');
+
+    if (/deliver/i.test(fulfilment)) {
+      // A real, dated event if Royal Mail recorded one; never a computed date.
+      const events: any[] = Array.isArray(latest?.trackingHistory) ? latest.trackingHistory : [];
+      const delivered = events.find((e: any) => /deliver/i.test(String(e?.status || '')));
+      return { label: 'Delivered', detail: delivered?.timestamp || null };
+    }
+
+    if (tracking) {
+      return { label: 'In transit with Royal Mail', detail: `Tracking ${tracking}` };
+    }
+
+    if (rm?.royalMailOrderId) {
+      // Royal Mail has the order but has not allocated tracking, which it only
+      // does when the label is generated.
+      return { label: 'Awaiting despatch', detail: rm?.serviceName || null };
+    }
+
+    return null;
+  })();
+
+  /**
    * The tier and frequency the opened plan actually has, captured when the
    * console opens. Save compares against this so it sends only what the
    * customer changed — nothing they did not touch is ever written back.
@@ -2946,8 +2999,11 @@ export default function CustomerAccount({
 
                           <div className="grid grid-cols-3 gap-4 text-xs font-semibold py-2">
                             <div>
-                              <p className="text-[9px] text-slate-400 uppercase font-bold">Delivering On</p>
-                              <p className="text-xs font-extrabold text-[#071d37] mt-0.5">{custState.nextDelivery || 'Calculating...'}</p>
+                              {/* Royal Mail's dispatch state, not a computed date. */}
+                              <p className="text-[9px] text-slate-400 uppercase font-bold">Delivery</p>
+                              <p className="text-xs font-extrabold text-[#071d37] mt-0.5">
+                                {managedPlanDelivery?.label || 'Not dispatched yet'}
+                              </p>
                             </div>
                             <div>
                               <p className="text-[9px] text-slate-400 uppercase font-bold">Box Items</p>
@@ -4405,11 +4461,29 @@ export default function CustomerAccount({
                           </div>
 
                           <div>
-                            <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Estimated Delivery</span>
+                            <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Delivery</span>
                             <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+                              {/*
+                                Royal Mail's own state, or nothing. The previous
+                                value was the order date plus a fixed offset,
+                                which is why a live plan could advertise a
+                                delivery date that had already passed.
+                              */}
                               <p className="font-extrabold text-xs text-[#071d37]">
-                                {isManagedPlanCancelled ? <span className="text-rose-600">Paused</span> : (custState.nextDelivery || 'Dispatched via Tracked 24')}
+                                {isManagedPlanCancelled
+                                  ? <span className="text-rose-600">Paused</span>
+                                  : (managedPlanDelivery?.label || 'Not dispatched yet')}
                               </p>
+                              {!isManagedPlanCancelled && managedPlanDelivery?.detail && (
+                                <p className="text-[10px] text-slate-500 font-semibold mt-0.5">
+                                  {managedPlanDelivery.detail}
+                                </p>
+                              )}
+                              {!isManagedPlanCancelled && !managedPlanDelivery && (
+                                <p className="text-[10px] text-slate-500 font-semibold mt-0.5">
+                                  Tracking appears here once Royal Mail despatches your box.
+                                </p>
+                              )}
                             </div>
                           </div>
                         </div>
