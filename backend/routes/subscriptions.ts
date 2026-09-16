@@ -2,13 +2,13 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 
 import { prisma } from "../../src/lib/prisma";
+import { upsertSubscriptionRow } from "../../src/lib/subscriptionRow";
 import { fetchResource, saveResource } from "../../serverDb";
 import {
   chargeRecurringSubscription,
   extractRecurringAuthorizationHref,
   extractSchemeReference,
   extractTokenHref,
-  isPlaceholderCredential,
   isUsableRecurringHref,
   isUsableTokenHref,
 } from "../services/worldpaySubscription";
@@ -65,16 +65,16 @@ router.post("/cron", handleProcessRenewals);
 function canChargeRecurring(sub: any): boolean {
   if (!sub) return false;
   const href = sub.worldpayRecurringHref || sub.recurringHref;
-  const scheme = sub.worldpaySchemeReference;
   // The token is the card. A plan can hold a scheme reference and still be
   // unchargeable without it, which is the state every subscription created
   // before the tokenCreated webhook was handled is in.
+  //
+  // A scheme reference alone is therefore NOT accepted here: it is the
+  // agreement, not a payment instrument. The MIT authorization built from one
+  // carries no paymentInstrument and Worldpay refuses it, so reporting such a
+  // plan as chargeable only ever produced a failed charge.
   const token = sub.worldpayTokenHref || sub.tokenHref;
-  return (
-    isUsableTokenHref(token) ||
-    isUsableRecurringHref(href) ||
-    (Boolean(scheme) && !isPlaceholderCredential(scheme))
-  );
+  return isUsableTokenHref(token) || isUsableRecurringHref(href);
 }
 
 /** Statuses that mean "this plan is still running and can bill". */
@@ -556,6 +556,7 @@ router.post(
         currency = "GBP",
         billingInterval = "month",
         worldpayResponse,
+        sourceOrderId,
       } = req.body;
 
       if (!customerEmail) {
@@ -635,16 +636,29 @@ router.post(
         lastPaymentStatus: "authorized",
         lastPaymentId: transactionId,
         lastPaymentAt: new Date(),
+        // The order this plan was bought with. Every lookup that ties a
+        // subscription to its order matches on this — including the repair
+        // sweep's duplicate guard — so a row without it is invisible to that
+        // guard, and the sweep creates another subscription for the same order
+        // on every run. That is how one order ended up with five active plans.
+        sourceOrderId: sourceOrderId ? String(sourceOrderId) : null,
       };
 
       let subscription: any = null;
 
-      try {
-        subscription = await prisma.subscription.create({
-          data: subData,
-        });
-      } catch (prismaErr) {
-        console.warn("[Subscription Create] Prisma save fallback:", prismaErr);
+      // Written through the shared row builder rather than prisma.create: this
+      // payload carries shippingFee/shippingAmount, which are not columns, so a
+      // direct create threw `Unknown argument` and the catch below swallowed it
+      // — leaving the plan in the JSON blob and never in the table the renewal
+      // cron actually bills from.
+      const written = await upsertSubscriptionRow(subData);
+      if (written) {
+        subscription = await prisma.subscription
+          .findUnique({ where: { id: subId } })
+          .catch(() => null);
+      }
+      if (!subscription) {
+        console.warn(`[Subscription Create] Neon write unavailable for ${subId}; serving the store copy.`);
         subscription = subData;
       }
 

@@ -273,15 +273,29 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       // by earlier builds carry locally generated placeholders, which look
       // present but cannot authorise anything — treat them as missing rather
       // than burning retry attempts on a charge that can never succeed.
-      const hasUsableCredential =
-        isUsableTokenHref(tokenHref) ||
-        isUsableRecurringHref(recurringHref) ||
-        (Boolean(schemeReference) && !isPlaceholderCredential(schemeReference));
+      //
+      // A scheme reference is the AGREEMENT, not the card. It cannot be charged
+      // on its own: buildInstruction omits `paymentInstrument` entirely when
+      // there is no token, and Worldpay rejects a MIT authorization with no
+      // payment method. Accepting a bare scheme reference here meant every such
+      // plan passed this gate, claimed its billing slot, burned a real gateway
+      // call, failed, and advanced nextBillingDate anyway — silently, every
+      // period. Only a stored card (token) or an issued recurring href can pay.
+      const hasChargeableInstrument =
+        isUsableTokenHref(tokenHref) || isUsableRecurringHref(recurringHref);
+      const hasAgreementOnly =
+        !hasChargeableInstrument &&
+        Boolean(schemeReference) &&
+        !isPlaceholderCredential(schemeReference);
 
-      if (!hasUsableCredential) {
+      if (!hasChargeableInstrument) {
         console.warn(
-          `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential ` +
-            `(token=${tokenHref || 'none'}, href=${recurringHref || 'none'}, scheme=${schemeReference || 'none'}). ` +
+          `[Subscription Worker] Sub ${subId} skipped: ` +
+            (hasAgreementOnly
+              ? `Worldpay issued the customer agreement (scheme=${schemeReference}) but never delivered a card token, ` +
+                `so there is no payment instrument to present. This plan needs the customer to re-authorise. `
+              : `no usable Worldpay stored credential ` +
+                `(token=${tokenHref || 'none'}, href=${recurringHref || 'none'}, scheme=${schemeReference || 'none'}). `) +
             `The initial payment must be taken with createToken and a customer agreement so Worldpay ` +
             `stores the card and sends the tokenCreated webhook.`
         );
@@ -289,9 +303,15 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         // Push the schedule forward so a broken subscription is not re-scanned every tick.
         await persistSubscriptionUpdate(subId, {
           nextBillingDate: nextBillingDateAfterCharge(interval, scheduledFor, now),
-          lastPaymentStatus: 'missing_credential'
+          lastPaymentStatus: hasAgreementOnly ? 'missing_card_token' : 'missing_credential'
         });
-        results.push({ id: subId, status: 'skipped', reason: 'Missing Worldpay stored credential' });
+        results.push({
+          id: subId,
+          status: 'skipped',
+          reason: hasAgreementOnly
+            ? 'Agreement present but no stored card token — customer must re-authorise'
+            : 'Missing Worldpay stored credential'
+        });
         continue;
       }
 

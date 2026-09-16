@@ -6713,17 +6713,22 @@ async function processDueSubscriptions() {
       console.log(
         `[Subscription Worker] Processing renewal for sub ${subId} (${customerEmail}) \u2014 \xA3${amount.toFixed(2)} every ${interval}`
       );
-      const hasUsableCredential = isUsableTokenHref(tokenHref) || isUsableRecurringHref(recurringHref) || Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
-      if (!hasUsableCredential) {
+      const hasChargeableInstrument = isUsableTokenHref(tokenHref) || isUsableRecurringHref(recurringHref);
+      const hasAgreementOnly = !hasChargeableInstrument && Boolean(schemeReference) && !isPlaceholderCredential(schemeReference);
+      if (!hasChargeableInstrument) {
         console.warn(
-          `[Subscription Worker] Sub ${subId} skipped: no usable Worldpay stored credential (token=${tokenHref || "none"}, href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). The initial payment must be taken with createToken and a customer agreement so Worldpay stores the card and sends the tokenCreated webhook.`
+          `[Subscription Worker] Sub ${subId} skipped: ` + (hasAgreementOnly ? `Worldpay issued the customer agreement (scheme=${schemeReference}) but never delivered a card token, so there is no payment instrument to present. This plan needs the customer to re-authorise. ` : `no usable Worldpay stored credential (token=${tokenHref || "none"}, href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). `) + `The initial payment must be taken with createToken and a customer agreement so Worldpay stores the card and sends the tokenCreated webhook.`
         );
         failed++;
         await persistSubscriptionUpdate(subId, {
           nextBillingDate: nextBillingDateAfterCharge(interval, scheduledFor, now),
-          lastPaymentStatus: "missing_credential"
+          lastPaymentStatus: hasAgreementOnly ? "missing_card_token" : "missing_credential"
         });
-        results.push({ id: subId, status: "skipped", reason: "Missing Worldpay stored credential" });
+        results.push({
+          id: subId,
+          status: "skipped",
+          reason: hasAgreementOnly ? "Agreement present but no stored card token \u2014 customer must re-authorise" : "Missing Worldpay stored credential"
+        });
         continue;
       }
       const claimedNextBilling = nextBillingDateAfterCharge(interval, scheduledFor, now);
@@ -10021,6 +10026,7 @@ var worldpay_default = router10;
 
 // backend/routes/subscriptions.ts
 init_prisma();
+init_subscriptionRow();
 init_serverDb();
 init_worldpaySubscription();
 init_subscriptionCron();
@@ -10053,9 +10059,8 @@ router11.post("/cron", handleProcessRenewals);
 function canChargeRecurring(sub) {
   if (!sub) return false;
   const href = sub.worldpayRecurringHref || sub.recurringHref;
-  const scheme = sub.worldpaySchemeReference;
   const token = sub.worldpayTokenHref || sub.tokenHref;
-  return isUsableTokenHref(token) || isUsableRecurringHref(href) || Boolean(scheme) && !isPlaceholderCredential(scheme);
+  return isUsableTokenHref(token) || isUsableRecurringHref(href);
 }
 var LIVE_SUB_STATUSES = ["active", "subscribed", "paused", "trialing"];
 var DELETED_SUB_STATUS = "deleted";
@@ -10405,7 +10410,8 @@ router11.post(
         items,
         currency = "GBP",
         billingInterval = "month",
-        worldpayResponse
+        worldpayResponse,
+        sourceOrderId
       } = req.body;
       if (!customerEmail) {
         return res.status(400).json({
@@ -10463,15 +10469,21 @@ router11.post(
         worldpaySchemeReference: schemeReference,
         lastPaymentStatus: "authorized",
         lastPaymentId: transactionId,
-        lastPaymentAt: /* @__PURE__ */ new Date()
+        lastPaymentAt: /* @__PURE__ */ new Date(),
+        // The order this plan was bought with. Every lookup that ties a
+        // subscription to its order matches on this — including the repair
+        // sweep's duplicate guard — so a row without it is invisible to that
+        // guard, and the sweep creates another subscription for the same order
+        // on every run. That is how one order ended up with five active plans.
+        sourceOrderId: sourceOrderId ? String(sourceOrderId) : null
       };
       let subscription = null;
-      try {
-        subscription = await prisma.subscription.create({
-          data: subData
-        });
-      } catch (prismaErr) {
-        console.warn("[Subscription Create] Prisma save fallback:", prismaErr);
+      const written = await upsertSubscriptionRow(subData);
+      if (written) {
+        subscription = await prisma.subscription.findUnique({ where: { id: subId } }).catch(() => null);
+      }
+      if (!subscription) {
+        console.warn(`[Subscription Create] Neon write unavailable for ${subId}; serving the store copy.`);
         subscription = subData;
       }
       try {
