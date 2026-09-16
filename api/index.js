@@ -6225,6 +6225,10 @@ async function createRoyalMailShipment(orderId, options = {}) {
     labelUrl,
     requestedServiceCode,
     serviceDowngraded,
+    // Exposed as data, not only prose, so the admin UI can tell "the label
+    // failed and here is why" apart from "the label has not been made yet".
+    // The two need opposite actions: fix the Click & Drop account, versus wait.
+    labelErrors,
     message: (serviceDowngraded ? `Service ${requestedServiceCode} is not on this Click & Drop contract, so ${serviceCode} was used instead \u2014 add ${requestedServiceCode} in Click & Drop > Settings > Services if you need it. ` : "") + (trackingNumber ? `Royal Mail shipment created. Tracking ${trackingNumber}.` : labelErrors.length > 0 ? `Royal Mail order ${royalMailOrderId} was created on ${serviceName}, but the label could not be generated, so no tracking number was issued: ${labelErrors.join("; ")}. Check the postage balance on the Click & Drop account, then press Sync.` : `Royal Mail order ${royalMailOrderId} created on ${serviceName}. No tracking number was issued yet \u2014 generate the label in Click & Drop, then press Sync.`),
     order: updatedOrder
   };

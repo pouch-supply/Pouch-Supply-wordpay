@@ -822,6 +822,12 @@ export interface CreateShipmentResult {
   requestedServiceCode?: string;
   /** True when the requested service was swapped for one on the contract. */
   serviceDowngraded?: boolean;
+  /**
+   * Why Royal Mail could not generate the label, when it could not. Empty is
+   * meaningful: it separates "the label failed" from "no tracking yet", which
+   * call for opposite actions from the operator.
+   */
+  labelErrors?: string[];
   message: string;
   order: any;
 }
@@ -1160,6 +1166,10 @@ export async function createRoyalMailShipment(orderId: string, options: {
     labelUrl,
     requestedServiceCode,
     serviceDowngraded,
+    // Exposed as data, not only prose, so the admin UI can tell "the label
+    // failed and here is why" apart from "the label has not been made yet".
+    // The two need opposite actions: fix the Click & Drop account, versus wait.
+    labelErrors,
     message:
       (serviceDowngraded
         ? `Service ${requestedServiceCode} is not on this Click & Drop contract, so ${serviceCode} was used instead — ` +

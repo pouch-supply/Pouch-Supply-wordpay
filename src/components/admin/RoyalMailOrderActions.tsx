@@ -136,17 +136,26 @@ ${label}
         // email had gone out, when neither was true: without a tracking number
         // the order stays Unfulfilled, so no dispatch email and no Klaviyo
         // event are sent. It now reports what actually happened.
+        // The server's own message is preferred whenever there is no tracking,
+        // because only it knows WHY. The shipment request already asks Royal
+        // Mail to generate the label (which is what buys the postage and
+        // allocates tracking), so "no tracking" means the label FAILED — most
+        // often an empty Click & Drop postage balance. Telling the operator to
+        // "print the label, then press Sync" in that case is wrong advice, and
+        // it hid the real reason the server had already been given.
+        const labelFailed = Array.isArray(data.labelErrors) && data.labelErrors.length > 0;
         setStatusMessage({
-          type: data.trackingNumber ? 'success' : 'info',
+          type: data.trackingNumber ? 'success' : labelFailed ? 'error' : 'info',
           text: (data.serviceDowngraded
             ? `Note: ${data.requestedServiceCode} is not on your Click & Drop contract, so ${data.serviceCode} was used instead. `
             : '') + (data.trackingNumber
             ? `Royal Mail shipment created. Tracking ${data.trackingNumber}. Order marked Shipped — dispatch email and Klaviyo event sent.`
-            : `Royal Mail order ${data.royalMailOrderId || ''} created in Click & Drop${
-                data.serviceName ? ` on ${data.serviceName}` : ''
-              }, but no tracking number was issued, so the order stays Unfulfilled and no dispatch email was sent. ` +
-              `Tracking is only allocated on a tracked service once the label is generated — print the label, then press Sync. ` +
-              `Non-tracked services (1st/2nd Class and Signed For) never issue one.`)
+            : data.message
+              ? `${data.message} The order stays Unfulfilled and no dispatch email was sent.`
+              : `Royal Mail order ${data.royalMailOrderId || ''} created in Click & Drop${
+                  data.serviceName ? ` on ${data.serviceName}` : ''
+                }, but no tracking number was issued, so the order stays Unfulfilled and no dispatch email was sent. ` +
+                `Non-tracked services (1st/2nd Class and Signed For) never issue one.`)
         });
 
         const updated: Order = {
