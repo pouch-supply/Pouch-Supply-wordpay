@@ -653,6 +653,19 @@ async function saveVerifiedOrder(
      * the order is then recorded as Pending rather than invented as Paid.
      */
     paymentConfirmed?: boolean;
+    /**
+     * Whether this caller is allowed to CREATE an order that does not exist.
+     *
+     * False for webhooks. A webhook identifies a payment by Worldpay's
+     * transactionReference, and for a recurring charge that reference is a
+     * gateway reference (SUB-ORD-…), not a storefront order id. Treating it as
+     * one fabricated a £0 order under "customer@pouch-supply.com", emailed the
+     * customer and the admin, and fired a Klaviyo purchase event — while the
+     * real renewal order sat alongside it carrying that reference in its
+     * worldpayTxId. Orders are created by checkout and by the renewal cron,
+     * which know the customer and the basket; a webhook only ever updates one.
+     */
+    allowCreate?: boolean;
   }
 ) {
   const pending = details.pendingData || await getPendingCheckout(orderId);
@@ -665,6 +678,27 @@ async function saveVerifiedOrder(
    */
   let repairMissingSubscription = false;
   let existingPaidOrder: any = null;
+  /** The order this payment belongs to, however it was identified. */
+  let matchedOrder: any = null;
+
+  /**
+   * An order is the same payment if its id matches, OR if it already records
+   * this reference as its gateway transaction.
+   *
+   * Matching on id alone is what let the phantom order through: a renewal
+   * stores its reference in worldpayTxId and gets a fresh PS id, so the
+   * webhook's reference matched nothing and a new order was invented.
+   */
+  const matchesPayment = (order: any, reference: string): boolean => {
+    if (!order) return false;
+    const ref = String(reference || '').trim();
+    if (!ref) return false;
+    return (
+      String(order.id) === ref ||
+      String(order.worldpayTxId || '').trim() === ref ||
+      String(order.gatewayTxId || '').trim() === ref
+    );
+  };
 
   const looksLikeSubscriptionOrder = (order: any, candidateItems: any[]): boolean => {
     if (!order && !candidateItems?.length) return false;
@@ -685,18 +719,46 @@ async function saveVerifiedOrder(
   // with its own id and schedule — so the customer gets billed twice per cycle.
   try {
     const existingOrders: any[] = (await fetchResource('orders')) || [];
-    const already = existingOrders.find((o: any) => String(o.id) === String(orderId));
+    const already = existingOrders.find((o: any) => matchesPayment(o, orderId));
+    matchedOrder = already || null;
 
     if (already && already.paymentStatus === 'Paid') {
+      // Everything below keys off the order that was actually matched, not off
+      // the incoming reference: when a renewal webhook matches by worldpayTxId,
+      // the reference is a gateway reference and belongs to no order at all.
+      const matchedId = String(already.id);
       const existingSubs: any[] = (await fetchResource('subscriptions')) || [];
-      const hasSubscription = existingSubs.some((s: any) => String(s?.sourceOrderId || '') === String(orderId));
-      const wantsSubscription = looksLikeSubscriptionOrder(already, details.items || pending?.items || []);
+      // The link must resolve to a subscription that EXISTS. An order can carry
+      // a subscriptionId pointing at a deleted row — this database has no
+      // foreign keys, so nothing cleans those up — and trusting the id alone
+      // would report the plan as present and skip the repair that creates it.
+      const hasSubscription = existingSubs.some(
+        (s: any) =>
+          String(s?.sourceOrderId || '') === matchedId ||
+          (already.subscriptionId && String(s?.id) === String(already.subscriptionId))
+      );
+      // A RENEWAL order is a charge against a plan that already exists, not a
+      // plan being bought. It is tagged "Worldpay Recurring" by both renewal
+      // paths, and it is also the case where the reference is a gateway
+      // reference rather than the order's own id. Repairing one would create a
+      // SECOND subscription for a customer who already has theirs — the exact
+      // duplicate-billing shape this guard exists to prevent.
+      const isRenewalOrder =
+        (Array.isArray(already.tags) && already.tags.some((t: any) => /worldpay recurring/i.test(String(t)))) ||
+        matchedId !== String(orderId);
+
+      const wantsSubscription =
+        !isRenewalOrder && looksLikeSubscriptionOrder(already, details.items || pending?.items || []);
 
       if (hasSubscription || !wantsSubscription) {
-        console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid — skipping duplicate creation.`);
+        console.log(
+          `[Worldpay Order] ${matchedId} is already recorded as Paid` +
+            (matchedId === String(orderId) ? '' : ` (matched from gateway reference ${orderId})`) +
+            ' — skipping duplicate creation.'
+        );
         // The order is done, but this callback may be the one carrying the stored
         // credential the subscription still needs.
-        await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
+        await backfillSubscriptionCredential(matchedId, details.gatewayResponse);
         return already;
       }
 
@@ -727,6 +789,18 @@ async function saveVerifiedOrder(
       return (await fetchResource('orders')).find((o: any) => String(o.id) === String(orderId)) || null;
     }
   } catch (_e) {}
+
+  // A caller that may not create has nothing left to do: the payment belongs to
+  // an order this system does not have, so the only honest outcome is to record
+  // that and stop. Falling through would invent one from the defaults below.
+  if (details.allowCreate === false && !matchedOrder) {
+    console.warn(
+      `[Worldpay Order] No order matches gateway reference "${orderId}" (checked id, worldpayTxId and ` +
+        `gatewayTxId). Not creating one — a webhook never authors an order. If a payment was taken for ` +
+        `an order this store does not have, that is a reconciliation problem, not a missing row.`
+    );
+    return null;
+  }
 
   const customerName = pending?.customerName || details.customerName || 'Valued Customer';
   const rawEmail = pending?.customerEmail || details.customerEmail || 'customer@pouch-supply.com';
@@ -1500,6 +1574,21 @@ export async function repairOrdersMissingSubscriptions(
   const isRenewalOrder = (order: any): boolean =>
     Array.isArray(order?.tags) && order.tags.some((t: any) => /recurring/i.test(String(t)));
 
+  /**
+   * The customer ended this plan. "No subscription" is the CORRECT state for it,
+   * not damage to repair — recreating one resurrects a cancelled agreement as an
+   * active plan and bills someone who deliberately stopped.
+   *
+   * This is reachable whenever the cancelled subscription row is gone while the
+   * order remains: the cancelled row is what records the intent, so deleting it
+   * makes a deliberately-ended plan look like a broken one.
+   */
+  const isCancelledSubscriptionOrder = (order: any): boolean => {
+    if (Array.isArray(order?.tags) && order.tags.some((t: any) => /cancel/i.test(String(t)))) return true;
+    const status = String(order?.subscriptionDetails?.paymentStatus || order?.subscriptionDetails?.status || '');
+    return /cancel/i.test(status);
+  };
+
   // Explicitly named orders are always examined, even when they look healthy,
   // so their real state can be reported rather than inferred from a list.
   const candidates = requested.length
@@ -1510,6 +1599,7 @@ export async function repairOrdersMissingSubscriptions(
           String(o.paymentStatus || '') === 'Paid' &&
           isSubscriptionOrder(o) &&
           !isRenewalOrder(o) &&
+          !isCancelledSubscriptionOrder(o) &&
           !visibleByOrder.has(String(o.id))
       );
 
@@ -1525,6 +1615,20 @@ export async function repairOrdersMissingSubscriptions(
 
     if (order.__missing) {
       results.push({ orderId, status: 'order-not-found' });
+      continue;
+    }
+
+    // Also enforced here, because an explicitly requested order bypasses the
+    // filter above. Recreating a plan the customer ended is worse than leaving
+    // the order without one.
+    if (isCancelledSubscriptionOrder(order)) {
+      results.push({
+        orderId,
+        status: 'skipped-cancelled',
+        detail:
+          'This order\'s subscription was cancelled. Having no subscription is the correct state for it, ' +
+          'so nothing was created — recreating one would resurrect a cancelled plan and bill the customer.'
+      });
       continue;
     }
 
@@ -2650,7 +2754,12 @@ router.post('/webhook', async (req: Request, res: Response) => {
         cardBrand: evt.cardBrand || undefined,
         // Carries any stored-credential reference Worldpay included in the event.
         gatewayResponse: evt.payload,
-        webhookEventId: evt.eventId || undefined
+        webhookEventId: evt.eventId || undefined,
+        // evt.orderId is Worldpay's transactionReference, which is a storefront
+        // order id only for a checkout payment. A renewal's reference is a
+        // gateway reference, and taking it for an order id is what fabricated
+        // the £0 "SUB-ORD-…" order. A webhook updates orders; it never authors.
+        allowCreate: false
       });
       if (tokenHref) {
         await recordTokenForSubscription(tokenHref, {

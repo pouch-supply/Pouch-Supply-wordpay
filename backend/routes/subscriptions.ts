@@ -845,7 +845,10 @@ router.post(
         paymentStatus: 'Paid',
         paymentMethod: 'Worldpay Recurring Subscription',
         worldpayTxId: result?.id || transactionReference,
-        gatewayTxId: result?.id || transactionReference,
+        // Always the gateway REFERENCE — this is what an inbound Worldpay
+        // webhook carries as transactionReference, and therefore the only field
+        // that lets it match this order instead of inventing a new one.
+        gatewayTxId: transactionReference,
         worldpayAuthCode: result?.authCode || 'AUTH-OK-MIT',
         gatewayAuthCode: result?.authCode || 'AUTH-OK-MIT',
         cardBrand: 'Worldpay Stored Card',

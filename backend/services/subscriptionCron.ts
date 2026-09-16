@@ -378,7 +378,12 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           paymentStatus: 'Paid',
           paymentMethod: 'Worldpay Recurring Subscription',
           worldpayTxId: chargeResult?.id || transactionReference,
-          gatewayTxId: chargeResult?.id || transactionReference,
+          // Always the gateway REFERENCE, never the payment id. Worldpay's
+          // webhooks identify a payment by transactionReference, so this is the
+          // field that lets an inbound event find this order. When Worldpay
+          // returns a payment id, worldpayTxId holds that instead, and without
+          // keeping the reference here the webhook matches nothing.
+          gatewayTxId: transactionReference,
           worldpayAuthCode: chargeResult?.authCode || null,
           gatewayAuthCode: chargeResult?.authCode || null,
           cardBrand: 'Worldpay Stored Card',

@@ -6775,7 +6775,12 @@ async function processDueSubscriptions() {
           paymentStatus: "Paid",
           paymentMethod: "Worldpay Recurring Subscription",
           worldpayTxId: chargeResult?.id || transactionReference,
-          gatewayTxId: chargeResult?.id || transactionReference,
+          // Always the gateway REFERENCE, never the payment id. Worldpay's
+          // webhooks identify a payment by transactionReference, so this is the
+          // field that lets an inbound event find this order. When Worldpay
+          // returns a payment id, worldpayTxId holds that instead, and without
+          // keeping the reference here the webhook matches nothing.
+          gatewayTxId: transactionReference,
           worldpayAuthCode: chargeResult?.authCode || null,
           gatewayAuthCode: chargeResult?.authCode || null,
           cardBrand: "Worldpay Stored Card",
@@ -8629,6 +8634,13 @@ async function saveVerifiedOrder(orderId, details) {
   const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
   let repairMissingSubscription = false;
   let existingPaidOrder = null;
+  let matchedOrder = null;
+  const matchesPayment = (order, reference) => {
+    if (!order) return false;
+    const ref = String(reference || "").trim();
+    if (!ref) return false;
+    return String(order.id) === ref || String(order.worldpayTxId || "").trim() === ref || String(order.gatewayTxId || "").trim() === ref;
+  };
   const looksLikeSubscriptionOrder = (order, candidateItems) => {
     if (!order && !candidateItems?.length) return false;
     if (order?.isSubscription) return true;
@@ -8641,14 +8653,21 @@ async function saveVerifiedOrder(orderId, details) {
   };
   try {
     const existingOrders = await fetchResource("orders") || [];
-    const already = existingOrders.find((o) => String(o.id) === String(orderId));
+    const already = existingOrders.find((o) => matchesPayment(o, orderId));
+    matchedOrder = already || null;
     if (already && already.paymentStatus === "Paid") {
+      const matchedId = String(already.id);
       const existingSubs = await fetchResource("subscriptions") || [];
-      const hasSubscription = existingSubs.some((s) => String(s?.sourceOrderId || "") === String(orderId));
-      const wantsSubscription = looksLikeSubscriptionOrder(already, details.items || pending?.items || []);
+      const hasSubscription = existingSubs.some(
+        (s) => String(s?.sourceOrderId || "") === matchedId || already.subscriptionId && String(s?.id) === String(already.subscriptionId)
+      );
+      const isRenewalOrder = Array.isArray(already.tags) && already.tags.some((t) => /worldpay recurring/i.test(String(t))) || matchedId !== String(orderId);
+      const wantsSubscription = !isRenewalOrder && looksLikeSubscriptionOrder(already, details.items || pending?.items || []);
       if (hasSubscription || !wantsSubscription) {
-        console.log(`[Worldpay Order] Order ${orderId} is already recorded as Paid \u2014 skipping duplicate creation.`);
-        await backfillSubscriptionCredential(String(orderId), details.gatewayResponse);
+        console.log(
+          `[Worldpay Order] ${matchedId} is already recorded as Paid` + (matchedId === String(orderId) ? "" : ` (matched from gateway reference ${orderId})`) + " \u2014 skipping duplicate creation."
+        );
+        await backfillSubscriptionCredential(matchedId, details.gatewayResponse);
         return already;
       }
       console.error(
@@ -8670,6 +8689,12 @@ async function saveVerifiedOrder(orderId, details) {
       return (await fetchResource("orders")).find((o) => String(o.id) === String(orderId)) || null;
     }
   } catch (_e) {
+  }
+  if (details.allowCreate === false && !matchedOrder) {
+    console.warn(
+      `[Worldpay Order] No order matches gateway reference "${orderId}" (checked id, worldpayTxId and gatewayTxId). Not creating one \u2014 a webhook never authors an order. If a payment was taken for an order this store does not have, that is a reconciliation problem, not a missing row.`
+    );
+    return null;
   }
   const customerName = pending?.customerName || details.customerName || "Valued Customer";
   const rawEmail = pending?.customerEmail || details.customerEmail || "customer@pouch-supply.com";
@@ -9130,8 +9155,13 @@ async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMI
     return (Array.isArray(order?.items) ? order.items : []).some(isSubscriptionLine);
   };
   const isRenewalOrder = (order) => Array.isArray(order?.tags) && order.tags.some((t) => /recurring/i.test(String(t)));
+  const isCancelledSubscriptionOrder = (order) => {
+    if (Array.isArray(order?.tags) && order.tags.some((t) => /cancel/i.test(String(t)))) return true;
+    const status = String(order?.subscriptionDetails?.paymentStatus || order?.subscriptionDetails?.status || "");
+    return /cancel/i.test(status);
+  };
   const candidates = requested.length ? requested.map((id) => orders.find((o) => String(o?.id) === id) || { id, __missing: true }) : orders.filter(
-    (o) => o && String(o.paymentStatus || "") === "Paid" && isSubscriptionOrder2(o) && !isRenewalOrder(o) && !visibleByOrder.has(String(o.id))
+    (o) => o && String(o.paymentStatus || "") === "Paid" && isSubscriptionOrder2(o) && !isRenewalOrder(o) && !isCancelledSubscriptionOrder(o) && !visibleByOrder.has(String(o.id))
   );
   if (candidates.length === 0) return results;
   console.log(
@@ -9141,6 +9171,14 @@ async function repairOrdersMissingSubscriptions(limit = SUBSCRIPTION_REPAIR_LIMI
     const orderId = String(order.id);
     if (order.__missing) {
       results.push({ orderId, status: "order-not-found" });
+      continue;
+    }
+    if (isCancelledSubscriptionOrder(order)) {
+      results.push({
+        orderId,
+        status: "skipped-cancelled",
+        detail: "This order's subscription was cancelled. Having no subscription is the correct state for it, so nothing was created \u2014 recreating one would resurrect a cancelled plan and bill the customer."
+      });
       continue;
     }
     let billable = [];
@@ -9899,7 +9937,12 @@ router10.post("/webhook", async (req, res) => {
         cardBrand: evt.cardBrand || void 0,
         // Carries any stored-credential reference Worldpay included in the event.
         gatewayResponse: evt.payload,
-        webhookEventId: evt.eventId || void 0
+        webhookEventId: evt.eventId || void 0,
+        // evt.orderId is Worldpay's transactionReference, which is a storefront
+        // order id only for a checkout payment. A renewal's reference is a
+        // gateway reference, and taking it for an order id is what fabricated
+        // the £0 "SUB-ORD-…" order. A webhook updates orders; it never authors.
+        allowCreate: false
       });
       if (tokenHref) {
         await recordTokenForSubscription(tokenHref, {
@@ -10670,7 +10713,10 @@ router11.post(
         paymentStatus: "Paid",
         paymentMethod: "Worldpay Recurring Subscription",
         worldpayTxId: result?.id || transactionReference,
-        gatewayTxId: result?.id || transactionReference,
+        // Always the gateway REFERENCE — this is what an inbound Worldpay
+        // webhook carries as transactionReference, and therefore the only field
+        // that lets it match this order instead of inventing a new one.
+        gatewayTxId: transactionReference,
         worldpayAuthCode: result?.authCode || "AUTH-OK-MIT",
         gatewayAuthCode: result?.authCode || "AUTH-OK-MIT",
         cardBrand: "Worldpay Stored Card",

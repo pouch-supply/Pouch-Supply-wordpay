@@ -702,6 +702,93 @@ async function main() {
     const getAttempt = await realFetch(`${base}/api/worldpay/repair-subscriptions`);
     const getBody = await getAttempt.text();
     check('a GET does not run the repair', !/Examined \d+ order/.test(getBody), getBody.slice(0, 120));
+
+    // A renewal identifies its payment by a GATEWAY reference, not by an order
+    // id. Taking one for the other fabricated a £0 order under the default
+    // customer, emailed the customer and the admin, and fired a Klaviyo
+    // purchase event, while the real renewal order sat alongside it.
+    console.log('\n=== 26. A renewal webhook never fabricates an order ===');
+    const RENEWAL_REF = 'SUB-ORD-68520-2790';
+
+    const beforeUnknown: any[] = (await fetchResource('orders')) || [];
+    const unknownHook = await post('/api/worldpay/webhook', {
+      eventId: 'evt-harness-unknown',
+      eventDetails: { classification: 'payment', type: 'authorized', transactionReference: RENEWAL_REF }
+    });
+    check('a payment event for an unknown reference is accepted', unknownHook.status === 200, `status ${unknownHook.status}`);
+
+    const afterUnknown: any[] = (await fetchResource('orders')) || [];
+    check(
+      'it creates NO order when nothing matches the reference',
+      afterUnknown.length === beforeUnknown.length,
+      `orders went ${beforeUnknown.length} -> ${afterUnknown.length}`
+    );
+    check(
+      'and specifically no order is keyed by the gateway reference',
+      !afterUnknown.some((o: any) => String(o?.id) === RENEWAL_REF),
+      'an order was created with the transaction reference as its id'
+    );
+
+    // Now the real renewal order exists, carrying the reference the way the
+    // renewal cron writes it: a fresh PS id, the reference in gatewayTxId.
+    const RENEWAL_ORDER = 'PS90026';
+    await saveResource('orders', [
+      ...afterUnknown,
+      {
+        id: RENEWAL_ORDER,
+        customerName: 'Harness Renewal',
+        customerEmail: 'harness.renewal@pouch-supply.com',
+        total: 5.7,
+        paymentStatus: 'Paid',
+        fulfillmentStatus: 'Unfulfilled',
+        destination: 'United Kingdom',
+        deliveryMethod: 'Royal Mail Tracked 24/48',
+        date: 'Sep 16, 2026 at 10:36 AM',
+        items: [],
+        worldpayTxId: RENEWAL_REF,
+        gatewayTxId: RENEWAL_REF,
+        tags: ['Storefront', 'Subscription Order', 'Worldpay Recurring']
+      }
+    ]);
+
+    const beforeMatch: any[] = (await fetchResource('orders')) || [];
+    const matchHook = await post('/api/worldpay/webhook', {
+      eventId: 'evt-harness-renewal',
+      eventDetails: { classification: 'payment', type: 'authorized', transactionReference: RENEWAL_REF }
+    });
+    check('the renewal payment event is accepted', matchHook.status === 200, `status ${matchHook.status}`);
+
+    const afterMatch: any[] = (await fetchResource('orders')) || [];
+    check(
+      'it matches the existing order by gatewayTxId instead of creating one',
+      afterMatch.length === beforeMatch.length,
+      `orders went ${beforeMatch.length} -> ${afterMatch.length}`
+    );
+    check(
+      'the real renewal order is untouched and still £5.70',
+      afterMatch.find((o: any) => String(o?.id) === RENEWAL_ORDER)?.total === 5.7,
+      JSON.stringify(afterMatch.find((o: any) => String(o?.id) === RENEWAL_ORDER)?.total)
+    );
+
+    // Worldpay sends several paid-class events per payment (authorized, then
+    // sentForSettlement). Each must be inert once the order is recorded Paid.
+    const replay = await post('/api/worldpay/webhook', {
+      eventId: 'evt-harness-renewal-2',
+      eventDetails: { classification: 'payment', type: 'sentForSettlement', transactionReference: RENEWAL_REF }
+    });
+    check('a second paid event for the same payment is accepted', replay.status === 200);
+
+    const afterRenewalReplay: any[] = (await fetchResource('orders')) || [];
+    check(
+      'replaying it still creates no order',
+      afterRenewalReplay.length === beforeMatch.length,
+      `orders went ${beforeMatch.length} -> ${afterRenewalReplay.length}`
+    );
+    check(
+      'no placeholder customer order exists anywhere',
+      !afterRenewalReplay.some((o: any) => String(o?.customerEmail || '') === 'customer@pouch-supply.com'),
+      'a default-identity order was created'
+    );
   } catch (err: any) {
     failures.push(`harness threw: ${err?.stack || err?.message || err}`);
     console.error('\n[verify] threw:', err);
