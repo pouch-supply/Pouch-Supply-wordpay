@@ -9743,10 +9743,16 @@ async function recordWebhookReceipt(entry) {
       rawBody: entry.rawBody.slice(0, WEBHOOK_LOG_BODY_LIMIT)
     });
     await saveResource(WEBHOOK_LOG_RESOURCE, existing.slice(-WEBHOOK_LOG_KEEP));
+    lastReceiptWriteError = null;
   } catch (err) {
+    lastReceiptWriteError = `${(/* @__PURE__ */ new Date()).toISOString()}: ${err?.message || String(err)}`;
     console.warn("[Worldpay Webhook] Could not record the receipt:", err?.message);
   }
 }
+var handlerInvocations = 0;
+var lastHandlerRanAt = null;
+var lastReceiptWriteError = null;
+var WEBHOOK_BUILD_MARKER = "webhook-instrumentation-2026-09-16";
 router10.get("/webhook", async (_req, res) => {
   let heldTokens = 0;
   try {
@@ -9763,8 +9769,18 @@ router10.get("/webhook", async (_req, res) => {
     ok: true,
     endpoint: "/api/worldpay/webhook",
     method: "POST",
-    message: "Worldpay webhook endpoint is live. Register this exact URL in Developer Tools > Webhooks and make sure tokenCreated is among the subscribed events.",
+    message: "Worldpay webhook endpoint is live. The URL being registered and Active is not sufficient \u2014 tokenCreated must also be among the SUBSCRIBED EVENTS for that registration, which the webhook list does not show. Open the registration itself to confirm the event selection.",
     heldTokensAwaitingSubscription: heldTokens,
+    // Which build is answering. Compare against the deployed commit before
+    // trusting anything below: a test run against a stale bundle proves nothing.
+    build: WEBHOOK_BUILD_MARKER,
+    // Handler-ran evidence, independent of the persisted log above. Non-zero
+    // with webhooksReceivedTotal 0 means Worldpay IS calling and the receipt
+    // write is failing — a storage bug, not a delivery problem. Zero proves
+    // nothing on its own: this GET may hit a different serverless instance.
+    handlerInvocationsThisInstance: handlerInvocations,
+    lastHandlerRanAtThisInstance: lastHandlerRanAt,
+    lastReceiptWriteError,
     // The answer to "is Worldpay actually calling us?". A total of 0 means no
     // webhook of ANY kind has reached this endpoint, which is a Worldpay-side
     // registration problem and not something this code can fix.
@@ -9792,6 +9808,8 @@ router10.post("/webhook", async (req, res) => {
       return String(req.body);
     }
   })();
+  handlerInvocations += 1;
+  lastHandlerRanAt = (/* @__PURE__ */ new Date()).toISOString();
   console.log(
     `[Worldpay Webhook] <<< POST RECEIVED (${rawBody.length} bytes) >>> ` + rawBody.slice(0, 4e3)
   );

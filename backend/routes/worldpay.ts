@@ -2414,10 +2414,35 @@ async function recordWebhookReceipt(entry: {
       rawBody: entry.rawBody.slice(0, WEBHOOK_LOG_BODY_LIMIT)
     });
     await saveResource(WEBHOOK_LOG_RESOURCE, existing.slice(-WEBHOOK_LOG_KEEP));
+    lastReceiptWriteError = null;
   } catch (err: any) {
+    // Recorded rather than only warned: a failed write here is indistinguishable
+    // from "Worldpay never called" in the GET below — both report 0 — and that
+    // ambiguity is exactly what made the last diagnosis take days.
+    lastReceiptWriteError = `${new Date().toISOString()}: ${err?.message || String(err)}`;
     console.warn('[Worldpay Webhook] Could not record the receipt:', err?.message);
   }
 }
+
+/**
+ * Proof of what this instance actually saw, independent of the persisted log.
+ *
+ * The persisted counters answer "did a webhook arrive and get stored". These
+ * answer "did the handler run at all", which is the only way to tell a Worldpay
+ * delivery problem apart from a storage problem. Module state on a serverless
+ * platform is per-instance and resets on a cold start, so a zero here proves
+ * nothing — a NON-zero is the signal.
+ */
+let handlerInvocations = 0;
+let lastHandlerRanAt: string | null = null;
+let lastReceiptWriteError: string | null = null;
+
+/**
+ * Bumped by hand whenever this handler changes. The deployed bundle is a build
+ * artifact, so without this there is no way to tell from the outside whether a
+ * test exercised the code being reasoned about or a stale deploy.
+ */
+const WEBHOOK_BUILD_MARKER = 'webhook-instrumentation-2026-09-16';
 
 router.get('/webhook', async (_req: Request, res: Response) => {
   let heldTokens = 0;
@@ -2437,9 +2462,22 @@ router.get('/webhook', async (_req: Request, res: Response) => {
     endpoint: '/api/worldpay/webhook',
     method: 'POST',
     message:
-      'Worldpay webhook endpoint is live. Register this exact URL in Developer Tools > Webhooks ' +
-      'and make sure tokenCreated is among the subscribed events.',
+      'Worldpay webhook endpoint is live. The URL being registered and Active is not sufficient — ' +
+      'tokenCreated must also be among the SUBSCRIBED EVENTS for that registration, which the ' +
+      'webhook list does not show. Open the registration itself to confirm the event selection.',
     heldTokensAwaitingSubscription: heldTokens,
+
+    // Which build is answering. Compare against the deployed commit before
+    // trusting anything below: a test run against a stale bundle proves nothing.
+    build: WEBHOOK_BUILD_MARKER,
+
+    // Handler-ran evidence, independent of the persisted log above. Non-zero
+    // with webhooksReceivedTotal 0 means Worldpay IS calling and the receipt
+    // write is failing — a storage bug, not a delivery problem. Zero proves
+    // nothing on its own: this GET may hit a different serverless instance.
+    handlerInvocationsThisInstance: handlerInvocations,
+    lastHandlerRanAtThisInstance: lastHandlerRanAt,
+    lastReceiptWriteError,
 
     // The answer to "is Worldpay actually calling us?". A total of 0 means no
     // webhook of ANY kind has reached this endpoint, which is a Worldpay-side
@@ -2474,6 +2512,9 @@ router.post('/webhook', async (req: Request, res: Response) => {
       return String(req.body);
     }
   })();
+
+  handlerInvocations += 1;
+  lastHandlerRanAt = new Date().toISOString();
 
   console.log(
     `[Worldpay Webhook] <<< POST RECEIVED (${rawBody.length} bytes) >>> ` + rawBody.slice(0, 4000)
