@@ -7256,51 +7256,6 @@
         ],
         "frequencyDiscount": "10%"
       }
-    },
-    {
-      "id": "SUB-ORD-68520-2790",
-      "data": {
-        "subtotal": 0,
-        "isTestMode": false,
-        "deliveryCost": 2.99,
-        "shippingCost": 2.99,
-        "webhookEventId": "1b5b1414-526c-40e0-b552-70b459443760",
-        "notificationsSent": {
-          "order_confirmation": "2026-09-16T10:36:44.909Z"
-        }
-      },
-      "date": "Sep 16, 2026 at 10:36 AM",
-      "tags": [
-        "Storefront",
-        "Worldpay Live Order"
-      ],
-      "items": [],
-      "total": 0,
-      "carrier": "Royal Mail",
-      "subtotal": 0,
-      "cardBrand": "Worldpay Card",
-      "createdAt": "2026-09-16T10:36:44.910Z",
-      "trackingId": null,
-      "destination": "United Kingdom",
-      "gatewayTxId": "1b5b1414-526c-40e0-b552-70b459443760",
-      "customerName": "Valued Customer",
-      "deliveryCost": 2.99,
-      "shippingCost": 2.99,
-      "worldpayTxId": "1b5b1414-526c-40e0-b552-70b459443760",
-      "customerEmail": "customer@pouch-supply.com",
-      "paymentStatus": "Paid",
-      "deliveryMethod": "Royal Mail Tracked 24/48",
-      "isSubscription": false,
-      "subscriptionId": null,
-      "trackingNumber": null,
-      "discountApplied": null,
-      "gatewayAuthCode": "AUTH-OK",
-      "shippingAddress": null,
-      "trackingHistory": null,
-      "worldpayAuthCode": "AUTH-OK",
-      "fulfillmentStatus": "Unfulfilled",
-      "storeCreditApplied": 0,
-      "subscriptionDetails": null
     }
   ],
   "files": [
@@ -7629,7 +7584,7 @@
           "productId": "77-20-mg"
         }
       ],
-      "subPrice": 5.7,
+      "subPrice": 28.18,
       "wishlist": [],
       "addresses": [
         "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
@@ -8023,7 +7978,7 @@
         "United Kingdom"
       ],
       "amountSpent": 0,
-      "ordersCount": 1,
+      "ordersCount": 0,
       "subscriptionStatus": "Not subscribed"
     }
   ],
@@ -12240,7 +12195,7 @@
       "cansCount": 1,
       "createdAt": "2026-09-12T12:15:12.202Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-16T10:50:23.534Z",
+      "updatedAt": "2026-09-16T11:30:10.762Z",
       "customerId": "cust-1787363327079-edas9",
       "customerName": "Scott Kivlin",
       "shippingCost": 2.99,
@@ -12305,7 +12260,7 @@
       "cansCount": 1,
       "createdAt": "2026-09-14T09:00:11.394Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-16T10:50:25.159Z",
+      "updatedAt": "2026-09-16T11:30:10.767Z",
       "customerId": "cust-1787363327079-edas9",
       "shippingFee": 2.99,
       "customerName": "Scott Kivlin",
@@ -12373,7 +12328,7 @@
       "cansCount": 1,
       "createdAt": "2026-09-15T10:30:10.735Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-16T10:50:25.170Z",
+      "updatedAt": "2026-09-16T11:30:10.779Z",
       "customerId": "cust-1787363327079-edas9",
       "customerName": "Scott Kivlin",
       "shippingCost": 2.99,
@@ -12438,7 +12393,7 @@
       "cansCount": 1,
       "createdAt": "2026-09-16T08:45:11.042Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-16T10:50:25.182Z",
+      "updatedAt": "2026-09-16T11:30:10.810Z",
       "customerId": "cust-1787363327079-edas9",
       "shippingFee": 2.99,
       "customerName": "Scott Kivlin",
@@ -12506,7 +12461,7 @@
       "cansCount": 1,
       "createdAt": "2026-09-16T09:50:27.551Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-16T10:50:25.355Z",
+      "updatedAt": "2026-09-16T11:30:10.820Z",
       "customerId": "cust-1789551589001",
       "shippingFee": 2.99,
       "customerName": "Scott kivlin",
@@ -12528,6 +12483,104 @@
       "worldpayTransactionId": "5f4869f4-52da-47bd-b374-dd4675b1acaf",
       "tokenisationDowngraded": false,
       "worldpaySchemeReference": "MRLSCPKSQ0916"
+    },
+    {
+      "id": "sub_1789556411210_ixl6n9",
+      "items": [
+        {
+          "sku": "sub-pack-1789036441513",
+          "image": "/assets/plan_lite_box_1788334553835-mnRl-qrp.jpg",
+          "price": 25.19,
+          "vendor": "Subscription Pack",
+          "variant": "Standard",
+          "quantity": 1,
+          "productId": "sub-pack-1789036441513",
+          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (77 20 mg — Ghost Cola Ice (Qty:1), 77 5.2 mg — Watermelon ice (Qty:1), SNU 18 mg — Triple Mango (Qty:4))",
+          "isSubscription": true,
+          "subscriptionPlan": "LITE Plan",
+          "frequencyDiscount": "10%",
+          "subscriptionItems": [
+            {
+              "name": "77 20 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428277/storefront_media/file_k8stq7.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Ghost Cola Ice",
+              "quantity": 1,
+              "productId": "77-20-mg",
+              "variantId": "PCH-364684-GHOST-COLA-ICE",
+              "variantName": "Ghost Cola Ice",
+              "productTitle": "77 20 mg",
+              "formattedLabel": "77 20 mg — Ghost Cola Ice (Qty:1)"
+            },
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 1,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:1)"
+            },
+            {
+              "name": "SNU 18 mg",
+              "brand": "snu",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785307316/storefront_media/file_jeyspk.jpg",
+              "price": 4.99,
+              "vendor": "snu",
+              "variant": "Triple Mango",
+              "quantity": 4,
+              "productId": "snu-18-mg",
+              "variantId": "PCH-922434-TRIPLE-MANGO",
+              "variantName": "Triple Mango",
+              "productTitle": "SNU 18 mg",
+              "formattedLabel": "SNU 18 mg — Triple Mango (Qty:4)"
+            }
+          ],
+          "subscriptionFrequency": "Next Day (Test)"
+        }
+      ],
+      "amount": 28.18,
+      "planId": "sub-pack-1789036441513",
+      "status": "cancelled",
+      "currency": "GBP",
+      "planName": "LITE Plan",
+      "cansCount": 1,
+      "createdAt": "2026-09-16T11:00:11.226Z",
+      "itemPrice": 25.19,
+      "updatedAt": "2026-09-16T11:33:49.209Z",
+      "customerId": "cust-1787363327079-edas9",
+      "shippingFee": 2.99,
+      "customerName": "Scott Kivlin",
+      "deliveryCost": 2.99,
+      "shippingCost": 2.99,
+      "customerEmail": "scott@pouch-supply.com",
+      "lastPaymentAt": "2026-09-16T11:00:11.211Z",
+      "lastPaymentId": "pay2wWjMgEoLtqwpFNLfPr--0",
+      "sourceOrderId": "PS35806",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "shippingAmount": 2.99,
+      "billingInterval": "1day",
+      "nextBillingDate": "2026-09-17T11:00:10.762Z",
+      "shippingAddress": "39 Tonks Drive, telford, tf4 2tq, United Kingdom, London",
+      "lastPaymentStatus": "authorized",
+      "tokenLookupLastAt": "2026-09-16T11:30:10.698Z",
+      "worldpayTokenHref": null,
+      "failedPaymentCount": 0,
+      "tokenLookupAttempts": 3,
+      "worldpayRecurringHref": null,
+      "worldpayTransactionId": "pay2wWjMgEoLtqwpFNLfPr--0",
+      "tokenisationDowngraded": false,
+      "worldpaySchemeReference": "MRLV9R7LB0910",
+      "cancelledAt": "2026-09-16T11:33:48.888Z",
+      "cancellationReason": "Duplicate subscription for order PS35806, created in error by the subscription repair sweep. The customer's original subscription is unaffected.",
+      "duplicateOfOrder": "PS35806"
     }
   ],
   "klaviyo_logs": [
