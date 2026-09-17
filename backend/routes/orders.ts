@@ -372,6 +372,14 @@ export async function saveSingleOrder(orderData: any) {
     date: orderData.date || existingOrder?.date || (new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
     deliveryMethod: orderData.deliveryMethod || existingOrder?.deliveryMethod || 'Royal Mail Tracked 24/48',
     subscriptionId: orderData.subscriptionId || existingOrder?.subscriptionId || null,
+    // On a subscription renewal, the order the plan was first bought with, so the
+    // admin can trace a renewal back to its origin. Kept on the order object
+    // rather than as a new column, so it needs no migration; toOrderRow preserves
+    // it inside `data`.
+    parentOrderId: orderData.parentOrderId || existingOrder?.parentOrderId || existingOrder?.data?.parentOrderId || null,
+    isRenewal: typeof orderData.isRenewal === 'boolean'
+      ? orderData.isRenewal
+      : (existingOrder?.isRenewal ?? existingOrder?.data?.isRenewal ?? false),
     items,
     discountApplied: orderData.discountApplied || existingOrder?.discountApplied || null,
     // The money actually taken off. Previously only the discount object was
@@ -388,6 +396,8 @@ export async function saveSingleOrder(orderData: any) {
       shippingCost: orderData.shippingCost ?? existingOrder?.data?.shippingCost,
       deliveryCost: orderData.deliveryCost ?? existingOrder?.data?.deliveryCost,
       subtotal: orderData.subtotal ?? existingOrder?.data?.subtotal,
+      parentOrderId: orderData.parentOrderId ?? existingOrder?.data?.parentOrderId,
+      isRenewal: orderData.isRenewal ?? existingOrder?.data?.isRenewal,
       address: orderData.address || existingOrder?.data?.address,
       shippingAddress:
         (orderData.shippingAddress && typeof orderData.shippingAddress === 'object' ? orderData.shippingAddress : null) ||

@@ -1,4 +1,5 @@
 import { getPlanSlug, getPlanImage, detectPlanTier } from './planImages';
+import { parseOrderTime } from '../utils';
 
 export interface SubscriptionProductItem {
   productId?: string;
@@ -564,6 +565,67 @@ export function getOrderSubscriptionId(order: any): string {
 /** Finds the cart line that represents the subscription box itself. */
 export function findSubscriptionItem(order: any): any {
   return order?.items?.find(isSubscriptionLineItem);
+}
+
+/**
+ * Whether this order is an automatic subscription renewal rather than the
+ * checkout that started the plan.
+ */
+export function isRenewalOrder(order: any): boolean {
+  if (!order) return false;
+  if (typeof order.isRenewal === 'boolean') return order.isRenewal;
+  if (typeof order.data?.isRenewal === 'boolean') return order.data.isRenewal;
+  return Boolean(
+    order.data?.recurringRenewal ||
+    (Array.isArray(order.tags) && order.tags.some((t: any) =>
+      typeof t === 'string' && /recurring|renewal/i.test(t)
+    )) ||
+    String(order.paymentMethod || '').toLowerCase().includes('recurring')
+  );
+}
+
+/** The parent order id explicitly recorded on an order, or '' when absent. */
+export function getStoredParentOrderId(order: any): string {
+  return String(order?.parentOrderId || order?.data?.parentOrderId || '').trim();
+}
+
+/**
+ * The order that started this subscription, for a renewal.
+ *
+ * Renewals created from now on carry `parentOrderId` outright. Orders written
+ * before that do not, so the parent is recovered from the order list instead:
+ * every order on one plan shares a subscription id, and the oldest of those is
+ * the checkout the plan began with. Returns '' for a non-renewal, or when the
+ * parent is not among the orders given.
+ */
+export function resolveParentOrderId(order: any, allOrders: any[] = []): string {
+  if (!order) return '';
+
+  const stored = getStoredParentOrderId(order);
+  if (stored && stored !== String(order.id)) return stored;
+
+  if (!isRenewalOrder(order)) return '';
+
+  const subId = getOrderSubscriptionId(order);
+  if (!subId) return '';
+
+  const siblings = allOrders.filter(o =>
+    o &&
+    String(o.id) !== String(order.id) &&
+    getOrderSubscriptionId(o) === subId
+  );
+  if (siblings.length === 0) return '';
+
+  // The plan's first order is the one that is not itself a renewal; if every
+  // sibling looks like a renewal, fall back to the oldest.
+  const originals = siblings.filter(o => !isRenewalOrder(o));
+  const pool = originals.length > 0 ? originals : siblings;
+
+  const oldest = pool.reduce((earliest, candidate) =>
+    parseOrderTime(candidate) < parseOrderTime(earliest) ? candidate : earliest
+  );
+
+  return oldest ? String(oldest.id) : '';
 }
 
 /**

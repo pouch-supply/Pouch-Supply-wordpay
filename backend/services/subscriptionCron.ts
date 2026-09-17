@@ -394,8 +394,15 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
             ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           subscriptionId: subId,
           isSubscription: true,
+          // The order this plan was originally bought with. Renewals used to
+          // carry only the subscription id, so an admin looking at a renewal had
+          // no way back to the checkout it came from.
+          parentOrderId: sub.sourceOrderId ? String(sub.sourceOrderId) : null,
+          isRenewal: true,
           data: {
             subscriptionId: subId,
+            parentOrderId: sub.sourceOrderId ? String(sub.sourceOrderId) : null,
+            isRenewal: true,
             schemeReference: chargeResult?.schemeReference || schemeReference,
             paymentMethod: 'Worldpay Access MIT',
             recurringRenewal: true,

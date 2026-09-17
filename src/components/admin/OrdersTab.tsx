@@ -2,13 +2,20 @@ import React, { useState, useMemo } from 'react';
 import { 
   Download, Upload, Search, Eye, ArrowLeft, AlertTriangle, 
   ChevronDown, ChevronUp, MoreHorizontal, Calendar, Truck, Tag, MessageSquare, Send, Trash2, RotateCcw, CheckSquare, Square,
-  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink, Package
+  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink, Package, CornerDownRight
 } from 'lucide-react';
 import { Order, Product } from '../../types';
 import { parseOrderTime } from '../../utils';
 import { RoyalMailOrderActions } from './RoyalMailOrderActions';
 import SubscriptionIcon from '../SubscriptionIcon';
-import { extractSubscriptionDetails, parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../../utils/subscriptionParser';
+import {
+  extractSubscriptionDetails,
+  parseSubscriptionProducts,
+  formatSubscriptionItemDisplay,
+  resolveParentOrderId,
+  isRenewalOrder,
+  getOrderSubscriptionId
+} from '../../utils/subscriptionParser';
 import { getPlanImage, getPlanSlug } from '../../utils/planImages';
 
 const PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&q=80&w=300";
@@ -480,6 +487,27 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           ) : null}
                         </div>
 
+                        {/* The checkout this renewal came from. A renewal used to
+                            show only its own id, so there was no way to tell
+                            which original order a recurring charge belonged to. */}
+                        {(() => {
+                          const parentId = resolveParentOrderId(order, orders);
+                          if (!parentId) return null;
+                          const parent = orders.find(o => String(o.id) === parentId);
+                          return (
+                            <button
+                              onClick={() => parent && setSelectedOrder(parent)}
+                              disabled={!parent}
+                              title={parent ? `Open parent order #${parentId}` : `Parent order #${parentId} is not in this list`}
+                              className="mt-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-indigo-700 disabled:hover:text-slate-500 disabled:cursor-default cursor-pointer"
+                            >
+                              <CornerDownRight className="w-2.5 h-2.5" />
+                              <span>Renewal of</span>
+                              <span className="font-mono text-slate-700 normal-case">#{parentId}</span>
+                            </button>
+                          );
+                        })()}
+
                         {/* The selected box products are intentionally NOT listed
                             here — they belong to the order detail view, which
                             shows the full breakdown under "Selected Plan
@@ -591,6 +619,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   <ArrowLeft className="h-4 w-4 stroke-[2.5]" />
                 </button>
                 
+                <div className="flex flex-col gap-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">#{selectedOrder.id}</h1>
                   <span className={`text-[10px] font-black uppercase py-1 px-3.5 rounded-full tracking-wider shadow-3xs select-none ${
@@ -611,9 +640,49 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   </span>
                   {isSubOrder(selectedOrder) && (
                     <span className="text-[10px] font-black uppercase py-1 px-3.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-full tracking-wider shadow-3xs select-none">
-                      Subscription
+                      {isRenewalOrder(selectedOrder) ? 'Subscription Renewal' : 'Subscription'}
                     </span>
                   )}
+                </div>
+
+                {/* Where this recurring charge came from: the original checkout
+                    and the plan it renews. Shown on the detail view because that
+                    is where an admin lands when reconciling a Worldpay charge. */}
+                {(() => {
+                const parentId = resolveParentOrderId(selectedOrder, orders);
+                const subId = getOrderSubscriptionId(selectedOrder);
+                if (!parentId && !subId) return null;
+                const parent = parentId ? orders.find(o => String(o.id) === parentId) : null;
+                return (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                    {parentId && (
+                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                        <CornerDownRight className="w-3 h-3 text-slate-400" />
+                        <span className="uppercase tracking-wider text-[9.5px]">Parent order</span>
+                        {parent ? (
+                          <button
+                            onClick={() => setSelectedOrder(parent)}
+                            className="font-mono font-black text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer"
+                          >
+                            #{parentId}
+                          </button>
+                        ) : (
+                          <span className="font-mono font-black text-slate-700" title="This order is not in the current list — clear any filter or search to open it.">
+                            #{parentId}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {subId && (
+                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                        <RefreshCw className="w-3 h-3 text-slate-400" />
+                        <span className="uppercase tracking-wider text-[9.5px]">Subscription</span>
+                        <span className="font-mono font-black text-slate-700">{subId}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+                })()}
                 </div>
               </div>
 
