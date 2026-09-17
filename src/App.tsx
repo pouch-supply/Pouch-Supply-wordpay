@@ -660,7 +660,7 @@ export default function App() {
   });
   const [cartOpen, setCartOpen] = useState<boolean>(false);
   const [customerDrawerOpen, setCustomerDrawerOpen] = useState<boolean>(false);
-  const [customerDrawerTab, setCustomerDrawerTab] = useState<'orders' | 'addresses' | 'wishlist' | 'emails'>('orders');
+  const [customerDrawerTab, setCustomerDrawerTab] = useState<'orders' | 'addresses' | 'wishlist'>('orders');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [emailToast, setEmailToast] = useState<{ to: string; subject: string; refund: number } | null>(null);
 
@@ -2901,7 +2901,6 @@ export default function App() {
         onAddToCart={handleAddToCart}
         allProducts={products}
         orders={orders}
-        onUpdateOrder={handleUpdateOrder}
         onAddAddress={handleAddAddress}
         onRemoveAddress={handleRemoveAddress}
         onOpenCart={() => setCartOpen(true)}
@@ -3053,16 +3052,6 @@ export default function App() {
                 A confirmation email for refund value <strong>£{emailToast.refund.toFixed(2)}</strong> has been sent to <strong>{emailToast.to}</strong>!
               </p>
               <div className="flex gap-2 mt-3">
-                <button
-                  onClick={() => {
-                    setEmailToast(null);
-                    setCustomerDrawerTab('emails');
-                    setCustomerDrawerOpen(true);
-                  }}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[8.5px] tracking-wider py-1.5 px-3 rounded-lg transition-colors cursor-pointer"
-                >
-                  Open Inbox 📬
-                </button>
                 <button
                   onClick={() => setEmailToast(null)}
                   className="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold uppercase text-[8.5px] tracking-wider py-1.5 px-3 rounded-lg transition-colors cursor-pointer"

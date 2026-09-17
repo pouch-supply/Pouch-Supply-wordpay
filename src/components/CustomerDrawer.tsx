@@ -5,7 +5,7 @@ import { parseOrderTime } from '../utils';
 import { 
   X, User, LogIn, Heart, MapPin, Package, ShoppingBag, 
   Plus, Trash2, Eye, ShieldCheck, Sparkles, Smile, ArrowRight,
-  Truck, Check, Clock, Mail, RefreshCw
+  Truck, Check, Clock, RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import SubscriptionIcon from './SubscriptionIcon';
@@ -23,11 +23,10 @@ interface CustomerDrawerProps {
   onAddToCart: (product: Product, quantity: number) => void;
   allProducts: Product[];
   orders: Order[];
-  onUpdateOrder?: (updated: Order) => void;
   onAddAddress: (address: string) => void;
   onRemoveAddress: (index: number) => void;
   onOpenCart: () => void;
-  initialTab?: 'orders' | 'addresses' | 'wishlist' | 'emails';
+  initialTab?: 'orders' | 'addresses' | 'wishlist';
   onNavigateToPortal?: () => void;
 }
 
@@ -42,51 +41,21 @@ export default function CustomerDrawer({
   onAddToCart,
   allProducts,
   orders,
-  onUpdateOrder,
   onAddAddress,
   onRemoveAddress,
   onOpenCart,
   initialTab = 'orders',
   onNavigateToPortal
 }: CustomerDrawerProps) {
-  const [activeTab, setActiveTab] = useState<'orders' | 'addresses' | 'wishlist' | 'emails'>(initialTab);
-
-  const [emailsList, setEmailsList] = useState<any[]>([]);
-  const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
+  const [activeTab, setActiveTab] = useState<'orders' | 'addresses' | 'wishlist'>(initialTab);
 
   const { executeRecaptcha } = useRecaptcha();
 
-  const loadEmails = async () => {
-    try {
-      const res = await fetch('/api/email/logs');
-      if (res.ok) {
-        const logs = await res.json();
-        if (Array.isArray(logs)) {
-          const userEmail = (loggedInCustomer?.email || '').toLowerCase();
-          const filtered = logs.filter((l: any) => 
-            (!userEmail || (l.recipient || l.to || '').toLowerCase() === userEmail) && l.status !== 'simulated'
-          );
-          setEmailsList(filtered);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   useEffect(() => {
     if (isOpen) {
-      loadEmails();
       setActiveTab(initialTab);
     }
   }, [isOpen, initialTab]);
-
-  useEffect(() => {
-    window.addEventListener('ps-emails-updated', loadEmails);
-    return () => {
-      window.removeEventListener('ps-emails-updated', loadEmails);
-    };
-  }, []);
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'forgot' | 'reset' | 'verify'>('login');
   const [nameInput, setNameInput] = useState('');
   const [emailInput, setEmailInput] = useState('');
@@ -737,17 +706,6 @@ export default function CustomerDrawer({
                         <Heart className="h-3 w-3 inline-block mr-1 -mt-0.5 text-slate-500" />
                         Wishlist
                       </button>
-                      <button
-                        onClick={() => setActiveTab('emails')}
-                        className={`flex-1 min-w-[75px] py-2 text-center text-[10px] font-black uppercase tracking-widest rounded-lg transition-all cursor-pointer ${
-                          activeTab === 'emails' 
-                            ? 'bg-white text-indigo-650 shadow-xs border border-slate-200' 
-                            : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
-                        }`}
-                      >
-                        <Mail className="h-3 w-3 inline-block mr-1 -mt-0.5 text-slate-500" />
-                        Inbox ({loggedInCustomer && loggedInCustomer.email ? emailsList.filter(e => e && (e.recipient || e.to || '').toLowerCase() === (loggedInCustomer.email || '').toLowerCase()).length : 0})
-                      </button>
                     </div>
 
                     {/* Tab contents */}
@@ -942,80 +900,6 @@ export default function CustomerDrawer({
                                             </div>
                                           </div>
 
-                                          {/* Customer Activity Actions & Email Trigger Section */}
-                                          <div className="pt-2 flex flex-wrap gap-1.5 items-center justify-end">
-                                            <button
-                                              onClick={() => {
-                                                const updated: Order = {
-                                                  ...order,
-                                                  fulfillmentStatus: 'Cancelled',
-                                                  paymentStatus: 'Refunded'
-                                                };
-                                                if (onUpdateOrder) onUpdateOrder(updated);
-                                                fetch('/api/email/send-trigger', {
-                                                  method: 'POST',
-                                                  headers: { 'Content-Type': 'application/json' },
-                                                  body: JSON.stringify({
-                                                    type: 'order_cancelled',
-                                                    orderData: updated,
-                                                    reason: 'Customer initiated order cancellation'
-                                                  })
-                                                }).then(r => r.json()).then(() => {
-                                                  alert(`Order #${order.id} cancelled. A confirmation email has been sent to ${order.customerEmail}.`);
-                                                }).catch(e => console.warn(e));
-                                              }}
-                                              className="py-1 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-extrabold uppercase transition-all cursor-pointer"
-                                            >
-                                              Cancel Order
-                                            </button>
-
-                                            <button
-                                              onClick={() => {
-                                                const updatedTags = Array.isArray(order.tags) ? [...order.tags] : [];
-                                                if (!updatedTags.includes('Exchange Requested')) updatedTags.push('Exchange Requested');
-                                                const updated: Order = { ...order, tags: updatedTags };
-                                                if (onUpdateOrder) onUpdateOrder(updated);
-                                                fetch('/api/email/send-trigger', {
-                                                  method: 'POST',
-                                                  headers: { 'Content-Type': 'application/json' },
-                                                  body: JSON.stringify({
-                                                    type: 'order_exchanged',
-                                                    orderData: updated,
-                                                    exchangeDetails: 'Pouch variant swap requested by customer'
-                                                  })
-                                                }).then(r => r.json()).then(() => {
-                                                  alert(`Exchange request logged for Order #${order.id}. An exchange confirmation email has been sent to ${order.customerEmail}.`);
-                                                }).catch(e => console.warn(e));
-                                              }}
-                                              className="py-1 px-2.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg text-[10px] font-extrabold uppercase transition-all cursor-pointer"
-                                            >
-                                              Request Exchange
-                                            </button>
-
-                                            <button
-                                              onClick={() => {
-                                                const updatedTags = Array.isArray(order.tags) ? [...order.tags] : [];
-                                                if (!updatedTags.includes('Withdrawal Requested')) updatedTags.push('Withdrawal Requested');
-                                                const updated: Order = { ...order, paymentStatus: 'Refunded', tags: updatedTags };
-                                                if (onUpdateOrder) onUpdateOrder(updated);
-                                                fetch('/api/email/send-trigger', {
-                                                  method: 'POST',
-                                                  headers: { 'Content-Type': 'application/json' },
-                                                  body: JSON.stringify({
-                                                    type: 'order_refunded',
-                                                    orderData: updated,
-                                                    refundAmount: order.total,
-                                                    reason: 'Customer requested refund / withdrawal'
-                                                  })
-                                                }).then(r => r.json()).then(() => {
-                                                  alert(`Refund processed for Order #${order.id}. A refund email has been sent to ${order.customerEmail}.`);
-                                                }).catch(e => console.warn(e));
-                                              }}
-                                              className="py-1 px-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-[10px] font-extrabold uppercase transition-all cursor-pointer"
-                                            >
-                                              Request Refund
-                                            </button>
-                                          </div>
                                         </div>
                                       </motion.div>
                                     )}
@@ -1176,55 +1060,6 @@ export default function CustomerDrawer({
                           )}
                         </div>
                       )}
-
-                      {/* 4. EMAILS / INBOX TAB */}
-                      {activeTab === 'emails' && (
-                        <div className="space-y-3">
-                          {!loggedInCustomer ? (
-                            <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                              <Mail className="h-8 w-8 text-neutral-300 mx-auto mb-2" />
-                              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Authentication Required</p>
-                              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed max-w-[200px] mx-auto">Please sign in to view dispatched order notifications sent to your address.</p>
-                            </div>
-                          ) : (() => {
-                            const userEmail = (loggedInCustomer?.email || '').toLowerCase();
-                            const myEmails = emailsList.filter(e => e && userEmail && (e.recipient || e.to || '').toLowerCase() === userEmail);
-                            return myEmails.length === 0 ? (
-                              <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                                <Mail className="h-8 w-8 text-neutral-300 mx-auto mb-2" />
-                                <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Inbox Empty</p>
-                                <p className="text-[10px] text-slate-400 mt-1 leading-relaxed max-w-[200px] mx-auto font-medium">Dispatched transaction receipts and order updates will show up here.</p>
-                              </div>
-                            ) : (
-                              <div className="space-y-2.5">
-                                <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl text-[10px] text-indigo-800 font-medium leading-relaxed">
-                                  📬 <strong>Customer Account Notifications</strong>: Email receipts and order status dispatch notes sent to your address are stored here for reference.
-                                </div>
-                                {myEmails.map((email, idx) => (
-                                  <div 
-                                    key={idx} 
-                                    onClick={() => setSelectedEmail(email)}
-                                    className="bg-white border border-slate-200 hover:border-slate-300 p-3.5 rounded-xl cursor-pointer text-left transition-all shadow-3xs flex gap-3 items-start"
-                                  >
-                                    <div className="p-2 bg-slate-50 rounded-lg text-indigo-600 border border-slate-100 shrink-0 mt-0.5">
-                                      <Mail className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex-1 min-w-0 text-left">
-                                      <div className="flex justify-between items-baseline">
-                                        <span className="text-[9px] font-black text-indigo-650 uppercase tracking-wide">From: Pouch Supply</span>
-                                        <span className="text-[8.5px] font-mono text-slate-400 font-semibold">{email.date || 'Just now'}</span>
-                                      </div>
-                                      <h4 className="font-bold text-slate-800 text-xs mt-1 truncate">{email.subject}</h4>
-                                      <p className="text-[10px] text-slate-450 truncate mt-0.5 font-medium">{email.preview || 'Click to view full HTML email message.'}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
-
                     </div>
                   </div>
                 )}
@@ -1237,53 +1072,6 @@ export default function CustomerDrawer({
               </div>
             </motion.div>
           </div>
-        </div>
-      )}
-    </AnimatePresence>
-
-    {/* FULL HTML EMAIL PREVIEW MODAL */}
-    <AnimatePresence>
-      {selectedEmail && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="bg-slate-50 border border-slate-200 p-6 rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl space-y-4"
-          >
-            <div className="flex justify-between items-center pb-3 border-b border-slate-250">
-              <div>
-                <span className="text-[8.5px] font-black uppercase tracking-widest text-indigo-650">OFFICIAL TRANSACTIONAL EMAIL</span>
-                <h4 className="text-xs font-extrabold text-slate-850 mt-0.5">Subject: {selectedEmail.subject}</h4>
-              </div>
-              <button
-                onClick={() => setSelectedEmail(null)}
-                className="p-1.5 bg-slate-200 hover:bg-slate-300 rounded-lg text-slate-600 cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Fake Email client envelope headers */}
-            <div className="bg-white border border-slate-200 p-3 rounded-xl text-[10.5px] space-y-1 text-slate-600 font-medium text-left">
-              <p><strong>From:</strong> PerfumeSampler Support &lt;support@perfumesampler.com&gt;</p>
-              <p><strong>To:</strong> {selectedEmail.to}</p>
-              <p><strong>Date:</strong> {selectedEmail.date || 'Just now'}</p>
-            </div>
-
-            {/* Email message body content */}
-            <div 
-              className="bg-white border border-slate-250 p-6 rounded-xl overflow-hidden shadow-inner text-slate-800 text-xs leading-relaxed space-y-4 text-left"
-              dangerouslySetInnerHTML={{ __html: selectedEmail.body }}
-            />
-
-            <button
-              onClick={() => setSelectedEmail(null)}
-              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold uppercase tracking-wider text-[10.5px] rounded-xl cursor-pointer"
-            >
-              Close Message
-            </button>
-          </motion.div>
         </div>
       )}
     </AnimatePresence>
