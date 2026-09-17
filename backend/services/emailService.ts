@@ -686,7 +686,16 @@ export async function sendOrderConfirmationEmail(orderData: any) {
     total: typeof orderData.total === 'number' ? orderData.total : parseFloat(orderData.total) || 0,
     destination: orderData.destination || orderData.address || 'United Kingdom',
     deliveryMethod: orderData.deliveryMethod || 'Royal Mail Tracked 24/48',
-    discountAmount: orderData.discountApplied?.amount
+    // Passed through rather than guessed from the total: a Free Delivery reward
+    // waives the charge on an order of any size, and the template's fallback
+    // ("under £40 means £2.99") would bill the customer for it in the email.
+    subtotal: typeof orderData.subtotal === 'number' ? orderData.subtotal : orderData.data?.subtotal,
+    deliveryCost: typeof orderData.shippingCost === 'number'
+      ? orderData.shippingCost
+      : (typeof orderData.deliveryCost === 'number' ? orderData.deliveryCost : orderData.data?.shippingCost),
+    // `discountApplied` is the discount object; it has no `amount` field, so the
+    // discount row never rendered. The money off is carried separately.
+    discountAmount: typeof orderData.discountAmount === 'number' ? orderData.discountAmount : undefined
   };
 
   console.log(`[EmailService] Triggering Order Confirmation for Order #${data.orderId} to ${recipient}`);

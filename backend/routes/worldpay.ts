@@ -22,6 +22,7 @@ import {
   normalizeUkPostcode,
   validateUkDelivery
 } from '../../src/utils/ukValidation';
+import { isFreeShippingReward, resolveDeliveryCost } from '../../src/utils/discountUtils';
 
 const router = Router();
 
@@ -80,6 +81,8 @@ interface PendingCheckout {
   deliveryCost?: number;
   deliveryMethod?: string;
   discountApplied: any;
+  /** Money the discount took off, so the order does not have to reverse it out. */
+  discountAmount?: number;
   storeCreditApplied: number;
   isTestMode: boolean;
   createdAt: number;
@@ -646,6 +649,7 @@ async function saveVerifiedOrder(
     deliveryCost?: number;
     deliveryMethod?: string;
     discountApplied?: any;
+    discountAmount?: number;
     storeCreditApplied?: number;
     /**
      * Whether Worldpay confirmed the money was taken. False when the shopper
@@ -838,7 +842,9 @@ async function saveVerifiedOrder(
                 ? details.deliveryCost
                 : (total > subItemsTotal && subItemsTotal > 0
                     ? Number((total - subItemsTotal).toFixed(2))
-                    : (total >= 40 ? 0 : 2.99)))));
+                    // A free-delivery reward waives the charge whatever the
+                    // order value, so the guess has to look at the discount too.
+                    : resolveDeliveryCost(total, discountApplied)))));
 
   const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || 'Royal Mail Tracked 24/48';
 
@@ -950,8 +956,19 @@ async function saveVerifiedOrder(
         );
       }
 
+      // A loyalty reward such as "Free Delivery on your next order" waives the
+      // charge on THIS order only. Carrying its £0 into the subscription would
+      // ship every future renewal free, so the recurring fee falls back to the
+      // normal rule while the order itself keeps the waiver.
+      const rewardWaivedDelivery = effectiveShipping === 0 && isFreeShippingReward(discountApplied);
+      const recurringShipping = rewardWaivedDelivery
+        ? resolveDeliveryCost(subItemsTotal, null)
+        : effectiveShipping;
+
       // CRITICAL: Ensure the recurring subscription charge includes both the plan items and the initial shipping fee
-      const subAmount = total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2));
+      const subAmount = rewardWaivedDelivery
+        ? Number((subItemsTotal + recurringShipping).toFixed(2))
+        : (total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2)));
 
       const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       createdSubscriptionId = subId;
@@ -968,10 +985,10 @@ async function saveVerifiedOrder(
         planName,
         amount: subAmount, // Total recurring charge (includes shipping fee)
         itemPrice: subItemsTotal || Number(subItem.price) || subAmount,
-        shippingCost: effectiveShipping,
-        shippingFee: effectiveShipping,
-        shippingAmount: effectiveShipping,
-        deliveryCost: effectiveShipping,
+        shippingCost: recurringShipping,
+        shippingFee: recurringShipping,
+        shippingAmount: recurringShipping,
+        deliveryCost: recurringShipping,
         shippingAddress: destination,
         deliveryMethod,
         currency: 'GBP',
@@ -1086,6 +1103,9 @@ async function saveVerifiedOrder(
     deliveryCost: effectiveShipping,
     storeCreditApplied,
     discountApplied,
+    discountAmount: typeof pending?.discountAmount === 'number'
+      ? pending.discountAmount
+      : (typeof (details as any).discountAmount === 'number' ? (details as any).discountAmount : undefined),
     // Never invented. "status=SUCCESS" in the return URL is the browser's claim;
     // only a payment Worldpay reports as authorised makes this Paid. An
     // unconfirmed order stays Pending and is completed by the webhook, or by the
@@ -1861,6 +1881,7 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       items,
       recurring,
       discountApplied,
+      discountAmount: reqDiscountAmount,
       storeCreditApplied,
       origin: bodyOrigin
     } = req.body;
@@ -1894,7 +1915,8 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
     const effectiveTotal = typeof amount === 'number' ? amount : (typeof reqTotal === 'number' ? reqTotal : parseFloat(amount) || 0);
     const effectiveShippingCost = typeof reqShippingCost === 'number'
       ? reqShippingCost
-      : (typeof reqDeliveryCost === 'number' ? reqDeliveryCost : (effectiveTotal >= 40 ? 0 : 2.99));
+      // A free-delivery reward waives the charge whatever the order value.
+      : (typeof reqDeliveryCost === 'number' ? reqDeliveryCost : resolveDeliveryCost(effectiveTotal, discountApplied));
 
     // Store pending order details in memory and persistent storage — DO NOT CREATE ORDER IN DATABASE BEFORE PAYMENT
     const pendingPayload: PendingCheckout = {
@@ -1948,6 +1970,7 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
       deliveryCost: effectiveShippingCost,
       deliveryMethod: reqDeliveryMethod || 'Royal Mail Tracked 24/48',
       discountApplied: discountApplied || null,
+      discountAmount: typeof reqDiscountAmount === 'number' ? reqDiscountAmount : undefined,
       storeCreditApplied: storeCreditApplied || 0,
       isTestMode: false,
       createdAt: Date.now()

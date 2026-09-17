@@ -124,19 +124,31 @@ function renderOrderItemsTable(data: EmailTemplateData): string {
     return `<p style="font-size: 13px; color: #64748b;">No items detailed.</p>`;
   }
 
-  const itemsHtml = data.items.map(item => `
+  const itemsHtml = data.items.map(item => {
+    const lineTotal = (item.price || 0) * (item.quantity || 1);
+    // Loyalty reward lines ship at £0. Showing "£0.00" next to a can reads as a
+    // pricing error, so they are labelled as the gift they are.
+    const isReward = Boolean((item as any).isRewardItem);
+    const detailBits = [`Qty: ${item.quantity || 1}`];
+    if ((item as any).variant && (item as any).variant !== 'Standard') detailBits.push(String((item as any).variant));
+    if ((item as any).vendor) detailBits.unshift(String((item as any).vendor));
+    return `
     <tr>
       <td style="width: 60%; font-weight: 600; color: #1e293b;">
         ${item.productTitle || 'Nicotine Canister Pack'}
-        <div style="font-size: 11px; color: #64748b; font-weight: normal;">Qty: ${item.quantity || 1}</div>
+        ${isReward ? `<div style="font-size: 10px; color: #166534; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;">Loyalty reward — included free</div>` : ''}
+        <div style="font-size: 11px; color: #64748b; font-weight: normal;">${detailBits.join(' · ')}</div>
       </td>
-      <td style="width: 40%; text-align: right; font-weight: 700; color: #0f172a;">
-        £${((item.price || 0) * (item.quantity || 1)).toFixed(2)}
+      <td style="width: 40%; text-align: right; font-weight: 700; color: ${isReward ? '#166534' : '#0f172a'};">
+        ${isReward || lineTotal === 0 ? 'FREE' : `£${lineTotal.toFixed(2)}`}
       </td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   const total = data.total !== undefined ? data.total : 0;
+  // Only guessed when the caller sent no delivery figure; a free-delivery reward
+  // makes the order value a poor proxy, so callers should always pass it.
   const delivery = data.deliveryCost !== undefined ? data.deliveryCost : (total >= 40 ? 0 : 2.99);
   const subtotal = data.subtotal !== undefined ? data.subtotal : Math.max(0, total - delivery);
 

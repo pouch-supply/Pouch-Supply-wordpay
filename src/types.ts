@@ -172,6 +172,32 @@ export interface Customer {
   nextDelivery?: string;
 }
 
+/**
+ * One can the customer picked for a "FREE can of your choice" reward. Cans are
+ * not pushed into the cart — a £0 line would distort the volume-price tiers and
+ * the minimum-quantity checks on other discounts — so the selection rides along
+ * on the discount and is materialised as a £0 order line at submission.
+ */
+export interface FreeCanSelection {
+  productId: string;
+  productTitle: string;
+  vendor: string; // Brand, e.g. "velo"
+  variantName: string; // Flavour/variant, e.g. "Watermelon ice"
+  variantId?: string;
+  image: string;
+  sku?: string;
+  strength?: string;
+  originalPrice: number; // What the can would have cost, for "was £4.99" display
+}
+
+/** A non-product gift (mystery box, merchandise) included with the order at £0. */
+export interface RewardGift {
+  id: string;
+  label: string;
+  image: string;
+  note?: string;
+}
+
 export interface Discount {
   id: string;
   title: string; // Code name, e.g. CRUSHCLUB15
@@ -181,6 +207,16 @@ export interface Discount {
   type: 'Amount off products' | 'Buy X get Y' | 'Amount off order' | 'Free shipping' | 'Loyalty Reward';
   used: number;
   details: string; // e.g. "15% off one-time purchase products"
+
+  // Loyalty milestone reward mechanics. Set by resolveDiscountCode when a
+  // loyalty voucher code is applied; drives the free-can picker, the shipping
+  // waiver and the gift lines shown with the order.
+  loyaltyMilestoneCode?: string; // Base code, e.g. "BRONZE3"
+  rewardKind?: 'discount' | 'free-cans' | 'free-shipping' | 'gift' | 'choice';
+  freeCanCount?: number; // How many cans the customer gets to choose
+  freeCanSelections?: FreeCanSelection[]; // What they chose
+  rewardGifts?: RewardGift[]; // Mystery box / merchandise included at £0
+  rewardChoiceId?: string; // Which option was taken on a multi-option reward
 
   // Loyalty Reward custom properties
   loyaltyRewardType?: 'B1G1' | 'Percentage Off' | 'Reward Points' | 'Custom';

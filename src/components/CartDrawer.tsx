@@ -4,7 +4,20 @@ import { X, Trash2, Plus, Minus, Ticket, Check, ShieldCheck, ShoppingBag, Sparkl
 import { motion, AnimatePresence } from 'motion/react';
 import SubscriptionIcon from './SubscriptionIcon';
 import { calculateDiscountAmount, calculateVolumePrice } from '../utils';
-import { resolveDiscountCode } from '../utils/discountUtils';
+import {
+  resolveDiscountCode,
+  resolveDeliveryCost,
+  rewardNeedsSelection,
+  getRewardChoices,
+  applyRewardChoice,
+  getOutstandingFreeCanCount,
+  FREE_SHIPPING_THRESHOLD,
+  STANDARD_DELIVERY_COST
+} from '../utils/discountUtils';
+import { hydrateRewardSelection } from '../utils/rewardLines';
+import { saveRewardSelection } from '../utils/rewardSelectionStore';
+import FreeCanPicker from './FreeCanPicker';
+import { RewardChoicePicker, AppliedRewardLines } from './RewardSelection';
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
 import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
 
@@ -39,6 +52,8 @@ export default function CartDrawer({
   const [appliedDiscount, setAppliedDiscount] = useState<Discount | null>(null);
   const [promoError, setPromoError] = useState('');
   const [promoSuccess, setPromoSuccess] = useState('');
+  const [isCanPickerOpen, setIsCanPickerOpen] = useState(false);
+  const [isChoicePickerOpen, setIsChoicePickerOpen] = useState(false);
 
   const getItemTotal = (item: CartItem) => {
     if (item.productId && (item.productId.startsWith('sub-pack-') || item.productId.includes('sub-pack') || item.isSubscription)) {
@@ -58,20 +73,25 @@ export default function CartDrawer({
   );
 
   const totalBeforeShipping = Math.max(subtotal - discountValue, 0);
-  const isFreeShipping = Boolean(
-    totalBeforeShipping >= 40 ||
-    appliedDiscount?.type === 'Free shipping' ||
-    appliedDiscount?.title?.toUpperCase().includes('BRONZE5') ||
-    appliedDiscount?.details?.toLowerCase().includes('free shipping') ||
-    appliedDiscount?.details?.toLowerCase().includes('free royal mail')
-  );
-  const shippingFee = isFreeShipping ? 0 : 2.99;
+  const shippingFee = resolveDeliveryCost(totalBeforeShipping, appliedDiscount, STANDARD_DELIVERY_COST);
   const total = totalBeforeShipping + shippingFee;
+
+  const outstandingCans = getOutstandingFreeCanCount(appliedDiscount);
+  const needsRewardSelection = rewardNeedsSelection(appliedDiscount);
+
+  /** Opens the picker a freshly applied reward needs before it can be honoured. */
+  const openPickerFor = (discount: Discount) => {
+    if (discount.rewardKind === 'choice') {
+      setIsChoicePickerOpen(true);
+    } else if (discount.rewardKind === 'free-cans') {
+      setIsCanPickerOpen(true);
+    }
+  };
 
   const handleApplyPromo = (e: React.FormEvent) => {
     e.preventDefault();
     if (!promoCodeInput.trim()) return;
-    
+
     setPromoError('');
     setPromoSuccess('');
 
@@ -85,15 +105,35 @@ export default function CartDrawer({
     );
 
     if (res.success && res.discount) {
-      setAppliedDiscount(res.discount);
-      setPromoSuccess(res.message || `Discount code "${res.discount.title}" applied!`);
+      // A can already chosen on the loyalty rewards page carries over, so the
+      // picker only opens when something is still outstanding.
+      const discount = hydrateRewardSelection(res.discount);
+      setAppliedDiscount(discount);
+      setPromoSuccess(res.message || `Discount code "${discount.title}" applied!`);
+      if (rewardNeedsSelection(discount)) openPickerFor(discount);
     } else {
       setPromoError(res.error || 'Invalid or expired promo code.');
     }
   };
 
+  const handleChooseReward = (choiceId: string) => {
+    if (!appliedDiscount) return;
+    const updated = applyRewardChoice(appliedDiscount, choiceId);
+    setAppliedDiscount(updated);
+    saveRewardSelection(updated.title, { rewardChoiceId: choiceId });
+    setIsChoicePickerOpen(false);
+    setPromoSuccess(`Reward applied: ${updated.details}`);
+    if (updated.rewardKind === 'free-cans') setIsCanPickerOpen(true);
+  };
+
   const handleCheckout = () => {
     if (cartItems.length === 0) return;
+    // A reward with an unfinished selection would be silently dropped at
+    // checkout, so send the customer back to the picker instead.
+    if (needsRewardSelection && appliedDiscount) {
+      openPickerFor(appliedDiscount);
+      return;
+    }
     onTriggerCheckout(appliedDiscount, total);
     setAppliedDiscount(null);
     setPromoCodeInput('');
@@ -310,14 +350,38 @@ export default function CartDrawer({
                     </div>
                   )}
 
+                  {/* Reward still waiting on the customer's pick */}
+                  {needsRewardSelection && appliedDiscount && (
+                    <button
+                      onClick={() => openPickerFor(appliedDiscount)}
+                      className="w-full bg-[#dfa047] hover:bg-[#cf9038] text-[#071d37] text-[11px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {appliedDiscount.rewardKind === 'choice'
+                        ? 'Choose your reward'
+                        : `Choose your free can${outstandingCans !== 1 ? 's' : ''} (${outstandingCans} to pick)`}
+                    </button>
+                  )}
+
+                  {/* Free cans and gifts included by the applied reward */}
+                  <AppliedRewardLines
+                    discount={appliedDiscount}
+                    compact
+                    onEditSelection={
+                      appliedDiscount?.rewardKind === 'free-cans'
+                        ? () => setIsCanPickerOpen(true)
+                        : undefined
+                    }
+                  />
+
                   {/* Total calculations */}
                   <div className="space-y-2 border-t border-slate-200 pt-3 text-xs leading-normal">
                     <div className="flex justify-between text-slate-500">
                       <span>Subtotal items</span>
                       <span className="font-bold text-slate-800">£{subtotal.toFixed(2)}</span>
                     </div>
-                    
-                    {appliedDiscount && (
+
+                    {appliedDiscount && discountValue > 0 && (
                       <div className="flex justify-between text-emerald-600">
                         <span className="flex items-center gap-1 font-semibold">
                           <Ticket className="h-3.5 w-3.5" /> Discount ({appliedDiscount.title})
@@ -326,16 +390,16 @@ export default function CartDrawer({
                       </div>
                     )}
 
-                    {totalBeforeShipping < 40 && (
+                    {totalBeforeShipping < FREE_SHIPPING_THRESHOLD && shippingFee > 0 && (
                       <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-2 text-[11px] text-indigo-700 text-center font-bold">
-                        🚚 Add <span className="font-extrabold">£{(40 - totalBeforeShipping).toFixed(2)}</span> more to qualify for <span className="underline">FREE Delivery</span>!
+                        🚚 Add <span className="font-extrabold">£{(FREE_SHIPPING_THRESHOLD - totalBeforeShipping).toFixed(2)}</span> more to qualify for <span className="underline">FREE Delivery</span>!
                       </div>
                     )}
 
                     <div className="flex justify-between text-slate-500">
                       <span>Delivery fee</span>
                       <span className={shippingFee === 0 ? "text-emerald-600 font-extrabold" : "font-extrabold text-slate-800"}>
-                        {shippingFee === 0 ? 'FREE' : '£2.99'}
+                        {shippingFee === 0 ? 'FREE' : `£${shippingFee.toFixed(2)}`}
                       </span>
                     </div>
 
@@ -349,7 +413,8 @@ export default function CartDrawer({
                   <button
                     id="cart-checkout-btn"
                     onClick={handleCheckout}
-                    className="w-full bg-slate-900 border-slate-900 text-white hover:bg-slate-800 py-3.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                    disabled={needsRewardSelection}
+                    className="w-full bg-slate-900 border-slate-900 text-white hover:bg-slate-800 py-3.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <ShieldCheck className="h-4.5 w-4.5" /> PROCEED TO CHECKOUT SCREEN
                   </button>
@@ -361,6 +426,31 @@ export default function CartDrawer({
               )}
             </motion.div>
           </div>
+
+          <RewardChoicePicker
+            isOpen={isChoicePickerOpen}
+            choices={getRewardChoices(appliedDiscount)}
+            rewardLabel={appliedDiscount?.title}
+            onChoose={handleChooseReward}
+            onCancel={() => setIsChoicePickerOpen(false)}
+          />
+
+          <FreeCanPicker
+            isOpen={isCanPickerOpen}
+            count={appliedDiscount?.freeCanCount || 1}
+            products={products}
+            initialSelections={appliedDiscount?.freeCanSelections || []}
+            rewardLabel={appliedDiscount?.details}
+            onConfirm={(selections) => {
+              setAppliedDiscount(prev => {
+                if (!prev) return prev;
+                saveRewardSelection(prev.title, { freeCanSelections: selections });
+                return { ...prev, freeCanSelections: selections };
+              });
+              setIsCanPickerOpen(false);
+            }}
+            onCancel={() => setIsCanPickerOpen(false)}
+          />
         </div>
       )}
     </AnimatePresence>

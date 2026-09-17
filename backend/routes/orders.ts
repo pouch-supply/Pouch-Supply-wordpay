@@ -374,6 +374,12 @@ export async function saveSingleOrder(orderData: any) {
     subscriptionId: orderData.subscriptionId || existingOrder?.subscriptionId || null,
     items,
     discountApplied: orderData.discountApplied || existingOrder?.discountApplied || null,
+    // The money actually taken off. Previously only the discount object was
+    // stored, leaving the admin and the emails to guess the amount from the
+    // difference between subtotal and total.
+    discountAmount: typeof orderData.discountAmount === 'number'
+      ? orderData.discountAmount
+      : (typeof existingOrder?.discountAmount === 'number' ? existingOrder.discountAmount : undefined),
     trackingNumber: orderData.trackingNumber || existingOrder?.trackingNumber || null,
     carrier: orderData.carrier || existingOrder?.carrier || null,
     data: {

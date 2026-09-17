@@ -1,6 +1,6 @@
 // CheckoutView.tsx
 import React, { useState, useEffect } from 'react';
-import { CartItem, Discount, Customer, Order } from '../types';
+import { CartItem, Discount, Customer, Order, Product } from '../types';
 import { 
   ShieldCheck, ArrowLeft, CreditCard, Lock, Terminal, 
   CheckCircle, AlertTriangle, AlertCircle, RefreshCw, 
@@ -10,7 +10,20 @@ import {
 import SubscriptionIcon from './SubscriptionIcon';
 import AgeGate, { AgeGateHandle } from './AgeGate';
 import { calculateDiscountAmount, calculateVolumePrice } from '../utils';
-import { resolveDiscountCode } from '../utils/discountUtils';
+import {
+  resolveDiscountCode,
+  resolveDeliveryCost,
+  rewardNeedsSelection,
+  getRewardChoices,
+  applyRewardChoice,
+  getOutstandingFreeCanCount,
+  isFreeShippingReward,
+  STANDARD_DELIVERY_COST
+} from '../utils/discountUtils';
+import { buildOrderItems, getRewardLines, hydrateRewardSelection } from '../utils/rewardLines';
+import { saveRewardSelection } from '../utils/rewardSelectionStore';
+import FreeCanPicker from './FreeCanPicker';
+import { RewardChoicePicker, AppliedRewardLines } from './RewardSelection';
 import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed, trackSubscriptionStarted } from '../utils/klaviyo';
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
 import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
@@ -54,6 +67,14 @@ interface CheckoutViewProps {
   }) => void;
   activeDiscounts?: Discount[];
   customers?: Customer[];
+  /** Catalogue the free-can reward picker chooses from. */
+  products?: Product[];
+  /**
+   * Needed to price product- and collection-scoped discounts. Without them this
+   * page valued such a code at £0 while the cart drawer valued it correctly, so
+   * the discount shrank when the shopper moved to checkout.
+   */
+  collections?: any[];
   onApplyDiscount?: (discount: Discount | null) => void;
 }
 
@@ -66,6 +87,8 @@ export default function CheckoutView({
   onCompleteCheckout,
   activeDiscounts = [],
   customers = [],
+  products = [],
+  collections = [],
   onApplyDiscount
 }: CheckoutViewProps) {
   const [applyStoreCredit, setApplyStoreCredit] = useState(false);
@@ -73,6 +96,8 @@ export default function CheckoutView({
   const [promoCodeInput, setPromoCodeInput] = useState('');
   const [promoError, setPromoError] = useState('');
   const [promoSuccess, setPromoSuccess] = useState('');
+  const [isCanPickerOpen, setIsCanPickerOpen] = useState(false);
+  const [isChoicePickerOpen, setIsChoicePickerOpen] = useState(false);
 
   // Shipping info state
   const [fullName, setFullName] = useState(loggedInCustomer?.name || '');
@@ -328,14 +353,43 @@ export default function CheckoutView({
     );
 
     if (res.success && res.discount) {
-      setCurrentDiscount(res.discount);
+      // A can already chosen on the loyalty rewards page or in the cart carries
+      // over, so the picker only opens for what is still outstanding.
+      const discount = hydrateRewardSelection(res.discount);
+      setCurrentDiscount(discount);
       if (onApplyDiscount) {
-        onApplyDiscount(res.discount);
+        onApplyDiscount(discount);
       }
-      setPromoSuccess(res.message || `Discount Code "${res.discount.title}" applied!`);
+      setPromoSuccess(res.message || `Discount Code "${discount.title}" applied!`);
+      if (rewardNeedsSelection(discount)) openPickerFor(discount);
     } else {
       setPromoError(res.error || 'Invalid or expired discount code.');
     }
+  };
+
+  /** Opens the picker a reward needs before it can be honoured. */
+  const openPickerFor = (discount: Discount) => {
+    if (discount.rewardKind === 'choice') {
+      setIsChoicePickerOpen(true);
+    } else if (discount.rewardKind === 'free-cans') {
+      setIsCanPickerOpen(true);
+    }
+  };
+
+  /** Keeps the reward selection on both this page's copy and App's copy. */
+  const updateDiscount = (next: Discount | null) => {
+    setCurrentDiscount(next);
+    if (onApplyDiscount) onApplyDiscount(next);
+  };
+
+  const handleChooseReward = (choiceId: string) => {
+    if (!currentDiscount) return;
+    const updated = applyRewardChoice(currentDiscount, choiceId);
+    updateDiscount(updated);
+    saveRewardSelection(updated.title, { rewardChoiceId: choiceId });
+    setIsChoicePickerOpen(false);
+    setPromoSuccess(`Reward applied: ${updated.details}`);
+    if (updated.rewardKind === 'free-cans') setIsCanPickerOpen(true);
   };
 
   const safeParseJson = async (res: Response) => {
@@ -434,16 +488,15 @@ export default function CheckoutView({
 
   // Calculate totals
   const rawSubtotal = cartItems.reduce((acc, item) => acc + getItemTotal(item), 0);
-  const discountValue = calculateDiscountAmount(currentDiscount, cartItems, rawSubtotal);
+  const discountValue = calculateDiscountAmount(currentDiscount, cartItems, rawSubtotal, products, collections);
   const subtotalAfterDiscount = Math.max(rawSubtotal - discountValue, 0);
-  const isFreeShipping = Boolean(
-    subtotalAfterDiscount >= 40 ||
-    currentDiscount?.type === 'Free shipping' ||
-    currentDiscount?.title?.toUpperCase().includes('BRONZE5') ||
-    currentDiscount?.details?.toLowerCase().includes('free shipping') ||
-    currentDiscount?.details?.toLowerCase().includes('free royal mail')
-  );
-  const deliveryCost = isFreeShipping ? 0 : 2.99;
+  const deliveryCost = resolveDeliveryCost(subtotalAfterDiscount, currentDiscount, STANDARD_DELIVERY_COST);
+  const isFreeShipping = deliveryCost === 0;
+  /** True when delivery is free because of the reward, not the spend threshold. */
+  const isRewardFreeDelivery = isFreeShippingReward(currentDiscount);
+  const outstandingCans = getOutstandingFreeCanCount(currentDiscount);
+  const needsRewardSelection = rewardNeedsSelection(currentDiscount);
+  const rewardLineCount = getRewardLines(currentDiscount).length;
   const finalTotal = subtotalAfterDiscount + deliveryCost;
   const storeCreditAvailable = loggedInCustomer?.storeCredit || 0;
   const storeCreditApplied = applyStoreCredit ? Math.min(storeCreditAvailable, finalTotal) : 0;
@@ -490,6 +543,18 @@ export default function CheckoutView({
     // Validate shipping info
     if (!fullName || !email || !addressLine || !city.trim()) {
       setPaymentError('Please fill in your shipping and contact information.');
+      return;
+    }
+
+    // A reward whose selection is unfinished would be paid for and then lost, so
+    // stop here and reopen the picker rather than take the money.
+    if (needsRewardSelection && currentDiscount) {
+      setPaymentError(
+        currentDiscount.rewardKind === 'choice'
+          ? 'Please choose which reward you would like before paying.'
+          : `Please choose your free can${outstandingCans !== 1 ? 's' : ''} before paying.`
+      );
+      openPickerFor(currentDiscount);
       return;
     }
 
@@ -544,34 +609,13 @@ export default function CheckoutView({
           address: buildDestinationString(),
           shippingAddress: buildShippingAddress(),
           total: 0,
+          subtotal: Number(subtotalAfterDiscount.toFixed(2)),
+          shippingCost: Number(deliveryCost.toFixed(2)),
+          deliveryCost: Number(deliveryCost.toFixed(2)),
+          deliveryMethod: 'Royal Mail Tracked 24/48',
           discountApplied: currentDiscount,
-          items: cartItems.map(item => {
-            let planName = (item as any).subscriptionPlan || '';
-            const titleLower = (item.productTitle || '').toLowerCase();
-            if (!planName) {
-              if (titleLower.includes('ultimate')) planName = 'ULTIMATE Plan';
-              else if (titleLower.includes('pro')) planName = 'PRO Plan';
-              else if (titleLower.includes('core')) planName = 'CORE Plan';
-              else if (titleLower.includes('lite')) planName = 'LITE Plan';
-              else if (item.isSubscription) planName = 'PRO Plan';
-            }
-            return {
-              productId: item.productId,
-              productTitle: item.productTitle,
-              price: item.price,
-              quantity: item.quantity,
-              image: item.image || '',
-              variant: (item as any).variant || (item as any).concreteVariantName || (item as any).strength || (item as any).flavour || 'Standard',
-              sku: (item as any).sku || (item as any).concreteVariantId || item.productId || 'SKU-001',
-              vendor: item.vendor || '',
-              isSubscription: Boolean(item.isSubscription || (item.productId && (item.productId.startsWith('sub-pack') || item.productId.includes('sub-pack')))),
-              subscriptionPlan: planName || (item as any).subscriptionPlan || 'PRO Plan',
-              subscriptionFrequency: (item as any).subscriptionFrequency || 'Bi-Weekly',
-              frequencyDiscount: (item as any).frequencyDiscount || '10%',
-              subscriptionItems: (item as any).subscriptionItems || [],
-              total: Number((item.price * item.quantity).toFixed(2))
-            };
-          }),
+          discountAmount: Number(discountValue.toFixed(2)),
+          items: buildOrderItems(cartItems, currentDiscount),
           gatewayTxId: `CREDIT-${Date.now()}`,
           gatewayAuthCode: 'CREDIT-AUTH',
           cardBrand: 'Store Credit',
@@ -650,34 +694,9 @@ export default function CheckoutView({
         customerPhone: normalizeUkPhone(phone) || phone.trim(),
         destination: buildDestinationString(),
         shippingAddress: buildShippingAddress(),
-        items: cartItems.map(item => {
-          let planName = (item as any).subscriptionPlan || '';
-          const titleLower = (item.productTitle || '').toLowerCase();
-          if (!planName) {
-            if (titleLower.includes('ultimate')) planName = 'ULTIMATE Plan';
-            else if (titleLower.includes('pro')) planName = 'PRO Plan';
-            else if (titleLower.includes('core')) planName = 'CORE Plan';
-            else if (titleLower.includes('lite')) planName = 'LITE Plan';
-            else if (item.isSubscription) planName = 'PRO Plan';
-          }
-          return {
-            productId: item.productId,
-            productTitle: item.productTitle,
-            price: item.price,
-            quantity: item.quantity,
-            image: item.image || '',
-            variant: (item as any).variant || (item as any).concreteVariantName || (item as any).strength || (item as any).flavour || 'Standard',
-            sku: (item as any).sku || (item as any).concreteVariantId || item.productId || 'SKU-001',
-            vendor: item.vendor || '',
-            isSubscription: Boolean(item.isSubscription || (item.productId && (item.productId.startsWith('sub-pack') || item.productId.includes('sub-pack')))),
-            subscriptionPlan: planName || (item as any).subscriptionPlan || 'PRO Plan',
-            subscriptionFrequency: (item as any).subscriptionFrequency || 'Bi-Weekly',
-            frequencyDiscount: (item as any).frequencyDiscount || '10%',
-            subscriptionItems: (item as any).subscriptionItems || [],
-            total: Number((item.price * item.quantity).toFixed(2))
-          };
-        }),
+        items: buildOrderItems(cartItems, currentDiscount),
         discountApplied: currentDiscount,
+        discountAmount: Number(discountValue.toFixed(2)),
         storeCreditApplied: storeCreditApplied
       };
       localStorage.setItem(`ps_pending_order_${generatedOrderId}`, JSON.stringify(pendingOrderObj));
@@ -701,6 +720,7 @@ export default function CheckoutView({
           shippingAddress: buildShippingAddress(),
           items: pendingOrderObj.items,
           discountApplied: currentDiscount,
+          discountAmount: Number(discountValue.toFixed(2)),
           storeCreditApplied: storeCreditApplied
         })
       });
@@ -1093,9 +1113,14 @@ export default function CheckoutView({
                     <Truck className="h-4 w-4 text-red-600" /> Royal Mail Tracked
                   </span>
                   <span className="text-[10px] text-slate-500">Royal Mail 24/48 Tracked Delivery</span>
+                  {isRewardFreeDelivery && (
+                    <span className="text-[10px] text-emerald-700 font-black block pt-0.5">
+                      Waived by your Free Delivery reward
+                    </span>
+                  )}
                 </div>
-                <span className={subtotalAfterDiscount >= 40 ? "font-black text-xs text-emerald-600" : "font-black text-xs text-slate-800"}>
-                  {subtotalAfterDiscount >= 40 ? 'FREE' : '£2.99'}
+                <span className={isFreeShipping ? "font-black text-xs text-emerald-600" : "font-black text-xs text-slate-800"}>
+                  {isFreeShipping ? 'FREE' : `£${deliveryCost.toFixed(2)}`}
                 </span>
               </div>
             </div>
@@ -1378,7 +1403,34 @@ export default function CheckoutView({
                   <span>{promoSuccess}</span>
                 </div>
               )}
+
+              {/* Reward still waiting on the customer's pick */}
+              {needsRewardSelection && currentDiscount && (
+                <button
+                  onClick={() => openPickerFor(currentDiscount)}
+                  className="mt-2 w-full bg-[#dfa047] hover:bg-[#cf9038] text-[#071d37] text-[11px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl cursor-pointer"
+                >
+                  {currentDiscount.rewardKind === 'choice'
+                    ? 'Choose your reward'
+                    : `Choose your free can${outstandingCans !== 1 ? 's' : ''} (${outstandingCans} to pick)`}
+                </button>
+              )}
             </div>
+
+            {/* Free cans and gifts included by the applied reward */}
+            {rewardLineCount > 0 && (
+              <div className="border-t border-slate-100 pt-3">
+                <AppliedRewardLines
+                  discount={currentDiscount}
+                  compact
+                  onEditSelection={
+                    currentDiscount?.rewardKind === 'free-cans'
+                      ? () => setIsCanPickerOpen(true)
+                      : undefined
+                  }
+                />
+              </div>
+            )}
 
             {/* Totals */}
             <div className="space-y-2 border-t border-slate-100 pt-3 text-xs leading-normal font-semibold">
@@ -1387,7 +1439,7 @@ export default function CheckoutView({
                 <span className="text-slate-800">£{rawSubtotal.toFixed(2)}</span>
               </div>
 
-              {currentDiscount && (
+              {currentDiscount && discountValue > 0 && (
                 <div className="flex justify-between text-emerald-600">
                   <span className="flex items-center gap-1">
                     <Check className="h-3 w-3" /> Discount
@@ -1424,6 +1476,31 @@ export default function CheckoutView({
         </div>
 
       </div>
+
+      <RewardChoicePicker
+        isOpen={isChoicePickerOpen}
+        choices={getRewardChoices(currentDiscount)}
+        rewardLabel={currentDiscount?.title}
+        onChoose={handleChooseReward}
+        onCancel={() => setIsChoicePickerOpen(false)}
+      />
+
+      <FreeCanPicker
+        isOpen={isCanPickerOpen}
+        count={currentDiscount?.freeCanCount || 1}
+        products={products}
+        initialSelections={currentDiscount?.freeCanSelections || []}
+        rewardLabel={currentDiscount?.details}
+        onConfirm={(selections) => {
+          if (currentDiscount) {
+            saveRewardSelection(currentDiscount.title, { freeCanSelections: selections });
+            updateDiscount({ ...currentDiscount, freeCanSelections: selections });
+          }
+          setIsCanPickerOpen(false);
+          setPaymentError(null);
+        }}
+        onCancel={() => setIsCanPickerOpen(false)}
+      />
 
     </div>
   );

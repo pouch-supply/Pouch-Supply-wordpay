@@ -2,7 +2,26 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Customer, Product, Order, Discount } from '../types';
 import { getWishlistProductTitle } from '../utils/mediaUtils';
 import { parseOrderTime, calculateDiscountAmount } from '../utils';
-import { formatLoyaltyCouponCode, getCustomerPrefix, resolveDiscountCode } from '../utils/discountUtils';
+import {
+  formatLoyaltyCouponCode,
+  getCustomerPrefix,
+  resolveDiscountCode,
+  resolveDeliveryCost,
+  rewardNeedsSelection,
+  getRewardChoices,
+  applyRewardChoice,
+  getOutstandingFreeCanCount,
+  getMilestonesForTier,
+  extractBaseMilestoneCode,
+  FREE_SHIPPING_THRESHOLD,
+  STANDARD_DELIVERY_COST,
+  type LoyaltyMilestoneDef,
+  type LoyaltyTierId
+} from '../utils/discountUtils';
+import { buildOrderItems, hydrateRewardSelection } from '../utils/rewardLines';
+import { saveRewardSelection } from '../utils/rewardSelectionStore';
+import FreeCanPicker from './FreeCanPicker';
+import { RewardChoicePicker, AppliedRewardLines } from './RewardSelection';
 import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
 import SubscriptionIcon from './SubscriptionIcon';
@@ -39,8 +58,181 @@ export const ACCOUNT_SUB_PLANS = [
   { id: 'ultimate', name: 'ULTIMATE', cans: 12, price: 46.99, discount: '15% OFF', badge: 'Best Value', popular: false }
 ] as const;
 
-export const FREE_SHIPPING_THRESHOLD = 40;
-export const STANDARD_DELIVERY_COST = 2.99;
+// Re-exported from the discount helpers so the account page, the cart and the
+// checkout cannot drift apart on what delivery costs or what waives it.
+export { FREE_SHIPPING_THRESHOLD, STANDARD_DELIVERY_COST };
+
+/**
+ * One milestone reward on the loyalty rewards page.
+ *
+ * Every reward is rendered from its definition rather than from copy written
+ * into the page, so the reward text, the voucher code and the mechanic the cart
+ * will apply can never disagree. Rewards that need the customer to pick
+ * something — a free can, or one option from the Platinum menu — open their
+ * picker straight from here, and the pick is remembered for the cart.
+ */
+function LoyaltyMilestoneCard({
+  milestone,
+  ordersCount,
+  isUsed,
+  voucherCode,
+  copiedCouponCode,
+  onCopy,
+  reward,
+  onOpenPicker
+}: {
+  milestone: LoyaltyMilestoneDef;
+  ordersCount: number;
+  isUsed: boolean;
+  voucherCode: string;
+  copiedCouponCode: string | null;
+  onCopy: (code: string, label: string) => void;
+  reward: Discount | null;
+  onOpenPicker: (discount: Discount) => void;
+}) {
+  const isUnlocked = ordersCount >= milestone.order;
+  const isCopied = copiedCouponCode === voucherCode;
+  const outstandingCans = getOutstandingFreeCanCount(reward);
+  const chosenCans = reward?.freeCanSelections || [];
+  const needsPick = isUnlocked && !isUsed && reward ? rewardNeedsSelection(reward) : false;
+
+  const statusLabel = !isUnlocked ? 'Locked' : isUsed ? 'Used' : 'Unlocked';
+  const statusClass = !isUnlocked
+    ? 'bg-slate-200 text-slate-500'
+    : isUsed
+      ? 'bg-slate-300 text-slate-700'
+      : 'bg-emerald-100 text-emerald-800';
+
+  return (
+    <div
+      className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-all ${
+        !isUnlocked
+          ? 'bg-slate-100/50 border-slate-200/50'
+          : isUsed
+            ? 'bg-slate-50 border-slate-250'
+            : 'bg-emerald-50/35 border-emerald-200/60'
+      }`}
+    >
+      <div className="space-y-1">
+        <div className="flex justify-between items-center gap-2">
+          <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
+            {milestone.tier === 'platinum' ? 'Orders 31+' : `Order ${milestone.order}`}
+          </span>
+          <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${statusClass}`}>
+            {statusLabel}
+          </span>
+        </div>
+        <p className="text-[10.5px] font-bold text-slate-800">{milestone.reward}</p>
+      </div>
+
+      {/* Gift artwork — the mystery box, or the merchandise bundle */}
+      {isUnlocked && (milestone.gifts || []).length > 0 && (
+        <div className="flex items-center gap-2 bg-white border border-violet-150 rounded-lg p-2">
+          {(milestone.gifts || []).map(gift => (
+            <React.Fragment key={gift.id}>
+              <img
+                src={gift.image}
+                alt={gift.label}
+                className="h-11 w-11 rounded-lg object-contain bg-slate-50 shrink-0"
+              />
+              <div className="min-w-0">
+                <p className="text-[10px] font-black text-[#071d37] leading-tight">{gift.label}</p>
+                {gift.note && <p className="text-[9px] text-slate-500 font-semibold leading-snug">{gift.note}</p>}
+              </div>
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+
+      {/* Free delivery needs no pick — say plainly what it does */}
+      {isUnlocked && milestone.kind === 'free-shipping' && (
+        <p className="text-[9.5px] font-bold text-emerald-700 bg-white border border-emerald-100 rounded-lg p-2">
+          🚚 Delivery drops to £0.00 on the order you use this code, whichever delivery option you pick.
+        </p>
+      )}
+
+      {/* The cans already chosen for this reward */}
+      {isUnlocked && chosenCans.length > 0 && (
+        <div className="space-y-1">
+          {chosenCans.map((can, index) => (
+            <div key={`${can.productId}-${can.variantId || index}`} className="flex items-center gap-2 bg-white border border-emerald-100 rounded-lg p-1.5">
+              {can.image ? (
+                <img src={can.image} alt={can.variantName} className="h-8 w-8 rounded object-cover shrink-0" />
+              ) : (
+                <Package className="h-4 w-4 text-slate-300 shrink-0" />
+              )}
+              <div className="min-w-0 flex-1">
+                <span className="text-[8px] font-black uppercase tracking-widest text-[#dfa047] block truncate">{can.vendor}</span>
+                <p className="text-[9.5px] font-black text-[#071d37] leading-tight truncate">{can.productTitle}</p>
+                <p className="text-[9px] font-bold text-slate-500 truncate">{can.variantName}</p>
+              </div>
+              <span className="text-[9px] font-black text-emerald-700 shrink-0">FREE</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isUnlocked ? (
+        <div className="space-y-1.5">
+          {/* The pick this reward is waiting on */}
+          {needsPick && reward && (
+            <button
+              onClick={() => onOpenPicker(reward)}
+              className="w-full text-[9px] font-black uppercase tracking-wider bg-[#dfa047] hover:bg-[#cf9038] text-[#071d37] py-2 px-2 rounded-lg cursor-pointer"
+            >
+              {reward.rewardKind === 'choice'
+                ? 'Choose your reward'
+                : `Choose your free can${outstandingCans !== 1 ? 's' : ''}`}
+            </button>
+          )}
+
+          {/* Change a pick already made */}
+          {!needsPick && chosenCans.length > 0 && reward && (
+            <button
+              onClick={() => onOpenPicker(reward)}
+              className="w-full text-[9px] font-black uppercase tracking-wider bg-white hover:bg-slate-50 text-[#071d37] border border-slate-250 py-1.5 px-2 rounded-lg cursor-pointer"
+            >
+              Change selection
+            </button>
+          )}
+
+          <div className="flex items-center justify-between gap-1 bg-white p-1.5 border border-emerald-100 rounded-lg">
+            <div className="min-w-0">
+              <span className="text-[7px] text-slate-400 font-bold uppercase block">Voucher Code</span>
+              <span className="font-mono font-black text-[10px] text-[#071d37] tracking-wider block truncate">{voucherCode}</span>
+            </div>
+            <button
+              onClick={() => onCopy(voucherCode, 'Voucher code')}
+              className="text-[8px] font-black text-emerald-700 bg-emerald-50 hover:bg-emerald-100 py-1 px-2 rounded cursor-pointer shrink-0 uppercase flex items-center gap-1"
+            >
+              {isCopied ? (
+                <>
+                  <Check className="h-2.5 w-2.5 text-emerald-700" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-2.5 w-2.5 text-emerald-700" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <p className="text-[8.5px] text-slate-500 font-semibold leading-snug">
+            {isUsed
+              ? 'Already redeemed on a previous order.'
+              : 'Paste this code in your cart or at checkout to claim it.'}
+          </p>
+        </div>
+      ) : (
+        <span className="text-[9px] text-slate-400 font-bold block pt-1">
+          Needs {milestone.order - ordersCount} more order{milestone.order - ordersCount !== 1 ? 's' : ''}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function getAccountPlanLabel(planId?: string): string {
   const tier = ACCOUNT_SUB_PLANS.find(p => p.id === planId);
@@ -214,6 +406,18 @@ export default function CustomerAccount({
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [subCheckoutError, setSubCheckoutError] = useState<string | null>(null);
 
+  // Reward picker shared by the loyalty rewards page and the plan checkout. The
+  // context records which of the two opened it, so confirming a selection
+  // updates the right place.
+  const [rewardPicker, setRewardPicker] = useState<{
+    mode: 'cans' | 'choice';
+    context: 'loyalty' | 'sub';
+    discount: Discount;
+  } | null>(null);
+  // Selections are persisted rather than held in state so they survive to the
+  // cart; this counter re-reads them after a save so the page reflects the pick.
+  const [rewardSelectionVersion, setRewardSelectionVersion] = useState(0);
+
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnType, setReturnType] = useState<'Return' | 'Refund' | 'Exchange'>('Return');
   const [returnReason, setReturnReason] = useState('Damaged or Defective');
@@ -366,6 +570,24 @@ export default function CustomerAccount({
         .sort((a, b) => parseOrderTime(b) - parseOrderTime(a))
     : [];
   const ordersCount = myOrders.length;
+
+  /**
+   * Loyalty voucher codes this customer has already spent, so a reward that has
+   * been used reads as used instead of still looking available. Matched on the
+   * milestone code rather than the prefixed voucher so a customer who changed
+   * their name still sees their history.
+   */
+  const usedRewardCodes = useMemo(() => {
+    const used = new Set<string>();
+    for (const order of myOrders) {
+      const applied = (order as any)?.discountApplied;
+      if (!applied) continue;
+      const milestone = applied.loyaltyMilestoneCode
+        || extractBaseMilestoneCode(String(applied.title || ''));
+      if (milestone) used.add(milestone);
+    }
+    return used;
+  }, [myOrders]);
 
   const mySubOrders = myOrders.filter(isSubscriptionOrder);
 
@@ -1348,13 +1570,61 @@ export default function CustomerAccount({
 
   const subDiscountValue = calculateDiscountAmount(subPromoDiscount, subPseudoCart, subPlanPrice);
   const subAfterDiscount = Math.max(subPlanPrice - subDiscountValue, 0);
-  const subQualifiesFreeShipping =
-    subAfterDiscount >= FREE_SHIPPING_THRESHOLD ||
-    subPromoDiscount?.type === 'Free shipping' ||
-    subPromoDiscount?.details?.toLowerCase().includes('free shipping') ||
-    subPromoDiscount?.details?.toLowerCase().includes('free royal mail');
-  const subDeliveryCost = subQualifiesFreeShipping ? 0 : STANDARD_DELIVERY_COST;
+  /**
+   * Opens whichever picker an applied reward is waiting on. `context` says who
+   * asked: the loyalty rewards page (where the pick is only remembered) or the
+   * plan checkout (where it also has to update the live discount).
+   */
+  const openRewardPickerFor = (discount: Discount, context: 'loyalty' | 'sub') => {
+    if (discount.rewardKind === 'choice') {
+      setRewardPicker({ mode: 'choice', context, discount });
+    } else if (discount.rewardKind === 'free-cans') {
+      setRewardPicker({ mode: 'cans', context, discount });
+    }
+  };
+
+  /**
+   * Turns a loyalty voucher code into the reward it stands for, with any pick
+   * the customer has already made restored. Used by the rewards page so a
+   * milestone card knows whether it needs a can chosen and which cans are on it.
+   */
+  const resolveRewardForCode = useCallback((code: string): Discount | null => {
+    const res = resolveDiscountCode(code, [], [], loggedInCustomer);
+    if (!res.success || !res.discount) return null;
+    return hydrateRewardSelection(res.discount);
+    // rewardSelectionVersion is the dependency that re-reads a just-saved pick.
+  }, [loggedInCustomer, rewardSelectionVersion]);
+
+  const handleConfirmRewardCans = (selections: Discount['freeCanSelections']) => {
+    if (!rewardPicker) return;
+    const { discount, context } = rewardPicker;
+    saveRewardSelection(discount.title, { freeCanSelections: selections });
+    if (context === 'sub') {
+      setSubPromoDiscount({ ...discount, freeCanSelections: selections });
+    }
+    setRewardSelectionVersion(v => v + 1);
+    setRewardPicker(null);
+  };
+
+  const handleConfirmRewardChoice = (choiceId: string) => {
+    if (!rewardPicker) return;
+    const { discount, context } = rewardPicker;
+    const updated = applyRewardChoice(discount, choiceId);
+    saveRewardSelection(updated.title, { rewardChoiceId: choiceId, freeCanSelections: [] });
+    if (context === 'sub') setSubPromoDiscount(updated);
+    setRewardSelectionVersion(v => v + 1);
+    // Taking the "free cans" option means there is still a can to pick.
+    if (updated.rewardKind === 'free-cans') {
+      setRewardPicker({ mode: 'cans', context, discount: updated });
+    } else {
+      setRewardPicker(null);
+    }
+  };
+
+  const subDeliveryCost = resolveDeliveryCost(subAfterDiscount, subPromoDiscount, STANDARD_DELIVERY_COST);
+  const subQualifiesFreeShipping = subDeliveryCost === 0;
   const subFinalTotal = Number((subAfterDiscount + subDeliveryCost).toFixed(2));
+  const subRewardNeedsSelection = rewardNeedsSelection(subPromoDiscount);
 
   const handleApplySubPromo = () => {
     setSubPromoError('');
@@ -1370,8 +1640,10 @@ export default function CustomerAccount({
     );
 
     if (res.success && res.discount) {
-      setSubPromoDiscount(res.discount);
-      setSubPromoSuccess(res.message || `Discount code "${res.discount.title}" applied!`);
+      const discount = hydrateRewardSelection(res.discount);
+      setSubPromoDiscount(discount);
+      setSubPromoSuccess(res.message || `Discount code "${discount.title}" applied!`);
+      if (rewardNeedsSelection(discount)) openRewardPickerFor(discount, 'sub');
     } else {
       setSubPromoDiscount(null);
       setSubPromoError(res.error || 'Invalid or expired discount code.');
@@ -1387,6 +1659,17 @@ export default function CustomerAccount({
 
   const handleSubscribeAndPay = async () => {
     if (!loggedInCustomer?.email || !custState) return;
+
+    // An unfinished reward pick would be paid for and then lost.
+    if (subRewardNeedsSelection && subPromoDiscount) {
+      setSubCheckoutError(
+        subPromoDiscount.rewardKind === 'choice'
+          ? 'Please choose which reward you would like before paying.'
+          : 'Please choose your free can before paying.'
+      );
+      openRewardPickerFor(subPromoDiscount, 'sub');
+      return;
+    }
 
     setIsSubscribing(true);
     setSubCheckoutError(null);
@@ -1439,8 +1722,10 @@ export default function CustomerAccount({
         customerName: loggedInCustomer.name || 'Valued Customer',
         customerEmail: loggedInCustomer.email,
         destination,
-        items: [lineItem],
+        // The plan line plus any £0 reward lines (chosen free cans, gift box).
+        items: buildOrderItems([lineItem as any], subPromoDiscount),
         discountApplied: subPromoDiscount,
+        discountAmount: Number(subDiscountValue.toFixed(2)),
         storeCreditApplied: 0
       };
 
@@ -4349,6 +4634,29 @@ export default function CustomerAccount({
                                   {subPromoSuccess}
                                 </p>
                               )}
+
+                              {/* Reward still waiting on the customer's pick */}
+                              {subRewardNeedsSelection && subPromoDiscount && (
+                                <button
+                                  onClick={() => openRewardPickerFor(subPromoDiscount, 'sub')}
+                                  className="w-full bg-[#dfa047] hover:bg-[#cf9038] text-[#071d37] text-[10.5px] font-black uppercase tracking-wider py-2.5 px-3 rounded-xl cursor-pointer"
+                                >
+                                  {subPromoDiscount.rewardKind === 'choice'
+                                    ? 'Choose your reward'
+                                    : `Choose your free can${getOutstandingFreeCanCount(subPromoDiscount) !== 1 ? 's' : ''}`}
+                                </button>
+                              )}
+
+                              {/* Free cans and gifts this reward includes */}
+                              <AppliedRewardLines
+                                discount={subPromoDiscount}
+                                compact
+                                onEditSelection={
+                                  subPromoDiscount?.rewardKind === 'free-cans'
+                                    ? () => openRewardPickerFor(subPromoDiscount, 'sub')
+                                    : undefined
+                                }
+                              />
                             </div>
 
                             {/* Order summary */}
@@ -4576,11 +4884,6 @@ export default function CustomerAccount({
                             "Bronze Member Badge 🥉",
                             "Automatic Loyalty Tracking 📊"
                           ],
-                          milestones: [
-                            { order: 1, reward: "Members receive 10% OFF", code: "BRONZE1" },
-                            { order: 3, reward: "FREE can of your choice", code: "BRONZE3" },
-                            { order: 5, reward: "Free Royal Mail Tracked Delivery on your next order", code: "BRONZE5" }
-                          ]
                         },
                         {
                           id: "silver",
@@ -4594,13 +4897,6 @@ export default function CustomerAccount({
                             "Early Access to New Flavours 🎁",
                             "Exclusive Subscriber-Only Offers 💰"
                           ],
-                          milestones: [
-                            { order: 7, reward: "FREE can 🥫", code: "SILVER7" },
-                            { order: 9, reward: "£5 Store Credit 🎁", code: "SILVER9" },
-                            { order: 11, reward: "FREE can 🥫", code: "SILVER11" },
-                            { order: 13, reward: "Exclusive Pouch Supply merchandise (stickers, keyring, bottle opener, etc.) 🎁", code: "SILVER13" },
-                            { order: 15, reward: "2 FREE cans 🥫", code: "SILVER15" }
-                          ]
                         },
                         {
                           id: "gold",
@@ -4615,16 +4911,6 @@ export default function CustomerAccount({
                             "Birthday Reward 🎉",
                             "Exclusive Promotions 💰"
                           ],
-                          milestones: [
-                            { order: 17, reward: "20% off your purchase 🎁", code: "GOLD17" },
-                            { order: 19, reward: "2 FREE cans 🥫", code: "GOLD19" },
-                            { order: 21, reward: "Mystery Reward (chosen by Pouch Supply) 🎁", code: "GOLD21" },
-                            { order: 23, reward: "2 FREE cans 🥫", code: "GOLD23" },
-                            { order: 25, reward: "Premium Pouch Supply merchandise 👕", code: "GOLD25" },
-                            { order: 27, reward: "20% off your purchase 🎁", code: "GOLD27" },
-                            { order: 29, reward: "2 FREE cans 🥫", code: "GOLD29" },
-                            { order: 30, reward: "Unlock Platinum Member 🏆", code: "GOLD30" }
-                          ]
                         },
                         {
                           id: "platinum",
@@ -4640,9 +4926,6 @@ export default function CustomerAccount({
                             "Quarterly Surprise Rewards 🎁",
                             "Priority Customer Support ⭐"
                           ],
-                          milestones: [
-                            { order: 31, reward: "Odd order reward: Choose 3 FREE cans, £10 Store Credit, Free Priority Delivery, Exclusive merchandise, or Mystery Reward", code: "PLATINUM_ODD" }
-                          ]
                         }
                       ].map((tier) => {
                         const isTierActive = (tier.id === "bronze") ||
@@ -4715,97 +4998,26 @@ export default function CustomerAccount({
 
                                     <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-1 border-t border-violet-100">
                                       <span className="text-[10px] text-slate-500 font-bold">Your completed orders: <strong>{ordersCount}</strong></span>
-                                      {ordersCount >= 31 ? (
-                                        (() => {
-                                          const platCode = formatLoyaltyCouponCode("PLATINUM_ODD", loggedInCustomer);
-                                          const isCopied = copiedCouponCode === platCode;
-                                          return (
-                                            <div className="flex items-center gap-2">
-                                              <span className="font-mono font-black text-xs bg-white text-[#071d37] border border-violet-200 py-1 px-3 rounded-md">{platCode}</span>
-                                              <button 
-                                                onClick={() => handleCopyCouponCode(platCode, 'Platinum code')}
-                                                className="text-[9px] font-black text-violet-700 bg-violet-50 hover:bg-violet-100 py-1 px-2.5 rounded-md uppercase tracking-wider cursor-pointer flex items-center gap-1"
-                                              >
-                                                {isCopied ? (
-                                                  <>
-                                                    <Check className="h-3 w-3 text-violet-700" />
-                                                    <span>Copied!</span>
-                                                  </>
-                                                ) : (
-                                                  <>
-                                                    <Copy className="h-3 w-3 text-violet-700" />
-                                                    <span>Copy Code</span>
-                                                  </>
-                                                )}
-                                              </button>
-                                            </div>
-                                          );
-                                        })()
-                                      ) : (
+                                      {ordersCount < 31 && (
                                         <span className="text-[10px] text-slate-400 font-bold">Complete {31 - ordersCount} more orders to activate</span>
                                       )}
                                     </div>
                                   </div>
-                                ) : (
-                                  tier.milestones.map((m) => {
-                                    const isUnlocked = ordersCount >= m.order;
-                                    const formattedCode = formatLoyaltyCouponCode(m.code, loggedInCustomer);
-                                    const isCopied = copiedCouponCode === formattedCode;
-                                    return (
-                                      <div 
-                                        key={m.order}
-                                        className={`p-3 rounded-xl border flex flex-col justify-between gap-2.5 transition-all ${
-                                          isUnlocked 
-                                            ? 'bg-emerald-50/35 border-emerald-200/60' 
-                                            : 'bg-slate-100/50 border-slate-200/50'
-                                        }`}
-                                      >
-                                        <div className="space-y-1">
-                                          <div className="flex justify-between items-center gap-2">
-                                            <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
-                                              Order {m.order}
-                                            </span>
-                                            <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
-                                              isUnlocked ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-500'
-                                            }`}>
-                                              {isUnlocked ? 'Unlocked' : 'Locked'}
-                                            </span>
-                                          </div>
-                                          <p className="text-[10.5px] font-bold text-slate-800">{m.reward}</p>
-                                        </div>
+                                ) : null}
 
-                                        {isUnlocked ? (
-                                          <div className="flex items-center justify-between gap-1 bg-white p-1.5 border border-emerald-100 rounded-lg">
-                                            <div className="min-w-0">
-                                              <span className="text-[7px] text-slate-400 font-bold uppercase block">Voucher Code</span>
-                                              <span className="font-mono font-black text-[10px] text-[#071d37] tracking-wider block truncate">{formattedCode}</span>
-                                            </div>
-                                            <button 
-                                              onClick={() => handleCopyCouponCode(formattedCode, 'Voucher code')}
-                                              className="text-[8px] font-black text-emerald-700 bg-emerald-50 hover:bg-emerald-100 py-1 px-2 rounded cursor-pointer shrink-0 uppercase flex items-center gap-1"
-                                            >
-                                              {isCopied ? (
-                                                <>
-                                                  <Check className="h-2.5 w-2.5 text-emerald-700" />
-                                                  <span>Copied!</span>
-                                                </>
-                                              ) : (
-                                                <>
-                                                  <Copy className="h-2.5 w-2.5 text-emerald-700" />
-                                                  <span>Copy</span>
-                                                </>
-                                              )}
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <span className="text-[9px] text-slate-400 font-bold block pt-1">
-                                            Needs {m.order - ordersCount} more order{m.order - ordersCount !== 1 ? 's' : ''}
-                                          </span>
-                                        )}
-                                      </div>
-                                    );
-                                  })
-                                )}
+                                {getMilestonesForTier(tier.id as LoyaltyTierId).map((m) => (
+                                  <LoyaltyMilestoneCard
+                                    key={m.code}
+                                    milestone={m}
+                                    ordersCount={ordersCount}
+                                    isUsed={usedRewardCodes.has(m.code)}
+                                    voucherCode={formatLoyaltyCouponCode(m.code, loggedInCustomer)}
+                                    copiedCouponCode={copiedCouponCode}
+                                    onCopy={handleCopyCouponCode}
+                                    reward={resolveRewardForCode(formatLoyaltyCouponCode(m.code, loggedInCustomer))}
+                                    onOpenPicker={(discount) => openRewardPickerFor(discount, 'loyalty')}
+                                  />
+                                ))}
                               </div>
                             </div>
 
@@ -5404,8 +5616,14 @@ export default function CustomerAccount({
                 <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Itemized list</h4>
                 <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden bg-white">
                   {selectedOrderDetails.items.map((item, idx) => {
-                    const prodImage = allProducts.find(p => p.id === item.productId)?.image || item.image || '';
-                    const isSubscriptionItem = Boolean(
+                    // A loyalty reward line: a chosen free can, or a gift such as
+                    // the mystery box. Its own image is authoritative — a gift has
+                    // no catalogue product to look up.
+                    const isRewardItem = Boolean((item as any).isRewardItem);
+                    const prodImage = isRewardItem
+                      ? (item.image || '')
+                      : (allProducts.find(p => p.id === item.productId)?.image || item.image || '');
+                    const isSubscriptionItem = !isRewardItem && Boolean(
                       (item as any).isSubscription ||
                       item.productId?.startsWith('sub-pack') ||
                       item.productId?.includes('sub-pack') ||
@@ -5430,6 +5648,46 @@ export default function CustomerAccount({
                     const subProducts = isSubscriptionItem
                       ? parseSubscriptionProducts(selectedOrderDetails, item, allProducts as any)
                       : [];
+
+                    if (isRewardItem) {
+                      const isGift = (item as any).rewardKind === 'gift';
+                      return (
+                        <div key={idx} className="p-3.5 bg-emerald-50/40">
+                          <div className="flex gap-3 items-start justify-between">
+                            <div className="flex gap-2.5 items-start min-w-0">
+                              {prodImage ? (
+                                <img
+                                  src={prodImage}
+                                  alt={item.productTitle}
+                                  className={`w-12 h-12 rounded-xl bg-white border border-emerald-150 shrink-0 ${isGift ? 'object-contain' : 'object-cover'}`}
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-xl bg-white border border-emerald-150 shrink-0 flex items-center justify-center">
+                                  <Package className="w-5 h-5 text-slate-300" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <span className="text-[8.5px] font-black uppercase tracking-widest text-emerald-700 block">
+                                  Loyalty reward{(item as any).rewardCode ? ` · ${(item as any).rewardCode}` : ''}
+                                </span>
+                                {!isGift && (item as any).vendor && (
+                                  <span className="text-[8.5px] font-black uppercase tracking-widest text-[#dfa047] block truncate">
+                                    {(item as any).vendor}
+                                  </span>
+                                )}
+                                <p className="font-extrabold text-[#071d37] text-xs leading-tight">{item.productTitle}</p>
+                                {!isGift && (item as any).variant && (item as any).variant !== 'Standard' && (
+                                  <p className="text-slate-500 text-[10px] mt-0.5 font-bold">{(item as any).variant}</p>
+                                )}
+                                <p className="text-slate-400 text-[10px] mt-0.5 font-bold">Qty: {item.quantity}</p>
+                              </div>
+                            </div>
+                            <p className="font-extrabold text-emerald-700 text-xs shrink-0">FREE</p>
+                          </div>
+                        </div>
+                      );
+                    }
 
                     return (
                       <div key={idx} className="p-3.5 space-y-2">
@@ -6062,6 +6320,25 @@ export default function CustomerAccount({
           </div>
         </div>
       )}
+
+      {/* Reward pickers, shared by the loyalty rewards page and the plan checkout */}
+      <RewardChoicePicker
+        isOpen={rewardPicker?.mode === 'choice'}
+        choices={getRewardChoices(rewardPicker?.discount)}
+        rewardLabel={rewardPicker?.discount?.title}
+        onChoose={handleConfirmRewardChoice}
+        onCancel={() => setRewardPicker(null)}
+      />
+
+      <FreeCanPicker
+        isOpen={rewardPicker?.mode === 'cans'}
+        count={rewardPicker?.discount?.freeCanCount || 1}
+        products={allProducts}
+        initialSelections={rewardPicker?.discount?.freeCanSelections || []}
+        rewardLabel={rewardPicker?.discount?.details}
+        onConfirm={handleConfirmRewardCans}
+        onCancel={() => setRewardPicker(null)}
+      />
     </div>
   );
 }

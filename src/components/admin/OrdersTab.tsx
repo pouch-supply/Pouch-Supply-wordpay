@@ -1025,7 +1025,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       }
                       const variantLabel = String(explicitVariant).trim();
 
-                      const isSubscriptionItem = Boolean(
+                      // A loyalty reward line — a chosen free can, or a gift such
+                      // as the mystery box. Excluded from the subscription test:
+                      // that test treats every line on a subscription order as
+                      // the plan, which would render a free can as a plan box.
+                      const isRewardItem = Boolean((item as any).isRewardItem);
+                      const isSubscriptionItem = !isRewardItem && Boolean(
                         (item as any).isSubscription ||
                         item.productId?.startsWith('sub-pack') ||
                         item.productId?.includes('sub-pack') ||
@@ -1080,10 +1085,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                               )}
                             </div>
                             <div className="min-w-0 flex-1">
+                              {isRewardItem && (
+                                <span className="text-[9px] font-black uppercase tracking-widest text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded inline-block mb-1">
+                                  Loyalty reward — include free{(item as any).rewardCode ? ` · ${(item as any).rewardCode}` : ''}
+                                </span>
+                              )}
                               <p className="font-extrabold text-sm text-slate-900 tracking-tight">
                                 {isSubscriptionItem ? displayPlanTitle : item.productTitle}
                               </p>
-                              
+
                               <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 font-bold mt-1">
                                 {isSubscriptionItem ? (
                                   <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-md font-extrabold">
@@ -1165,7 +1175,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           </div>
 
                           <div className="text-right shrink-0">
-                            <p className="text-xs font-black text-slate-900">£{(Number((item.price || 0) * (item.quantity || 1))).toFixed(2)}</p>
+                            <p className={`text-xs font-black ${isRewardItem ? 'text-emerald-700' : 'text-slate-900'}`}>
+                              {isRewardItem ? 'FREE' : `£${(Number((item.price || 0) * (item.quantity || 1))).toFixed(2)}`}
+                            </p>
                             <p className="text-[10px] font-bold text-slate-400 mt-0.5">£{(Number(item.price) || 0).toFixed(2)} × {item.quantity || 1}</p>
                           </div>
                         </div>

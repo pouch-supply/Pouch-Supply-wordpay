@@ -2372,6 +2372,8 @@ export default function App() {
                 onCompleteCheckout={handleCompleteCheckout}
                 activeDiscounts={discounts}
                 customers={customers}
+                products={products}
+                collections={collections}
                 onApplyDiscount={setCheckoutDiscount}
               />
             )}

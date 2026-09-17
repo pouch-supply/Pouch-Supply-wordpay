@@ -1,4 +1,16 @@
-import { Discount, Customer, CartItem } from '../types';
+import { Discount, Customer, CartItem, RewardGift } from '../types';
+
+/**
+ * Bundled artwork for gift rewards that are not catalogue products. Served from
+ * public/reward-assets, kept out of /assets so it cannot collide with Vite's
+ * hashed build output.
+ */
+export const MYSTERY_BOX_IMAGE = '/reward-assets/mystery-box.svg';
+export const MERCH_GIFT_IMAGE = '/reward-assets/merch-gift.svg';
+
+/** Standard UK delivery charge and the spend that waives it. */
+export const STANDARD_DELIVERY_COST = 2.99;
+export const FREE_SHIPPING_THRESHOLD = 40;
 
 export interface ResolveDiscountResult {
   success: boolean;
@@ -34,171 +46,302 @@ export function formatLoyaltyCouponCode(baseCode: string, customer?: { name?: st
   return `${prefix}-${baseCode.toUpperCase()}`;
 }
 
-export interface LoyaltyMilestoneDef {
-  code: string;
-  order: number;
-  reward: string;
+export type LoyaltyTierId = 'bronze' | 'silver' | 'gold' | 'platinum';
+
+/**
+ * How a milestone reward actually pays out:
+ * - 'discount'      money off the order
+ * - 'free-cans'     the customer picks N cans, each added to the order at £0
+ * - 'free-shipping' the delivery charge is zeroed whatever option is chosen
+ * - 'gift'          a non-catalogue item (mystery box, merch) ships at £0
+ * - 'choice'        the customer picks one of several rewards above
+ */
+export type LoyaltyRewardKind = 'discount' | 'free-cans' | 'free-shipping' | 'gift' | 'choice';
+
+export interface LoyaltyRewardChoice {
+  id: string;
+  label: string;
+  kind: Exclude<LoyaltyRewardKind, 'choice'>;
+  details: string;
   type: Discount['type'];
   valueType?: 'Percentage' | 'Fixed amount';
   valueAmount?: number;
-  details: string;
+  freeCanCount?: number;
+  gifts?: RewardGift[];
 }
+
+export interface LoyaltyMilestoneDef {
+  code: string;
+  order: number;
+  tier: LoyaltyTierId;
+  reward: string;
+  type: Discount['type'];
+  valueType?: 'Percentage' | 'Fixed amount';
+  /**
+   * Money taken off the subtotal. Deliberately 0 for 'free-cans' and 'gift'
+   * rewards: the can or gift is added as its own £0 line, so also discounting
+   * the subtotal would pay the reward out twice.
+   */
+  valueAmount?: number;
+  details: string;
+  kind: LoyaltyRewardKind;
+  freeCanCount?: number;
+  gifts?: RewardGift[];
+  choices?: LoyaltyRewardChoice[];
+}
+
+const MYSTERY_GIFT: RewardGift = {
+  id: 'gift-mystery-box',
+  label: 'Mystery Reward 🎁',
+  image: MYSTERY_BOX_IMAGE,
+  note: 'A surprise chosen for you by Pouch Supply — revealed when your parcel arrives.'
+};
+
+const MERCH_GIFT: RewardGift = {
+  id: 'gift-merch',
+  label: 'Exclusive Pouch Supply merchandise 🎁',
+  image: MERCH_GIFT_IMAGE,
+  note: 'Stickers, keyring, bottle opener and other Pouch Supply extras.'
+};
+
+const PREMIUM_MERCH_GIFT: RewardGift = {
+  id: 'gift-merch-premium',
+  label: 'Premium Pouch Supply merchandise 👕',
+  image: MERCH_GIFT_IMAGE,
+  note: 'Premium branded apparel, packed with your order.'
+};
+
+/** A free-can or gift reward takes nothing off the subtotal — see valueAmount. */
+const NO_MONEY_OFF = { type: 'Amount off order' as const, valueType: 'Fixed amount' as const, valueAmount: 0 };
 
 export const LOYALTY_MILESTONE_DEFINITIONS: Record<string, LoyaltyMilestoneDef> = {
   BRONZE1: {
     code: 'BRONZE1',
     order: 1,
+    tier: 'bronze',
     reward: 'Members receive 10% OFF',
     type: 'Amount off order',
     valueType: 'Percentage',
     valueAmount: 10,
-    details: '10% Bronze Member Welcome Discount'
+    details: '10% Bronze Member Welcome Discount',
+    kind: 'discount'
   },
   BRONZE3: {
     code: 'BRONZE3',
     order: 3,
+    tier: 'bronze',
     reward: 'FREE can of your choice',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 4.99,
-    details: '1 FREE can of your choice (£4.99 off)'
+    ...NO_MONEY_OFF,
+    details: '1 FREE can of your choice',
+    kind: 'free-cans',
+    freeCanCount: 1
   },
   BRONZE5: {
     code: 'BRONZE5',
     order: 5,
-    reward: 'Free Royal Mail Tracked Delivery on your next order',
+    tier: 'bronze',
+    reward: 'Free Delivery on your next order',
     type: 'Free shipping',
     valueType: 'Fixed amount',
-    valueAmount: 2.99,
-    details: 'Free Royal Mail Tracked Delivery (£2.99 shipping waiver)'
+    valueAmount: 0,
+    details: 'Free Delivery on this order',
+    kind: 'free-shipping'
   },
   SILVER7: {
     code: 'SILVER7',
     order: 7,
-    reward: 'FREE can 🥫',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 4.99,
-    details: '1 FREE can reward (£4.99 off)'
+    tier: 'silver',
+    reward: 'FREE can of your choice 🥫',
+    ...NO_MONEY_OFF,
+    details: '1 FREE can of your choice',
+    kind: 'free-cans',
+    freeCanCount: 1
   },
   SILVER9: {
     code: 'SILVER9',
     order: 9,
+    tier: 'silver',
     reward: '£5 Store Credit 🎁',
     type: 'Amount off order',
     valueType: 'Fixed amount',
     valueAmount: 5.00,
-    details: '£5.00 Voucher Discount'
+    details: '£5.00 Store Credit',
+    kind: 'discount'
   },
   SILVER11: {
     code: 'SILVER11',
     order: 11,
-    reward: 'FREE can 🥫',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 4.99,
-    details: '1 FREE can reward (£4.99 off)'
+    tier: 'silver',
+    reward: 'FREE can of your choice 🥫',
+    ...NO_MONEY_OFF,
+    details: '1 FREE can of your choice',
+    kind: 'free-cans',
+    freeCanCount: 1
   },
   SILVER13: {
     code: 'SILVER13',
     order: 13,
-    reward: 'Exclusive Pouch Supply merchandise 🎁',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 5.00,
-    details: 'Exclusive Pouch Supply merchandise reward (£5.00 off)'
+    tier: 'silver',
+    reward: 'Exclusive Pouch Supply merchandise (stickers, keyring, bottle opener, etc.) 🎁',
+    ...NO_MONEY_OFF,
+    details: 'Exclusive Pouch Supply merchandise included free',
+    kind: 'gift',
+    gifts: [MERCH_GIFT]
   },
   SILVER15: {
     code: 'SILVER15',
     order: 15,
-    reward: '2 FREE cans 🥫',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 9.00,
-    details: '2 FREE cans reward (£9.00 off)'
+    tier: 'silver',
+    reward: '2 FREE cans of your choice 🥫',
+    ...NO_MONEY_OFF,
+    details: '2 FREE cans of your choice',
+    kind: 'free-cans',
+    freeCanCount: 2
   },
   GOLD17: {
     code: 'GOLD17',
     order: 17,
+    tier: 'gold',
     reward: '20% off your purchase 🎁',
     type: 'Amount off order',
     valueType: 'Percentage',
     valueAmount: 20,
-    details: '20% Gold Member Discount'
+    details: '20% Gold Member Discount',
+    kind: 'discount'
   },
   GOLD19: {
     code: 'GOLD19',
     order: 19,
-    reward: '2 FREE cans 🥫',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 9.00,
-    details: '2 FREE cans reward (£9.00 off)'
+    tier: 'gold',
+    reward: '2 FREE cans of your choice 🥫',
+    ...NO_MONEY_OFF,
+    details: '2 FREE cans of your choice',
+    kind: 'free-cans',
+    freeCanCount: 2
   },
   GOLD21: {
     code: 'GOLD21',
     order: 21,
+    tier: 'gold',
     reward: 'Mystery Reward (chosen by Pouch Supply) 🎁',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 5.00,
-    details: 'Mystery Reward (£5.00 off / surprise gift)'
+    ...NO_MONEY_OFF,
+    details: 'Mystery Reward included free with this order',
+    kind: 'gift',
+    gifts: [MYSTERY_GIFT]
   },
   GOLD23: {
     code: 'GOLD23',
     order: 23,
-    reward: '2 FREE cans 🥫',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 9.00,
-    details: '2 FREE cans reward (£9.00 off)'
+    tier: 'gold',
+    reward: '2 FREE cans of your choice 🥫',
+    ...NO_MONEY_OFF,
+    details: '2 FREE cans of your choice',
+    kind: 'free-cans',
+    freeCanCount: 2
   },
   GOLD25: {
     code: 'GOLD25',
     order: 25,
+    tier: 'gold',
     reward: 'Premium Pouch Supply merchandise 👕',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 10.00,
-    details: 'Premium Merchandise Voucher (£10.00 off)'
+    ...NO_MONEY_OFF,
+    details: 'Premium Pouch Supply merchandise included free',
+    kind: 'gift',
+    gifts: [PREMIUM_MERCH_GIFT]
   },
   GOLD27: {
     code: 'GOLD27',
     order: 27,
+    tier: 'gold',
     reward: '20% off your purchase 🎁',
     type: 'Amount off order',
     valueType: 'Percentage',
     valueAmount: 20,
-    details: '20% Gold Member Discount'
+    details: '20% Gold Member Discount',
+    kind: 'discount'
   },
   GOLD29: {
     code: 'GOLD29',
     order: 29,
-    reward: '2 FREE cans 🥫',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 9.00,
-    details: '2 FREE cans reward (£9.00 off)'
+    tier: 'gold',
+    reward: '2 FREE cans of your choice 🥫',
+    ...NO_MONEY_OFF,
+    details: '2 FREE cans of your choice',
+    kind: 'free-cans',
+    freeCanCount: 2
   },
   GOLD30: {
     code: 'GOLD30',
     order: 30,
+    tier: 'gold',
     reward: 'Unlock Platinum Member 🏆',
     type: 'Amount off order',
     valueType: 'Percentage',
     valueAmount: 25,
-    details: '25% Platinum Unlock Welcome Discount'
+    details: '25% Platinum Unlock Welcome Discount',
+    kind: 'discount'
   },
   PLATINUM_ODD: {
     code: 'PLATINUM_ODD',
     order: 31,
-    reward: 'Platinum Odd Order Choice Reward 💎',
-    type: 'Amount off order',
-    valueType: 'Fixed amount',
-    valueAmount: 10.00,
-    details: 'Platinum VIP Odd Order Reward (£10.00 off / 3 Free Cans voucher)'
+    tier: 'platinum',
+    reward: 'Odd order reward: choose 3 FREE cans, £10 Store Credit, Free Delivery, exclusive merchandise, or a Mystery Reward',
+    ...NO_MONEY_OFF,
+    details: 'Platinum VIP odd-order reward',
+    kind: 'choice',
+    choices: [
+      {
+        id: 'cans',
+        label: '3 FREE cans of your choice 🥫',
+        kind: 'free-cans',
+        details: '3 FREE cans of your choice',
+        ...NO_MONEY_OFF,
+        freeCanCount: 3
+      },
+      {
+        id: 'credit',
+        label: '£10.00 Store Credit 💷',
+        kind: 'discount',
+        details: '£10.00 Store Credit',
+        type: 'Amount off order',
+        valueType: 'Fixed amount',
+        valueAmount: 10.00
+      },
+      {
+        id: 'delivery',
+        label: 'Free Priority Delivery 🚚',
+        kind: 'free-shipping',
+        details: 'Free Delivery on this order',
+        type: 'Free shipping',
+        valueType: 'Fixed amount',
+        valueAmount: 0
+      },
+      {
+        id: 'merch',
+        label: 'Exclusive Pouch Supply merchandise 🎁',
+        kind: 'gift',
+        details: 'Exclusive Pouch Supply merchandise included free',
+        ...NO_MONEY_OFF,
+        gifts: [MERCH_GIFT]
+      },
+      {
+        id: 'mystery',
+        label: 'Mystery Reward 🎲',
+        kind: 'gift',
+        details: 'Mystery Reward included free with this order',
+        ...NO_MONEY_OFF,
+        gifts: [MYSTERY_GIFT]
+      }
+    ]
   }
 };
+
+/** Milestones belonging to one tier, in order. Drives the loyalty rewards page. */
+export function getMilestonesForTier(tier: LoyaltyTierId): LoyaltyMilestoneDef[] {
+  return Object.values(LOYALTY_MILESTONE_DEFINITIONS)
+    .filter(def => def.tier === tier)
+    .sort((a, b) => a.order - b.order);
+}
 
 /**
  * Extracts base code from input code which may contain customer prefixes or hyphens.
@@ -292,7 +435,6 @@ export function resolveDiscountCode(
   const baseMilestoneKey = extractBaseMilestoneCode(code);
   if (baseMilestoneKey && LOYALTY_MILESTONE_DEFINITIONS[baseMilestoneKey]) {
     const def = LOYALTY_MILESTONE_DEFINITIONS[baseMilestoneKey];
-    const customerPrefix = getCustomerPrefix(loggedInCustomer);
     const virtualLoyaltyDiscount: Discount = {
       id: `disc-loyalty-${def.code.toLowerCase()}`,
       title: code,
@@ -304,7 +446,12 @@ export function resolveDiscountCode(
       valueAmount: def.valueAmount,
       details: def.details,
       used: 0,
-      limitOnePerCustomer: false
+      limitOnePerCustomer: false,
+      loyaltyMilestoneCode: def.code,
+      rewardKind: def.kind,
+      freeCanCount: def.freeCanCount,
+      freeCanSelections: def.kind === 'free-cans' ? [] : undefined,
+      rewardGifts: def.gifts
     };
 
     return {
@@ -371,4 +518,86 @@ export function resolveDiscountCode(
     success: false,
     error: 'Invalid or expired discount code.'
   };
+}
+
+/**
+ * The reward options on a multi-option milestone (Platinum odd orders), or []
+ * for every other reward.
+ */
+export function getRewardChoices(discount?: Discount | null): LoyaltyRewardChoice[] {
+  if (!discount?.loyaltyMilestoneCode) return [];
+  return LOYALTY_MILESTONE_DEFINITIONS[discount.loyaltyMilestoneCode]?.choices || [];
+}
+
+/**
+ * Applies the customer's pick on a multi-option reward, collapsing the 'choice'
+ * discount into the concrete reward they took.
+ */
+export function applyRewardChoice(discount: Discount, choiceId: string): Discount {
+  const choice = getRewardChoices(discount).find(c => c.id === choiceId);
+  if (!choice) return discount;
+  return {
+    ...discount,
+    type: choice.type,
+    valueType: choice.valueType,
+    valueAmount: choice.valueAmount,
+    details: choice.details,
+    rewardKind: choice.kind,
+    rewardChoiceId: choice.id,
+    freeCanCount: choice.freeCanCount,
+    freeCanSelections: choice.kind === 'free-cans' ? [] : undefined,
+    rewardGifts: choice.gifts
+  };
+}
+
+/** How many cans still need picking before this reward is ready to check out. */
+export function getOutstandingFreeCanCount(discount?: Discount | null): number {
+  if (!discount || discount.rewardKind !== 'free-cans') return 0;
+  const required = discount.freeCanCount || 0;
+  const chosen = (discount.freeCanSelections || []).length;
+  return Math.max(required - chosen, 0);
+}
+
+/**
+ * True while an applied reward still needs input from the customer — an
+ * unpicked free can, or an unchosen option on a multi-option reward. Checkout
+ * is blocked until this is false so a reward can never be silently dropped.
+ */
+export function rewardNeedsSelection(discount?: Discount | null): boolean {
+  if (!discount) return false;
+  if (discount.rewardKind === 'choice') return !discount.rewardChoiceId;
+  return getOutstandingFreeCanCount(discount) > 0;
+}
+
+/**
+ * Whether the applied discount waives delivery. Recognises the reward metadata
+ * first, then falls back to the discount type and wording so admin-created
+ * "Free shipping" codes and older saved orders still qualify.
+ */
+export function isFreeShippingReward(discount?: Discount | null): boolean {
+  if (!discount) return false;
+  if (discount.rewardKind === 'free-shipping') return true;
+  if (discount.type === 'Free shipping') return true;
+  const details = (discount.details || '').toLowerCase();
+  const title = (discount.title || '').toUpperCase();
+  return (
+    title.includes('BRONZE5') ||
+    details.includes('free shipping') ||
+    details.includes('free delivery') ||
+    details.includes('free royal mail')
+  );
+}
+
+/**
+ * The delivery charge for an order: zero when a free-delivery reward applies —
+ * whatever delivery option was chosen — or when the spend threshold is met.
+ */
+export function resolveDeliveryCost(
+  subtotalAfterDiscount: number,
+  discount?: Discount | null,
+  baseCost: number = STANDARD_DELIVERY_COST
+): number {
+  if (isFreeShippingReward(discount)) return 0;
+  if (subtotalAfterDiscount >= FREE_SHIPPING_THRESHOLD) return 0;
+  return baseCost;
 }

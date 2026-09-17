@@ -183,9 +183,27 @@ export function PaymentSuccessScreen({ onReturnToShop }: PaymentSuccessScreenPro
             <span className="text-slate-400 font-extrabold text-[9px] uppercase tracking-wider block">Items Purchased ({order.items.length})</span>
             <div className="max-h-32 overflow-y-auto space-y-1.5 pr-1">
               {order.items.map((item: any, i: number) => (
-                <div key={i} className="flex justify-between text-[11px] font-bold text-slate-700 bg-white p-2 rounded-lg border border-slate-100">
-                  <span className="truncate max-w-[280px]">{item.productTitle} <span className="text-slate-400 font-normal">x{item.quantity}</span></span>
-                  <span>£{(item.price * item.quantity).toFixed(2)}</span>
+                <div
+                  key={i}
+                  className={`flex justify-between items-center gap-2 text-[11px] font-bold p-2 rounded-lg border ${
+                    item.isRewardItem
+                      ? 'text-slate-700 bg-emerald-50/60 border-emerald-200'
+                      : 'text-slate-700 bg-white border-slate-100'
+                  }`}
+                >
+                  <span className="truncate max-w-[280px] flex items-center gap-1.5">
+                    {/* The mystery box / free can artwork, so the reward is
+                        visibly part of the order the moment it is placed. */}
+                    {item.isRewardItem && item.image && (
+                      <img src={item.image} alt="" className="h-6 w-6 rounded object-contain bg-white shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {item.productTitle} <span className="text-slate-400 font-normal">x{item.quantity}</span>
+                    </span>
+                  </span>
+                  <span className={item.isRewardItem ? 'text-emerald-700 font-black shrink-0' : 'shrink-0'}>
+                    {item.isRewardItem ? 'FREE' : `£${(item.price * item.quantity).toFixed(2)}`}
+                  </span>
                 </div>
               ))}
             </div>
