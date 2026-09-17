@@ -191,6 +191,73 @@ async function persistSubscriptionUpdate(subId: string, updateData: Record<strin
 }
 
 /**
+ * After how many consecutive failures a subscription stops being retried.
+ *
+ * `nextBillingDate` is deliberately never moved by a failure, so a due payment
+ * stays due — which means the only thing that can stop an endlessly declining
+ * card from being presented every run is taking the subscription out of
+ * 'active'. The debt stays on the record for whoever picks it up.
+ */
+const MAX_CONSECUTIVE_FAILURES = 3;
+
+/**
+ * Stop starting new charges once a run has been going this long.
+ *
+ * Renewals are processed one after another in a single invocation, and each one
+ * makes a gateway call and then saves an order, sends email and pushes Klaviyo
+ * events. With enough due subscriptions the invocation is killed part-way
+ * through. Subscriptions not yet started have NOT claimed their slot, so leaving
+ * them for the next run costs nothing; being killed after claiming one is what
+ * loses a payment.
+ */
+const RUN_TIME_BUDGET_MS = 45 * 1000;
+
+/**
+ * The id for the next renewal order on a subscription, and the gateway reference
+ * to charge it under.
+ *
+ * Both are the same string, and it carries the order the plan was bought with:
+ * "PS65700-R3" is the third renewal of order PS65700. Worldpay's transaction
+ * reference used to be a random `SUB-ORD-48120-3391` generated before the order
+ * even existed, so a payment in the Worldpay dashboard could not be matched to
+ * the order it paid for.
+ *
+ * Deriving the id from the renewal count rather than a random number also makes
+ * it stable: a period that was interrupted before its order was written produces
+ * the same id and reference on the retry, which is what makes the retry safe.
+ */
+export function buildRenewalOrderRef(sub: any, dueDate: Date): { orderId: string; periodStart: Date } {
+  const parentId = String(sub.sourceOrderId || sub.id || '').trim() || String(sub.id);
+
+  // Anchored on the date this attempt is billing FOR — the subscription's own
+  // nextBillingDate. That date is not moved by a failure, a timeout or an
+  // interrupted run, so every retry of the same period derives the same id and
+  // the same gateway reference. That is what makes a retry safe: the duplicate
+  // check below recognises it, and Worldpay rejects a repeated reference.
+  const periodStart = dueDate && !isNaN(new Date(dueDate).getTime()) ? new Date(dueDate) : new Date();
+
+  const stamp =
+    `${periodStart.getUTCFullYear()}` +
+    `${String(periodStart.getUTCMonth() + 1).padStart(2, '0')}` +
+    `${String(periodStart.getUTCDate()).padStart(2, '0')}`;
+
+  return { orderId: `${parentId}-R${stamp}`, periodStart };
+}
+
+/** Whether this renewal order already exists, meaning the period is already billed. */
+async function renewalOrderExists(orderId: string): Promise<boolean> {
+  try {
+    const row = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
+    if (row) return true;
+  } catch (_e) {}
+  try {
+    const stored: any[] = (await fetchResource('orders')) || [];
+    if (stored.some((o: any) => String(o?.id) === orderId)) return true;
+  } catch (_e) {}
+  return false;
+}
+
+/**
  * Determines whether a subscription is due, backfilling a missing schedule.
  *
  * A subscription with no `nextBillingDate` used to be treated as "due right
@@ -254,8 +321,23 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
     let succeeded = 0;
     let failed = 0;
 
+    const runStartedAt = Date.now();
+
     for (const { sub, scheduledFor } of subscriptions) {
       const subId = String(sub.id);
+
+      // Out of time. Subscriptions below this point have not claimed their slot,
+      // so they stay due and the next run bills them. Stopping deliberately is
+      // what stops the invocation being killed part-way through a charge.
+      if (Date.now() - runStartedAt > RUN_TIME_BUDGET_MS) {
+        console.warn(
+          `[Subscription Worker] Run time budget reached; deferring ${subId} and any remaining ` +
+            `subscriptions to the next run. They are still due and have not been charged.`
+        );
+        results.push({ id: subId, status: 'deferred', reason: 'Run time budget reached' });
+        continue;
+      }
+
       const customerEmail = String(sub.customerEmail || '').toLowerCase().trim();
       const recurringHref = sub.worldpayRecurringHref || sub.recurringHref;
       const schemeReference = sub.worldpaySchemeReference;
@@ -300,30 +382,69 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
             `stores the card and sends the tokenCreated webhook.`
         );
         failed++;
-        // Push the schedule forward so a broken subscription is not re-scanned every tick.
+
+        // The schedule is NOT pushed forward. This period has not been paid, so
+        // it stays due; moving the date used to forgive one period per run and
+        // hide the fact that the plan has never been billable at all. A plan with
+        // no card can never succeed on its own, so the failure counter is what
+        // stops it being retried forever — it lands in 'past_due', which is the
+        // signal that the customer has to re-authorise.
+        const credentialFailCount = (sub.failedPaymentCount || 0) + 1;
+        const credentialPastDue = credentialFailCount >= MAX_CONSECUTIVE_FAILURES;
         await persistSubscriptionUpdate(subId, {
-          nextBillingDate: nextBillingDateAfterCharge(interval, scheduledFor, now),
-          lastPaymentStatus: hasAgreementOnly ? 'missing_card_token' : 'missing_credential'
+          lastPaymentStatus: hasAgreementOnly ? 'missing_card_token' : 'missing_credential',
+          lastPaymentError: hasAgreementOnly
+            ? 'Worldpay issued the agreement but never delivered a card token'
+            : 'No usable Worldpay stored credential',
+          failedPaymentCount: credentialFailCount,
+          status: credentialPastDue ? 'past_due' : 'active'
         });
         results.push({
           id: subId,
           status: 'skipped',
-          reason: hasAgreementOnly
-            ? 'Agreement present but no stored card token — customer must re-authorise'
-            : 'Missing Worldpay stored credential'
+          nextBillingDate: 'unchanged (still due)',
+          reason:
+            (hasAgreementOnly
+              ? 'Agreement present but no stored card token — customer must re-authorise'
+              : 'Missing Worldpay stored credential') +
+            (credentialPastDue ? ` — set to past_due after ${credentialFailCount} attempts` : '')
         });
         continue;
       }
 
-      // Claim the slot BEFORE charging. If anything below throws (or another
-      // worker tick starts), the subscription is no longer selectable as due,
-      // which is what prevents duplicate charges for the same period.
-      const claimedNextBilling = nextBillingDateAfterCharge(interval, scheduledFor, now);
-      await persistSubscriptionUpdate(subId, { nextBillingDate: claimedNextBilling });
+      // The order this renewal will create, decided BEFORE the charge so the
+      // gateway reference can be the order id itself.
+      const { orderId: newOrderId, periodStart } = buildRenewalOrderRef(sub, scheduledFor || now);
+      const transactionReference = newOrderId;
 
-      const transactionReference = `SUB-ORD-${Math.floor(10000 + Math.random() * 90000)}-${Date.now()
-        .toString()
-        .slice(-4)}`;
+      // This period is already billed. Reached when a previous run charged the
+      // card and wrote the order but was killed before it could record the
+      // payment against the subscription, so the slot came back up for retry.
+      // Charging again here would take the money twice.
+      if (await renewalOrderExists(newOrderId)) {
+        console.warn(
+          `[Subscription Worker] Sub ${subId}: order ${newOrderId} already exists, so this period is ` +
+            `already paid. Advancing the schedule without charging again.`
+        );
+        await persistSubscriptionUpdate(subId, {
+          nextBillingDate: nextBillingDateAfterCharge(interval, periodStart, now)
+        });
+        results.push({ id: subId, status: 'skipped', reason: `Already billed as ${newOrderId}` });
+        continue;
+      }
+
+      // What the schedule will become — applied ONLY after the money is confirmed
+      // taken and the renewal order is confirmed written. Nothing is persisted
+      // here.
+      //
+      // The schedule used to be advanced at this point, before the gateway was
+      // called, to stop two workers billing the same period. That trade cost real
+      // payments: a run killed mid-charge left the period marked as billed when it
+      // never was, with no charge, no order and nothing recorded as failed.
+      // Duplicate protection now comes from the reference above instead — it is
+      // identical on every retry of this period, this order id is checked for
+      // existence first, and Worldpay refuses a reference it has already seen.
+      const claimedNextBilling = nextBillingDateAfterCharge(interval, periodStart, now);
 
       try {
         // 1. Charge Worldpay using the stored MIT credential / scheme reference
@@ -353,8 +474,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
 
         const itemSubtotal = Number(Math.max(0, amount - shippingAmount).toFixed(2)) || amount;
 
-        // 3. Create the recurring order
-        const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
+        // 3. Create the recurring order under the id the reference was built from
         const orderItems = buildRenewalOrderItems(sub, itemSubtotal, planTitleFromSubscription(sub));
 
         const newOrderData = {
@@ -399,10 +519,15 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           // no way back to the checkout it came from.
           parentOrderId: sub.sourceOrderId ? String(sub.sourceOrderId) : null,
           isRenewal: true,
+          billingPeriodStart: periodStart.toISOString(),
           data: {
             subscriptionId: subId,
             parentOrderId: sub.sourceOrderId ? String(sub.sourceOrderId) : null,
             isRenewal: true,
+            billingPeriodStart: periodStart.toISOString(),
+            // The reference Worldpay booked this payment under. Identical to the
+            // order id, so a gateway record maps straight onto this order.
+            transactionReference,
             schemeReference: chargeResult?.schemeReference || schemeReference,
             paymentMethod: 'Worldpay Access MIT',
             recurringRenewal: true,
@@ -422,6 +547,31 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           const storedOrders: any[] = (await fetchResource('orders')) || [];
           storedOrders.unshift(newOrderData);
           await saveResource('orders', storedOrders);
+        }
+
+        // Read the order back before the schedule is allowed to move. The money
+        // is taken by this point, so an order that did not persist must NOT look
+        // like a completed period: leaving the schedule alone keeps it due, and
+        // the retry presents the same reference, which Worldpay refuses as a
+        // duplicate — at which point the order is written from that path instead
+        // of the card being charged a second time.
+        const orderPersisted = await renewalOrderExists(newOrderId);
+        if (!orderPersisted) {
+          console.error(
+            `[RENEWAL ORDER NOT PERSISTED] Sub ${subId} was charged ${currency} ${amount.toFixed(2)} under ` +
+              `reference ${transactionReference}, but order ${newOrderId} is in neither store. The schedule ` +
+              `is deliberately NOT advanced, so the next run retries this same reference rather than ` +
+              `billing again. Payload: ${JSON.stringify(newOrderData).slice(0, 1500)}`
+          );
+          failed++;
+          results.push({
+            id: subId,
+            status: 'charged_order_missing',
+            orderId: newOrderId,
+            transactionReference,
+            nextBillingDate: 'unchanged (still due)'
+          });
+          continue;
         }
 
         // Optionally auto-register a Royal Mail shipment. Off by default so the
@@ -485,17 +635,21 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         failed++;
 
         const newFailedCount = (sub.failedPaymentCount || 0) + 1;
-        const isPastDue = newFailedCount >= 3;
+        const isPastDue = newFailedCount >= MAX_CONSECUTIVE_FAILURES;
 
-        // Retry in 24 hours, or stop after 3 consecutive failures.
-        const retryBillingDate = new Date(now);
-        retryBillingDate.setDate(retryBillingDate.getDate() + 1);
-
+        // `nextBillingDate` is left exactly as it was. A failed charge has not
+        // billed the period, so the period is still owed: the date stays put and
+        // the next run presents the same reference again. It used to be pushed to
+        // "tomorrow" (and nulled once past due), which silently forgave the
+        // period the card had just declined.
+        //
+        // Since the date no longer moves, the retry is stopped by taking the
+        // subscription out of 'active' after MAX_CONSECUTIVE_FAILURES rather than
+        // by moving the goalposts.
         const failUpdate: any = {
           lastPaymentStatus: 'failed',
           lastPaymentError: String(chargeErr.message || chargeErr).slice(0, 500),
           failedPaymentCount: newFailedCount,
-          nextBillingDate: isPastDue ? null : retryBillingDate,
           status: isPastDue ? 'past_due' : 'active'
         };
         await persistSubscriptionUpdate(subId, failUpdate);
@@ -504,7 +658,11 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           id: subId,
           status: 'failed',
           error: chargeErr.message,
-          retryScheduled: isPastDue ? 'none (past_due)' : retryBillingDate.toISOString()
+          transactionReference,
+          nextBillingDate: 'unchanged (still due)',
+          retryScheduled: isPastDue
+            ? `none — ${newFailedCount} consecutive failures, subscription set to past_due`
+            : 'next worker run'
         });
       }
     }
