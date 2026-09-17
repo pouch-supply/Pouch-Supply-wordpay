@@ -24,7 +24,7 @@ import { buildOrderItems, getRewardLines, hydrateRewardSelection } from '../util
 import { saveRewardSelection } from '../utils/rewardSelectionStore';
 import FreeCanPicker from './FreeCanPicker';
 import { RewardChoicePicker, AppliedRewardLines } from './RewardSelection';
-import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed, trackSubscriptionStarted } from '../utils/klaviyo';
+import { trackStartedCheckout, trackOrderCompleted, trackCheckoutFailed } from '../utils/klaviyo';
 import { getPlanImage, getPlanSlug } from '../utils/planImages';
 import { parseSubscriptionProducts, formatSubscriptionItemDisplay } from '../utils/subscriptionParser';
 import {
@@ -658,16 +658,20 @@ export default function CheckoutView({
     const generatedOrderId = `PS${Math.floor(Math.random() * 90000 + 10000)}`;
     setOrderId(generatedOrderId);
 
-    // Track Started Checkout in Klaviyo
+    // Track Started Checkout in Klaviyo. The full cart is passed — not just the
+    // first line — so the abandoned-cart email can show what was left behind,
+    // and the email is passed so Klaviyo identifies the profile. Without the
+    // identify a guest's checkout attaches to no profile and the flow has
+    // nobody to email.
     try {
-      const firstItem = cartItems[0];
-      if (firstItem) {
+      if (cartItems.length > 0) {
         trackStartedCheckout({
-          id: firstItem.productId,
-          name: firstItem.productTitle,
-          price: finalTotalToPay,
-          currency: 'GBP',
-          recurring: Boolean(cartItems.some(i => i.isSubscription || i.productId?.startsWith('sub-pack-'))),
+          items: cartItems,
+          total: finalTotalToPay,
+          customerEmail: email.trim(),
+          customerName: fullName.trim(),
+          checkoutId: generatedOrderId,
+          recurring: hasSubscription
         });
       }
     } catch (_e) {}

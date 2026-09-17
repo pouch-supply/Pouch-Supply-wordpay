@@ -3,6 +3,7 @@ import crypto from "crypto";
 
 import { prisma } from "../../src/lib/prisma";
 import { upsertSubscriptionRow } from "../../src/lib/subscriptionRow";
+import { trackSubscriptionStarted } from "../services/klaviyoService";
 import { fetchResource, saveResource } from "../../serverDb";
 import {
   chargeRecurringSubscription,
@@ -682,6 +683,11 @@ router.post(
           await saveResource("customers", customers);
         }
       } catch (_e) {}
+
+      // Trigger for the "Subscription confirmation" flow. Not awaited: the
+      // subscription is already saved and the client should not wait on Klaviyo.
+      trackSubscriptionStarted(subData, sourceOrderId ? { id: String(sourceOrderId), customerEmail: emailClean, customerName } : undefined)
+        .catch((e: any) => console.warn(`[Klaviyo] Started Subscription failed for ${subId}:`, e?.message || e));
 
       return res.status(201).json({
         success: true,

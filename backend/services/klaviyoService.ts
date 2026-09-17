@@ -592,13 +592,64 @@ export async function trackAddToCart(email: string, item: any, quantity: number 
   });
 }
 
-export async function trackCheckoutStarted(email: string, cartItems: any[], totalValue: number) {
+/**
+ * Whether one order/cart line is a subscription plan rather than a one-off can.
+ * Recognises the flag, the synthetic `sub-pack-` id the checkout builds, and the
+ * vendor the account-page plan checkout uses.
+ */
+function isSubscriptionLineItem(item: any): boolean {
+  if (!item) return false;
+  const productId = String(item.productId || item.id || '');
+  return Boolean(
+    item.isSubscription ||
+    productId.includes('sub-pack') ||
+    item.vendor === 'Subscription Pack' ||
+    item.subscriptionPlan
+  );
+}
+
+/**
+ * Klaviyo's abandoned-cart flow triggers on the metric named "Started Checkout".
+ * This used to send "Checkout Started", which created a separate metric that no
+ * flow was listening to, so abandoned carts never fired.
+ */
+export async function trackCheckoutStarted(
+  email: string,
+  cartItems: any[],
+  totalValue: number,
+  options: { checkoutId?: string; customerName?: string; recurring?: boolean } = {}
+) {
   const settings = await getKlaviyoSettings();
   if (!settings.trackEvents.checkoutStarted) return;
-  return trackKlaviyoEvent('Checkout Started', email, {
+
+  const formattedItems = (Array.isArray(cartItems) ? cartItems : []).map((i: any) => {
+    const priceNum = typeof i.price === 'number' ? i.price : parseFloat(i.price) || 0;
+    const qtyNum = typeof i.quantity === 'number' ? i.quantity : parseInt(i.quantity) || 1;
+    return {
+      ProductID: String(i.productId || i.id || 'prod-generic'),
+      SKU: String(i.sku || i.productId || i.id || 'SKU-001'),
+      ProductName: String(i.productTitle || i.title || i.name || 'Nicotine Pouch Pack'),
+      Quantity: qtyNum,
+      ItemPrice: priceNum,
+      RowTotal: parseFloat((priceNum * qtyNum).toFixed(2)),
+      ImageURL: i.image || i.imageUrl || '',
+      IsSubscription: isSubscriptionLineItem(i)
+    };
+  });
+
+  const nameParts = String(options.customerName || '').trim().split(/\s+/);
+
+  return trackKlaviyoEvent('Started Checkout', email, {
+    // Ties the event to one checkout attempt so a retry is not counted twice.
+    ...(options.checkoutId ? { $event_id: options.checkoutId, CheckoutId: options.checkoutId } : {}),
     $value: totalValue,
-    ItemNames: cartItems.map((i: any) => i.title || i.productTitle),
-    Items: cartItems
+    ItemNames: formattedItems.map(i => i.ProductName),
+    Items: formattedItems,
+    Categories: ['Nicotine Pouches', 'Storefront'],
+    IsSubscription: options.recurring ?? formattedItems.some(i => i.IsSubscription)
+  }, {
+    first_name: nameParts[0] || undefined,
+    last_name: nameParts.slice(1).join(' ') || undefined
   });
 }
 
@@ -624,13 +675,32 @@ export async function trackPurchaseCompleted(order: any) {
       Price: priceNum,
       RowTotal: parseFloat((priceNum * qtyNum).toFixed(2)),
       ImageURL: i.image || i.imageUrl || 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300',
-      Vendor: i.vendor || 'Pouch Supply Co.'
+      Vendor: i.vendor || 'Pouch Supply Co.',
+      IsSubscription: isSubscriptionLineItem(i),
+      IsRewardItem: Boolean(i.isRewardItem)
     };
   });
 
   const itemNames = formattedItems.map((i: any) => i.ProductName);
   const totalVal = typeof order.total === 'number' ? order.total : parseFloat(order.total) || 0;
   const orderIdStr = String(order.id || order.orderId || `PS${Math.floor(Math.random() * 90000 + 10000)}`);
+
+  // Lets a flow separate plan orders from one-off purchases. Previously the
+  // event carried no such marker, so an "order confirmation (non-subscribers)"
+  // flow had nothing to filter on but product-name guesswork.
+  const isSubscriptionOrder = Boolean(
+    order.isSubscription ||
+    order.subscriptionId ||
+    formattedItems.some((i: any) => i.IsSubscription) ||
+    (Array.isArray(order.tags) && order.tags.some((t: any) => String(t).toLowerCase().includes('subscription')))
+  );
+  // A renewal is charged automatically; the first order is the one the customer
+  // just checked out. Welcome/confirmation copy usually differs between them.
+  const isRenewal = Boolean(
+    order.isRenewal ||
+    (Array.isArray(order.tags) && order.tags.some((t: any) => String(t).toLowerCase().includes('renewal'))) ||
+    formattedItems.some((i: any) => /recurring renewal/i.test(String(i.ProductName)))
+  );
 
   // Ensure consent is granted so Klaviyo flows dispatch emails immediately
   await syncKlaviyoProfileWithConsent(email, firstName, lastName);
@@ -644,6 +714,9 @@ export async function trackPurchaseCompleted(order: any) {
     ItemNames: itemNames,
     Items: formattedItems,
     Categories: ['Nicotine Pouches', 'Storefront'],
+    IsSubscription: isSubscriptionOrder,
+    IsRenewal: isRenewal,
+    OrderType: isSubscriptionOrder ? (isRenewal ? 'Subscription Renewal' : 'Subscription') : 'One-off',
     Destination: order.destination || order.address || 'United Kingdom',
     DeliveryMethod: order.deliveryMethod || 'Royal Mail Tracked 24/48',
     DiscountApplied: order.discountApplied || null,
@@ -690,6 +763,56 @@ export async function trackPurchaseCompleted(order: any) {
   }
 
   return placedOrderRes;
+}
+
+/**
+ * Fires when a subscription is created, so a "Subscription confirmation" flow has
+ * something to trigger on. Nothing used to be sent here at all: the client had a
+ * trackSubscriptionStarted helper that was never called from anywhere, so the
+ * metric did not exist in Klaviyo.
+ *
+ * Point the flow at the "Started Subscription" metric.
+ */
+export async function trackSubscriptionStarted(subscription: any, order?: any) {
+  const settings = await getKlaviyoSettings();
+  if (settings.trackEvents && settings.trackEvents.purchase === false) return;
+
+  const email = String(
+    subscription?.customerEmail || order?.customerEmail || 'customer@pouch-supply.com'
+  ).toLowerCase().trim();
+
+  const nameParts = String(subscription?.customerName || order?.customerName || '').trim().split(/\s+/);
+  const firstName = nameParts[0] || 'Valued';
+  const lastName = nameParts.slice(1).join(' ') || 'Customer';
+
+  const subId = String(subscription?.id || subscription?.subscriptionId || '');
+  const amount = typeof subscription?.amount === 'number'
+    ? subscription.amount
+    : parseFloat(subscription?.amount) || 0;
+
+  // Consent so the flow is allowed to send. Harmless when no list is configured;
+  // it simply logs that consent could not be recorded.
+  await syncKlaviyoProfileWithConsent(email, firstName, lastName);
+
+  return trackKlaviyoEvent('Started Subscription', email, {
+    // One event per subscription, so a retried webhook cannot duplicate it.
+    ...(subId ? { $event_id: `sub_started_${subId}` } : {}),
+    $value: amount,
+    SubscriptionID: subId,
+    PlanName: subscription?.planName || subscription?.planId || 'Subscription Plan',
+    PlanId: subscription?.planId || null,
+    BillingInterval: subscription?.billingInterval || 'bi-weekly',
+    NextBillingDate: subscription?.nextBillingDate || null,
+    ItemPrice: subscription?.itemPrice ?? null,
+    ShippingCost: subscription?.shippingCost ?? null,
+    Currency: subscription?.currency || 'GBP',
+    FirstOrderId: order?.id || order?.orderId || null,
+    IsSubscription: true,
+    Categories: ['Nicotine Pouches', 'Subscription']
+  }, {
+    first_name: firstName,
+    last_name: lastName
+  });
 }
 
 export async function trackOrderRefunded(order: any, refundAmount?: number) {

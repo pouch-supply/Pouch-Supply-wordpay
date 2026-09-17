@@ -331,7 +331,11 @@ router.post('/track', async (req: Request, res: Response) => {
           await trackAddToCart(customerEmail, data?.item, data?.quantity || 1);
           break;
         case 'checkout_started':
-          await trackCheckoutStarted(customerEmail, data?.items || [], data?.total || 0);
+          await trackCheckoutStarted(customerEmail, data?.items || [], data?.total || 0, {
+            checkoutId: data?.checkoutId,
+            customerName: data?.customerName,
+            recurring: data?.recurring
+          });
           break;
         case 'purchase':
           await trackPurchaseCompleted(data || { customerEmail, total: eventProperties?.total });

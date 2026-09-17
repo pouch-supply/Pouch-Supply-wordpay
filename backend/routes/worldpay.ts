@@ -23,6 +23,7 @@ import {
   validateUkDelivery
 } from '../../src/utils/ukValidation';
 import { isFreeShippingReward, resolveDeliveryCost } from '../../src/utils/discountUtils';
+import { trackSubscriptionStarted } from '../services/klaviyoService';
 
 const router = Router();
 
@@ -1062,6 +1063,12 @@ async function saveVerifiedOrder(
           await saveResource('customers', customers);
         }
       } catch (_e) {}
+
+      // Give the "Subscription confirmation" flow its trigger. Fired after the
+      // plan is persisted so the flow never confirms a subscription that failed
+      // to save, and not awaited so Klaviyo cannot delay the order.
+      trackSubscriptionStarted(subData, { id: orderId, customerEmail, customerName })
+        .catch((e: any) => console.warn(`[Klaviyo] Started Subscription failed for ${subId}:`, e?.message || e));
     } catch (subErr: any) {
       // Logged as an error, with the order it belongs to. This is the exact
       // failure that leaves a paid order without its plan, so it has to be

@@ -46,7 +46,36 @@ export function initializeKlaviyo(): void {
   }
 }
 
-function pushKlaviyo(event: string, payload: Record<string, unknown> = {}): void {
+/**
+ * Absolute product URL for Klaviyo email templates.
+ *
+ * Browse-abandonment and abandoned-cart emails render a product block that
+ * links back to the item; without a URL the block has nowhere to point. Klaviyo
+ * renders these server-side, so the link has to be absolute.
+ */
+export function buildProductUrl(slugOrId?: string): string {
+  const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any)?.env : undefined;
+  // The apex domain 308-redirects to www, so the canonical host carries it.
+  const configured = (metaEnv?.VITE_PUBLIC_SITE_URL || 'https://www.pouchsupply.co.uk').replace(/\/+$/, '');
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : configured;
+  if (!slugOrId) return origin;
+  return `${origin}/products/${encodeURIComponent(String(slugOrId))}`;
+}
+
+/**
+ * Queues one command for klaviyo.js.
+ *
+ * Exactly one queue is pushed to. `window.klaviyo` and `window._learnq` are the
+ * same object once klaviyo.js loads (it aliases the legacy name), so pushing the
+ * same command to both would send every event twice. `_learnq` is the queue this
+ * store has always delivered through, so it stays the one.
+ *
+ * Previously the `window.klaviyo` push used the form [event, payload], which is
+ * not a valid command ('track' / 'identify' / …) and was silently discarded.
+ */
+function queueKlaviyo(command: 'track' | 'identify', ...args: unknown[]): void {
   if (typeof window === 'undefined') return;
   if (!window.klaviyo) {
     window.klaviyo = [];
@@ -55,27 +84,25 @@ function pushKlaviyo(event: string, payload: Record<string, unknown> = {}): void
     window._learnq = [];
   }
 
-  window.klaviyo.push([event, payload]);
-  window._learnq.push(['track', event, payload]);
+  window._learnq.push([command, ...args]);
+}
+
+function pushKlaviyo(event: string, payload: Record<string, unknown> = {}): void {
+  queueKlaviyo('track', event, payload);
 }
 
 export function identifyCustomer(email?: string, properties: KlaviyoEventProperties = {}): void {
   if (typeof window === 'undefined' || !email) return;
 
-  if (!window.klaviyo) {
-    window.klaviyo = [];
-  }
-  if (!window._learnq) {
-    window._learnq = [];
-  }
+  // Normalised so a stray space or capital from the checkout form cannot create
+  // a second Klaviyo profile alongside the real one.
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) return;
 
-  const profilePayload = {
-    $email: email,
+  queueKlaviyo('identify', {
+    $email: cleanEmail,
     ...properties,
-  };
-
-  window.klaviyo.push(['identify', profilePayload]);
-  window._learnq.push(['identify', profilePayload]);
+  });
 }
 
 export function trackEvent(eventName: string, properties: KlaviyoEventProperties = {}): void {
@@ -89,7 +116,20 @@ export function trackEvent(eventName: string, properties: KlaviyoEventProperties
   pushKlaviyo(eventName, safeProperties);
 }
 
-export function trackViewedProduct(product: { id: string; name: string; price: number; currency: string; recurring?: boolean; image?: string }): void {
+export function trackViewedProduct(product: {
+  id: string;
+  name: string;
+  price: number;
+  currency: string;
+  recurring?: boolean;
+  image?: string;
+  /** Preferred over the id for the link, so the email points at a real page. */
+  slug?: string;
+  brand?: string;
+  variant?: string;
+}): void {
+  const url = buildProductUrl(product.slug || product.id);
+
   trackEvent('Viewed Product', {
     ProductID: product.id,
     ProductName: product.name,
@@ -98,8 +138,32 @@ export function trackViewedProduct(product: { id: string; name: string; price: n
     value: product.price,
     currency: product.currency || 'GBP',
     ImageURL: product.image,
+    // Browse-abandonment emails render a product block from these; without URL
+    // and Categories the block has no link and the flow cannot be segmented.
+    URL: url,
+    Categories: ['Nicotine Pouches', product.brand].filter(Boolean),
+    Brand: product.brand,
+    Variant: product.variant,
     recurring: Boolean(product.recurring),
   });
+
+  // Klaviyo's "Recently Viewed Items" block is fed by this separate call, not by
+  // the Viewed Product metric.
+  if (typeof window !== 'undefined') {
+    if (!window._learnq) window._learnq = [];
+    window._learnq.push(['trackViewedItem', {
+      Title: product.name,
+      ItemId: product.id,
+      Categories: ['Nicotine Pouches', product.brand].filter(Boolean),
+      ImageUrl: product.image,
+      Url: url,
+      Metadata: {
+        Brand: product.brand,
+        Price: product.price,
+        CompareAtPrice: product.price
+      }
+    }]);
+  }
 }
 
 export function trackAgeVerified(properties: KlaviyoEventProperties = {}): void {
@@ -109,11 +173,34 @@ export function trackAgeVerified(properties: KlaviyoEventProperties = {}): void 
   });
 }
 
-export function trackStartedCheckout(data: { items?: any[]; total?: number; customerEmail?: string; customerName?: string } | { id: string; name: string; price: number; currency: string; recurring?: boolean }): void {
+export function trackStartedCheckout(data: {
+  items?: any[];
+  total?: number;
+  customerEmail?: string;
+  customerName?: string;
+  /** Ties the event to one checkout attempt so Klaviyo can deduplicate it. */
+  checkoutId?: string;
+  recurring?: boolean;
+} | { id: string; name: string; price: number; currency: string; recurring?: boolean }): void {
   if ('items' in data || 'total' in data) {
-    const multiItemData = data as { items?: any[]; total?: number; customerEmail?: string; customerName?: string };
+    const multiItemData = data as {
+      items?: any[];
+      total?: number;
+      customerEmail?: string;
+      customerName?: string;
+      checkoutId?: string;
+      recurring?: boolean;
+    };
     const items = multiItemData.items || [];
     const total = multiItemData.total || 0;
+    const checkoutId = multiItemData.checkoutId;
+    const isRecurring = Boolean(
+      multiItemData.recurring ??
+      items.some((i: any) => i?.isSubscription || String(i?.productId || '').includes('sub-pack'))
+    );
+
+    // Identify first: an abandoned-cart flow can only email a profile it can
+    // resolve, and a guest checking out has no Klaviyo cookie identity yet.
     if (multiItemData.customerEmail) {
       identifyCustomer(multiItemData.customerEmail, {
         $first_name: multiItemData.customerName?.split(' ')[0] || 'Valued',
@@ -121,19 +208,26 @@ export function trackStartedCheckout(data: { items?: any[]; total?: number; cust
       });
     }
 
+    const formattedItems = items.map((i: any) => ({
+      ProductID: i.productId || i.id,
+      SKU: i.sku || i.productId || i.id,
+      ProductName: i.productTitle || i.title || i.name,
+      Quantity: i.quantity || 1,
+      ItemPrice: i.price,
+      RowTotal: Number(((i.price || 0) * (i.quantity || 1)).toFixed(2)),
+      ImageURL: i.image,
+      URL: buildProductUrl(i.productId || i.id),
+      IsSubscription: Boolean(i?.isSubscription || String(i?.productId || '').includes('sub-pack'))
+    }));
+
     trackEvent('Started Checkout', {
+      ...(checkoutId ? { $event_id: checkoutId, CheckoutId: checkoutId } : {}),
       $value: total,
       value: total,
-      ItemNames: items.map((i: any) => i.productTitle || i.title || i.name),
-      Items: items.map((i: any) => ({
-        ProductID: i.productId || i.id,
-        SKU: i.sku || i.productId || i.id,
-        ProductName: i.productTitle || i.title || i.name,
-        Quantity: i.quantity || 1,
-        ItemPrice: i.price,
-        RowTotal: (i.price || 0) * (i.quantity || 1),
-        ImageURL: i.image
-      })),
+      ItemNames: formattedItems.map(i => i.ProductName),
+      Items: formattedItems,
+      Categories: ['Nicotine Pouches', 'Storefront'],
+      IsSubscription: isRecurring,
       currency: 'GBP'
     });
 
@@ -145,7 +239,13 @@ export function trackStartedCheckout(data: { items?: any[]; total?: number; cust
         body: JSON.stringify({
           eventType: 'checkout_started',
           customerEmail: multiItemData.customerEmail,
-          data: { items, total }
+          data: {
+            items,
+            total,
+            checkoutId,
+            customerName: multiItemData.customerName,
+            recurring: isRecurring
+          }
         })
       }).catch(() => {});
     }
@@ -292,16 +392,13 @@ export function trackCheckoutFailed(product: { id: string; name: string; price: 
   });
 }
 
-export function trackSubscriptionStarted(product: { id: string; name: string; price: number; currency: string; recurring?: boolean }, subscriptionId?: string): void {
-  trackEvent('Started Subscription', {
-    ProductID: product.id,
-    ProductName: product.name,
-    $value: product.price,
-    currency: product.currency || 'GBP',
-    recurring: true,
-    SubscriptionID: subscriptionId ?? 'unknown',
-  });
-}
+/**
+ * "Started Subscription" is sent from the server when the plan is actually
+ * persisted (see trackSubscriptionStarted in backend/services/klaviyoService).
+ * It is not tracked from the browser: the client cannot know the subscription id,
+ * and an event from here would both duplicate the server's and fire for
+ * checkouts whose plan failed to save.
+ */
 
 // ----------------------------------------------------
 // Convenience & Compatibility Aliases
@@ -325,19 +422,33 @@ export const klaviyoIdentify = (customer: { email?: string; name?: string } | nu
 
 export const klaviyoReset = () => {
   if (typeof window === 'undefined') return;
-  if (window.klaviyo) window.klaviyo.push(['identify', {}]);
-  if (window._learnq) window._learnq.push(['identify', {}]);
+  queueKlaviyo('identify', {});
 };
 
 export const klaviyoTrack = trackEvent;
 
-export const klaviyoTrackViewedProduct = (product: { id: string; title?: string; name?: string; price: number; isSubscription?: boolean; image?: string }) => {
+export const klaviyoTrackViewedProduct = (product: {
+  id: string;
+  title?: string;
+  name?: string;
+  price: number;
+  isSubscription?: boolean;
+  image?: string;
+  slug?: string;
+  vendor?: string;
+  flavour?: string;
+  variant?: string;
+  concreteVariantName?: string;
+}) => {
   trackViewedProduct({
     id: product.id,
     name: product.name || product.title || 'Product',
     price: product.price,
     currency: 'GBP',
     image: product.image,
+    slug: product.slug,
+    brand: product.vendor,
+    variant: product.concreteVariantName || product.variant || product.flavour,
     recurring: Boolean(product.isSubscription),
   });
 };
