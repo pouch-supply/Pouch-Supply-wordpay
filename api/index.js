@@ -6555,12 +6555,7 @@ async function syncRoyalMailOrderStatus(orderId) {
   }
   const state = readClickAndDropState(cdOrder);
   const newTrackingNumber = state.trackingNumber || order.trackingNumber || order.trackingId || null;
-  let updatedFulfillment = order.fulfillmentStatus;
-  if (order.fulfillmentStatus !== "Delivered" && order.fulfillmentStatus !== "Cancelled") {
-    if (newTrackingNumber && (state.despatchedOn || state.labelGenerated)) {
-      updatedFulfillment = "Shipped";
-    }
-  }
+  const updatedFulfillment = order.fulfillmentStatus === "Unfulfilled" && newTrackingNumber && (state.despatchedOn || state.labelGenerated) ? "Shipped" : order.fulfillmentStatus;
   const syncedOrder = {
     ...order,
     fulfillmentStatus: updatedFulfillment,

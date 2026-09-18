@@ -1505,17 +1505,18 @@ export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
     null;
 
   // Click & Drop does not report a status field on an order, so the fulfilment
-  // state is derived from the timestamps it does report. Despatch is the
-  // strongest signal; a generated label plus a tracking number means the parcel
-  // is labelled and on its way, which is what the customer's dispatch email is
-  // about. Nothing moves to Shipped without a real tracking number, because that
-  // email quotes it.
-  let updatedFulfillment = order.fulfillmentStatus;
-  if (order.fulfillmentStatus !== 'Delivered' && order.fulfillmentStatus !== 'Cancelled') {
-    if (newTrackingNumber && (state.despatchedOn || state.labelGenerated)) {
-      updatedFulfillment = 'Shipped';
-    }
-  }
+  // state is derived from the timestamps it does report: a generated label plus a
+  // tracking number means the parcel is labelled and on its way, which is what the
+  // customer's dispatch email is about. Nothing moves to Shipped without a real
+  // tracking number, because that email quotes it.
+  //
+  // Only an Unfulfilled order is advanced. A sync must never walk an order
+  // backwards — Fulfilled and Delivered are further along than Shipped, and are
+  // set by people and by delivery events that Click & Drop knows nothing about.
+  const updatedFulfillment =
+    order.fulfillmentStatus === 'Unfulfilled' && newTrackingNumber && (state.despatchedOn || state.labelGenerated)
+      ? 'Shipped'
+      : order.fulfillmentStatus;
 
   const syncedOrder = {
     ...order,
