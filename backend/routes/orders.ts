@@ -389,6 +389,16 @@ export async function saveSingleOrder(orderData: any) {
       ? orderData.discountAmount
       : (typeof existingOrder?.discountAmount === 'number' ? existingOrder.discountAmount : undefined),
     trackingNumber: orderData.trackingNumber || existingOrder?.trackingNumber || null,
+    // Kept in step with trackingNumber rather than dropped. This field was absent
+    // from the formatted order, so every save discarded it — while a good part of
+    // the admin UI and the customer account read `trackingId` first and therefore
+    // showed "no tracking" for parcels that had it.
+    trackingId:
+      orderData.trackingId ||
+      orderData.trackingNumber ||
+      existingOrder?.trackingId ||
+      existingOrder?.trackingNumber ||
+      null,
     carrier: orderData.carrier || existingOrder?.carrier || null,
     data: {
       ...(existingOrder?.data || {}),
@@ -550,6 +560,38 @@ router.get("/:id", async (req: Request, res: Response) => {
     res.status(404).json({ error: "Order not found" });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to fetch order" });
+  }
+});
+
+// PUT /:id - Update one existing order.
+//
+// The admin tracking editors have always PUT here, but no such route existed —
+// express fell through to the catch-all 404, so every manual tracking number an
+// operator saved was reported as "Failed to update tracking on server" and lost.
+// Writes go through saveSingleOrder like every other order write, so a change
+// that moves the order to Shipped still sends the dispatch email exactly once.
+router.put("/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const orderData = req.body;
+
+    if (!orderData || typeof orderData !== 'object') {
+      return res.status(400).json({ success: false, error: "Order data object is required" });
+    }
+
+    const orders: any[] = (await fetchResource("orders")) || [];
+    const existing = orders.find((o: any) => String(o.id) === String(id));
+    if (!existing) {
+      return res.status(404).json({ success: false, error: `Order #${id} not found` });
+    }
+
+    // The id in the path wins, so a malformed body cannot rename or clone an order.
+    const saved = await saveSingleOrder({ ...existing, ...orderData, id: String(id) });
+
+    return res.json({ success: true, order: saved });
+  } catch (err: any) {
+    console.error("[Orders Router] PUT Error:", err);
+    return res.status(500).json({ success: false, error: err.message || "Failed to update order" });
   }
 });
 

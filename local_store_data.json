@@ -6771,7 +6771,7 @@
       "subtotal": 2.71,
       "cardBrand": "mastercard",
       "createdAt": "2026-09-15T10:28:00.500Z",
-      "trackingId": null,
+      "trackingId": "VU623867135GB",
       "destination": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
       "gatewayTxId": "paygntHFIj3Zy2bUl-rtJxbz0",
       "customerName": "Scott Kivlin",
@@ -6798,7 +6798,7 @@
       },
       "trackingHistory": null,
       "worldpayAuthCode": "375332",
-      "fulfillmentStatus": "Unfulfilled",
+      "fulfillmentStatus": "Fulfilled",
       "storeCreditApplied": 0,
       "subscriptionDetails": {
         "items": [
@@ -7668,6 +7668,286 @@
         ],
         "frequencyDiscount": "10%"
       }
+    },
+    {
+      "id": "PS46323-R20260918",
+      "data": {
+        "subtotal": 2.71,
+        "isRenewal": true,
+        "deliveryCost": 2.99,
+        "shippingCost": 2.99,
+        "parentOrderId": "PS46323",
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1789552227539_3tjqp9",
+        "schemeReference": "MRLBV396X0918",
+        "recurringRenewal": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-18T09:57:38.698Z"
+        },
+        "billingPeriodStart": "2026-09-18T09:50:27.144Z",
+        "transactionReference": "SUB-ORD-PS46323-R20260918"
+      },
+      "date": "Sep 18, 2026 at 09:57 AM",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "sku": "sub-pack-1789551933075",
+          "image": "/assets/plan_lite_box_1788334553835-mnRl-qrp.jpg",
+          "price": 2.71,
+          "vendor": "Subscription Pack",
+          "variant": "Standard",
+          "quantity": 1,
+          "productId": "sub-pack-1789551933075",
+          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (77 5.2 mg — Watermelon ice (Qty:6))",
+          "isSubscription": true,
+          "selectedProducts": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionPlan": "LITE Plan",
+          "frequencyDiscount": "10%",
+          "subscriptionItems": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionFrequency": "Next Day (Test)"
+        }
+      ],
+      "total": 5.7,
+      "carrier": "Royal Mail",
+      "subtotal": 2.71,
+      "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-18T09:57:38.775Z",
+      "isRenewal": true,
+      "trackingId": null,
+      "destination": "39 tonks drive, Telford, Tf4 2tq, United Kingdom",
+      "gatewayTxId": "SUB-ORD-PS46323-R20260918",
+      "customerName": "Scott kivlin",
+      "deliveryCost": 2.99,
+      "shippingCost": 2.99,
+      "worldpayTxId": "SUB-ORD-PS46323-R20260918",
+      "customerEmail": "scott.kivlin@yahoo.co.uk",
+      "parentOrderId": "PS46323",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "isSubscription": true,
+      "subscriptionId": "sub_1789552227539_3tjqp9",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": null,
+      "shippingAddress": null,
+      "trackingHistory": null,
+      "worldpayAuthCode": null,
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "planName": "LITE Plan",
+        "frequency": "Next Day (Test)",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "18 Sept 2026",
+        "nextPaymentDate": "19 Sept 2026",
+        "selectedProducts": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "frequencyDiscount": "10%"
+      }
+    },
+    {
+      "id": "PS65700-R20260918",
+      "data": {
+        "subtotal": 2.71,
+        "isRenewal": true,
+        "deliveryCost": 2.99,
+        "shippingCost": 2.99,
+        "parentOrderId": "PS65700",
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1789468210722_pllj3n",
+        "schemeReference": "MRLLPC96Y0918",
+        "recurringRenewal": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-18T10:36:26.279Z"
+        },
+        "billingPeriodStart": "2026-09-18T10:30:10.716Z",
+        "transactionReference": "SUB-ORD-PS65700-R20260918"
+      },
+      "date": "Sep 18, 2026 at 10:36 AM",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "sku": "sub-pack-1789467933399",
+          "image": "/assets/plan_lite_box_1788334553835-mnRl-qrp.jpg",
+          "price": 2.71,
+          "vendor": "Subscription Pack",
+          "variant": "Standard",
+          "quantity": 1,
+          "productId": "sub-pack-1789467933399",
+          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (77 5.2 mg — Watermelon ice (Qty:6))",
+          "isSubscription": true,
+          "selectedProducts": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionPlan": "LITE Plan",
+          "frequencyDiscount": "10%",
+          "subscriptionItems": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionFrequency": "Next Day (Test)"
+        }
+      ],
+      "total": 5.7,
+      "carrier": "Royal Mail",
+      "subtotal": 2.71,
+      "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-18T10:36:26.287Z",
+      "isRenewal": true,
+      "trackingId": null,
+      "destination": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
+      "gatewayTxId": "SUB-ORD-PS65700-R20260918",
+      "customerName": "Scott Kivlin",
+      "deliveryCost": 2.99,
+      "shippingCost": 2.99,
+      "worldpayTxId": "SUB-ORD-PS65700-R20260918",
+      "customerEmail": "scott@pouch-supply.com",
+      "parentOrderId": "PS65700",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "isSubscription": true,
+      "subscriptionId": "sub_1789468210722_pllj3n",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": null,
+      "shippingAddress": null,
+      "trackingHistory": null,
+      "worldpayAuthCode": null,
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "planName": "LITE Plan",
+        "frequency": "Next Day (Test)",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "18 Sept 2026",
+        "nextPaymentDate": "19 Sept 2026",
+        "selectedProducts": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "frequencyDiscount": "10%"
+      }
     }
   ],
   "files": [
@@ -7909,9 +8189,9 @@
       "ageChecked": true,
       "savedCards": [],
       "ageVerified": true,
-      "amountSpent": 62.38,
-      "nextPayment": "2026-09-18",
-      "ordersCount": 7,
+      "amountSpent": 68.08000000000001,
+      "nextPayment": "2026-09-19",
+      "ordersCount": 8,
       "storeCredit": 0,
       "nextDelivery": "28 Aug 2026",
       "referralCode": "REF-PS-SCOTT-6AVK",
@@ -7966,9 +8246,9 @@
         "39 tonks drive, Telford, Tf4 2tq, United Kingdom"
       ],
       "subStatus": "active",
-      "amountSpent": 5.7,
-      "nextPayment": "2026-09-17",
-      "ordersCount": 1,
+      "amountSpent": 22.8,
+      "nextPayment": "2026-09-19",
+      "ordersCount": 4,
       "storeCredit": 0,
       "referralCode": "REF-PS-SCOTT-ABSX",
       "emailVerified": true,
@@ -8496,7 +8776,7 @@
                 "name": "LITE",
                 "slug": "lite",
                 "limit": 6,
-                "price": 3.01,
+                "price": 5.01,
                 "features": [
                   "6 premium cans",
                   "Flexible delivery",

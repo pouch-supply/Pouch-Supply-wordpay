@@ -12,6 +12,7 @@
   ],
   "crons": [
     { "path": "/api/worldpay/reconcile-pending", "schedule": "*/15 * * * *" },
-    { "path": "/api/subscriptions/cron", "schedule": "0 * * * *" }
+    { "path": "/api/subscriptions/cron", "schedule": "0 * * * *" },
+    { "path": "/api/royalmail/sync-pending", "schedule": "*/30 * * * *" }
   ]
 }

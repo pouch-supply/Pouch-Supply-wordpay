@@ -2274,17 +2274,25 @@ function renderOrderItemsTable(data) {
   if (!data.items || data.items.length === 0) {
     return `<p style="font-size: 13px; color: #64748b;">No items detailed.</p>`;
   }
-  const itemsHtml = data.items.map((item) => `
+  const itemsHtml = data.items.map((item) => {
+    const lineTotal = (item.price || 0) * (item.quantity || 1);
+    const isReward = Boolean(item.isRewardItem);
+    const detailBits = [`Qty: ${item.quantity || 1}`];
+    if (item.variant && item.variant !== "Standard") detailBits.push(String(item.variant));
+    if (item.vendor) detailBits.unshift(String(item.vendor));
+    return `
     <tr>
       <td style="width: 60%; font-weight: 600; color: #1e293b;">
         ${item.productTitle || "Nicotine Canister Pack"}
-        <div style="font-size: 11px; color: #64748b; font-weight: normal;">Qty: ${item.quantity || 1}</div>
+        ${isReward ? `<div style="font-size: 10px; color: #166534; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;">Loyalty reward \u2014 included free</div>` : ""}
+        <div style="font-size: 11px; color: #64748b; font-weight: normal;">${detailBits.join(" \xB7 ")}</div>
       </td>
-      <td style="width: 40%; text-align: right; font-weight: 700; color: #0f172a;">
-        \xA3${((item.price || 0) * (item.quantity || 1)).toFixed(2)}
+      <td style="width: 40%; text-align: right; font-weight: 700; color: ${isReward ? "#166534" : "#0f172a"};">
+        ${isReward || lineTotal === 0 ? "FREE" : `\xA3${lineTotal.toFixed(2)}`}
       </td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
   const total = data.total !== void 0 ? data.total : 0;
   const delivery = data.deliveryCost !== void 0 ? data.deliveryCost : total >= 40 ? 0 : 2.99;
   const subtotal = data.subtotal !== void 0 ? data.subtotal : Math.max(0, total - delivery);
@@ -3170,7 +3178,14 @@ async function sendOrderConfirmationEmail(orderData) {
     total: typeof orderData.total === "number" ? orderData.total : parseFloat(orderData.total) || 0,
     destination: orderData.destination || orderData.address || "United Kingdom",
     deliveryMethod: orderData.deliveryMethod || "Royal Mail Tracked 24/48",
-    discountAmount: orderData.discountApplied?.amount
+    // Passed through rather than guessed from the total: a Free Delivery reward
+    // waives the charge on an order of any size, and the template's fallback
+    // ("under £40 means £2.99") would bill the customer for it in the email.
+    subtotal: typeof orderData.subtotal === "number" ? orderData.subtotal : orderData.data?.subtotal,
+    deliveryCost: typeof orderData.shippingCost === "number" ? orderData.shippingCost : typeof orderData.deliveryCost === "number" ? orderData.deliveryCost : orderData.data?.shippingCost,
+    // `discountApplied` is the discount object; it has no `amount` field, so the
+    // discount row never rendered. The money off is carried separately.
+    discountAmount: typeof orderData.discountAmount === "number" ? orderData.discountAmount : void 0
   };
   console.log(`[EmailService] Triggering Order Confirmation for Order #${data.orderId} to ${recipient}`);
   const customerResult = await sendEmail("order_confirmation", recipient, data);
@@ -3796,13 +3811,42 @@ async function trackAddToCart(email, item, quantity = 1) {
     Value: (item.price || 0) * quantity
   });
 }
-async function trackCheckoutStarted(email, cartItems, totalValue) {
+function isSubscriptionLineItem(item) {
+  if (!item) return false;
+  const productId = String(item.productId || item.id || "");
+  return Boolean(
+    item.isSubscription || productId.includes("sub-pack") || item.vendor === "Subscription Pack" || item.subscriptionPlan
+  );
+}
+async function trackCheckoutStarted(email, cartItems, totalValue, options = {}) {
   const settings = await getKlaviyoSettings();
   if (!settings.trackEvents.checkoutStarted) return;
-  return trackKlaviyoEvent("Checkout Started", email, {
+  const formattedItems = (Array.isArray(cartItems) ? cartItems : []).map((i) => {
+    const priceNum = typeof i.price === "number" ? i.price : parseFloat(i.price) || 0;
+    const qtyNum = typeof i.quantity === "number" ? i.quantity : parseInt(i.quantity) || 1;
+    return {
+      ProductID: String(i.productId || i.id || "prod-generic"),
+      SKU: String(i.sku || i.productId || i.id || "SKU-001"),
+      ProductName: String(i.productTitle || i.title || i.name || "Nicotine Pouch Pack"),
+      Quantity: qtyNum,
+      ItemPrice: priceNum,
+      RowTotal: parseFloat((priceNum * qtyNum).toFixed(2)),
+      ImageURL: i.image || i.imageUrl || "",
+      IsSubscription: isSubscriptionLineItem(i)
+    };
+  });
+  const nameParts = String(options.customerName || "").trim().split(/\s+/);
+  return trackKlaviyoEvent("Started Checkout", email, {
+    // Ties the event to one checkout attempt so a retry is not counted twice.
+    ...options.checkoutId ? { $event_id: options.checkoutId, CheckoutId: options.checkoutId } : {},
     $value: totalValue,
-    ItemNames: cartItems.map((i) => i.title || i.productTitle),
-    Items: cartItems
+    ItemNames: formattedItems.map((i) => i.ProductName),
+    Items: formattedItems,
+    Categories: ["Nicotine Pouches", "Storefront"],
+    IsSubscription: options.recurring ?? formattedItems.some((i) => i.IsSubscription)
+  }, {
+    first_name: nameParts[0] || void 0,
+    last_name: nameParts.slice(1).join(" ") || void 0
   });
 }
 async function trackPurchaseCompleted(order) {
@@ -3825,12 +3869,20 @@ async function trackPurchaseCompleted(order) {
       Price: priceNum,
       RowTotal: parseFloat((priceNum * qtyNum).toFixed(2)),
       ImageURL: i.image || i.imageUrl || "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300",
-      Vendor: i.vendor || "Pouch Supply Co."
+      Vendor: i.vendor || "Pouch Supply Co.",
+      IsSubscription: isSubscriptionLineItem(i),
+      IsRewardItem: Boolean(i.isRewardItem)
     };
   });
   const itemNames = formattedItems.map((i) => i.ProductName);
   const totalVal = typeof order.total === "number" ? order.total : parseFloat(order.total) || 0;
   const orderIdStr = String(order.id || order.orderId || `PS${Math.floor(Math.random() * 9e4 + 1e4)}`);
+  const isSubscriptionOrder2 = Boolean(
+    order.isSubscription || order.subscriptionId || formattedItems.some((i) => i.IsSubscription) || Array.isArray(order.tags) && order.tags.some((t) => String(t).toLowerCase().includes("subscription"))
+  );
+  const isRenewal = Boolean(
+    order.isRenewal || Array.isArray(order.tags) && order.tags.some((t) => String(t).toLowerCase().includes("renewal")) || formattedItems.some((i) => /recurring renewal/i.test(String(i.ProductName)))
+  );
   await syncKlaviyoProfileWithConsent(email, firstName, lastName);
   const placedOrderRes = await trackKlaviyoEvent("Placed Order", email, {
     $event_id: orderIdStr,
@@ -3840,6 +3892,9 @@ async function trackPurchaseCompleted(order) {
     ItemNames: itemNames,
     Items: formattedItems,
     Categories: ["Nicotine Pouches", "Storefront"],
+    IsSubscription: isSubscriptionOrder2,
+    IsRenewal: isRenewal,
+    OrderType: isSubscriptionOrder2 ? isRenewal ? "Subscription Renewal" : "Subscription" : "One-off",
     Destination: order.destination || order.address || "United Kingdom",
     DeliveryMethod: order.deliveryMethod || "Royal Mail Tracked 24/48",
     DiscountApplied: order.discountApplied || null,
@@ -3884,6 +3939,38 @@ async function trackPurchaseCompleted(order) {
     }
   }
   return placedOrderRes;
+}
+async function trackSubscriptionStarted(subscription, order) {
+  const settings = await getKlaviyoSettings();
+  if (settings.trackEvents && settings.trackEvents.purchase === false) return;
+  const email = String(
+    subscription?.customerEmail || order?.customerEmail || "customer@pouch-supply.com"
+  ).toLowerCase().trim();
+  const nameParts = String(subscription?.customerName || order?.customerName || "").trim().split(/\s+/);
+  const firstName = nameParts[0] || "Valued";
+  const lastName = nameParts.slice(1).join(" ") || "Customer";
+  const subId = String(subscription?.id || subscription?.subscriptionId || "");
+  const amount = typeof subscription?.amount === "number" ? subscription.amount : parseFloat(subscription?.amount) || 0;
+  await syncKlaviyoProfileWithConsent(email, firstName, lastName);
+  return trackKlaviyoEvent("Started Subscription", email, {
+    // One event per subscription, so a retried webhook cannot duplicate it.
+    ...subId ? { $event_id: `sub_started_${subId}` } : {},
+    $value: amount,
+    SubscriptionID: subId,
+    PlanName: subscription?.planName || subscription?.planId || "Subscription Plan",
+    PlanId: subscription?.planId || null,
+    BillingInterval: subscription?.billingInterval || "bi-weekly",
+    NextBillingDate: subscription?.nextBillingDate || null,
+    ItemPrice: subscription?.itemPrice ?? null,
+    ShippingCost: subscription?.shippingCost ?? null,
+    Currency: subscription?.currency || "GBP",
+    FirstOrderId: order?.id || order?.orderId || null,
+    IsSubscription: true,
+    Categories: ["Nicotine Pouches", "Subscription"]
+  }, {
+    first_name: firstName,
+    last_name: lastName
+  });
 }
 async function trackOrderRefunded(order, refundAmount) {
   const settings = await getKlaviyoSettings();
@@ -4366,9 +4453,24 @@ async function saveSingleOrder(orderData) {
     date: orderData.date || existingOrder?.date || (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     deliveryMethod: orderData.deliveryMethod || existingOrder?.deliveryMethod || "Royal Mail Tracked 24/48",
     subscriptionId: orderData.subscriptionId || existingOrder?.subscriptionId || null,
+    // On a subscription renewal, the order the plan was first bought with, so the
+    // admin can trace a renewal back to its origin. Kept on the order object
+    // rather than as a new column, so it needs no migration; toOrderRow preserves
+    // it inside `data`.
+    parentOrderId: orderData.parentOrderId || existingOrder?.parentOrderId || existingOrder?.data?.parentOrderId || null,
+    isRenewal: typeof orderData.isRenewal === "boolean" ? orderData.isRenewal : existingOrder?.isRenewal ?? existingOrder?.data?.isRenewal ?? false,
     items,
     discountApplied: orderData.discountApplied || existingOrder?.discountApplied || null,
+    // The money actually taken off. Previously only the discount object was
+    // stored, leaving the admin and the emails to guess the amount from the
+    // difference between subtotal and total.
+    discountAmount: typeof orderData.discountAmount === "number" ? orderData.discountAmount : typeof existingOrder?.discountAmount === "number" ? existingOrder.discountAmount : void 0,
     trackingNumber: orderData.trackingNumber || existingOrder?.trackingNumber || null,
+    // Kept in step with trackingNumber rather than dropped. This field was absent
+    // from the formatted order, so every save discarded it — while a good part of
+    // the admin UI and the customer account read `trackingId` first and therefore
+    // showed "no tracking" for parcels that had it.
+    trackingId: orderData.trackingId || orderData.trackingNumber || existingOrder?.trackingId || existingOrder?.trackingNumber || null,
     carrier: orderData.carrier || existingOrder?.carrier || null,
     data: {
       ...existingOrder?.data || {},
@@ -4376,6 +4478,8 @@ async function saveSingleOrder(orderData) {
       shippingCost: orderData.shippingCost ?? existingOrder?.data?.shippingCost,
       deliveryCost: orderData.deliveryCost ?? existingOrder?.data?.deliveryCost,
       subtotal: orderData.subtotal ?? existingOrder?.data?.subtotal,
+      parentOrderId: orderData.parentOrderId ?? existingOrder?.data?.parentOrderId,
+      isRenewal: orderData.isRenewal ?? existingOrder?.data?.isRenewal,
       address: orderData.address || existingOrder?.data?.address,
       shippingAddress: (orderData.shippingAddress && typeof orderData.shippingAddress === "object" ? orderData.shippingAddress : null) || existingOrder?.data?.shippingAddress || void 0,
       paymentMethod: orderData.paymentMethod || existingOrder?.data?.paymentMethod,
@@ -4501,6 +4605,25 @@ var init_orders = __esm({
         res.status(404).json({ error: "Order not found" });
       } catch (err) {
         res.status(500).json({ error: err.message || "Failed to fetch order" });
+      }
+    });
+    router3.put("/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const orderData = req.body;
+        if (!orderData || typeof orderData !== "object") {
+          return res.status(400).json({ success: false, error: "Order data object is required" });
+        }
+        const orders = await fetchResource("orders") || [];
+        const existing = orders.find((o) => String(o.id) === String(id));
+        if (!existing) {
+          return res.status(404).json({ success: false, error: `Order #${id} not found` });
+        }
+        const saved = await saveSingleOrder({ ...existing, ...orderData, id: String(id) });
+        return res.json({ success: true, order: saved });
+      } catch (err) {
+        console.error("[Orders Router] PUT Error:", err);
+        return res.status(500).json({ success: false, error: err.message || "Failed to update order" });
       }
     });
     router3.post("/create", async (req, res) => {
@@ -5579,11 +5702,13 @@ __export(royalMailService_exports, {
   getShippingRates: () => getShippingRates,
   normalizeCountryCode: () => normalizeCountryCode,
   parseAddressString: () => parseAddressString,
+  readClickAndDropState: () => readClickAndDropState,
   requireApiKey: () => requireApiKey,
   resolvePackageFormat: () => resolvePackageFormat,
   resolveServiceCode: () => resolveServiceCode,
   saveRoyalMailSettings: () => saveRoyalMailSettings,
   serviceSupportsNotifications: () => serviceSupportsNotifications,
+  syncPendingRoyalMailTracking: () => syncPendingRoyalMailTracking,
   syncRoyalMailOrderStatus: () => syncRoyalMailOrderStatus,
   testServiceCode: () => testServiceCode,
   validateAddress: () => validateAddress
@@ -6400,6 +6525,19 @@ async function getRoyalMailTracking(trackingNumberOrQuery) {
     history
   };
 }
+function readClickAndDropState(cdOrder) {
+  const trackingNumber = cdOrder?.trackingNumber || cdOrder?.packages?.[0]?.trackingNumber || null;
+  const printedOn = cdOrder?.printedOn || null;
+  const despatchedOn = cdOrder?.despatchedOn || cdOrder?.manifestedOn || null;
+  const labelGenerated = Boolean(printedOn || trackingNumber);
+  return {
+    trackingNumber: trackingNumber ? String(trackingNumber) : null,
+    printedOn,
+    despatchedOn,
+    labelGenerated,
+    labelStatus: despatchedOn ? "despatched" : labelGenerated ? "generated" : "awaiting_label"
+  };
+}
 async function syncRoyalMailOrderStatus(orderId) {
   const apiKey = await requireApiKey();
   const orders = await fetchResource("orders") || [];
@@ -6415,13 +6553,13 @@ async function syncRoyalMailOrderStatus(orderId) {
   if (!cdOrder) {
     throw new Error(`Royal Mail returned no record for Click & Drop order ${royalMailOrderId}.`);
   }
-  const cdStatus = (cdOrder.status || cdOrder.orderStatus || "").toLowerCase();
-  const newTrackingNumber = cdOrder.trackingNumber || cdOrder.packages?.[0]?.trackingNumber || order.trackingNumber || order.trackingId || null;
+  const state = readClickAndDropState(cdOrder);
+  const newTrackingNumber = state.trackingNumber || order.trackingNumber || order.trackingId || null;
   let updatedFulfillment = order.fulfillmentStatus;
-  if (cdStatus.includes("deliver")) {
-    updatedFulfillment = "Delivered";
-  } else if (cdStatus.includes("despatch") || cdStatus.includes("manifest") || cdStatus.includes("shipped")) {
-    updatedFulfillment = newTrackingNumber ? "Shipped" : order.fulfillmentStatus;
+  if (order.fulfillmentStatus !== "Delivered" && order.fulfillmentStatus !== "Cancelled") {
+    if (newTrackingNumber && (state.despatchedOn || state.labelGenerated)) {
+      updatedFulfillment = "Shipped";
+    }
   }
   const syncedOrder = {
     ...order,
@@ -6432,21 +6570,58 @@ async function syncRoyalMailOrderStatus(orderId) {
       ...order.data || {},
       royalMail: {
         ...order.data?.royalMail || {},
-        status: cdOrder.status || cdOrder.orderStatus,
         trackingNumber: newTrackingNumber,
-        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        clickAndDropDetails: cdOrder
+        // The real label state as Royal Mail reports it, so the dashboard shows
+        // what Click & Drop actually holds instead of an admin's guess.
+        labelStatus: state.labelStatus,
+        labelGenerated: state.labelGenerated,
+        printedOn: state.printedOn,
+        despatchedOn: state.despatchedOn,
+        shippedAt: order.data?.royalMail?.shippedAt || (updatedFulfillment === "Shipped" ? (/* @__PURE__ */ new Date()).toISOString() : null),
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString()
       }
     }
   };
   const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
   const updatedOrder = await saveSingleOrder2(syncedOrder);
+  const message = newTrackingNumber ? `Synced with Royal Mail. Tracking ${newTrackingNumber}${updatedFulfillment === "Shipped" && order.fulfillmentStatus !== "Shipped" ? ", order marked Shipped" : ""}.` : `Synced with Royal Mail. Click & Drop order ${royalMailOrderId} exists but its label has not been generated yet, so no tracking number has been allocated.`;
   return {
     success: true,
     order: updatedOrder,
-    message: `Synced with Royal Mail Click & Drop. Status: ${cdOrder.status || "Updated"}`,
-    clickAndDropStatus: cdOrder.status || cdOrder.orderStatus
+    message,
+    clickAndDropStatus: state.labelStatus
   };
+}
+async function syncPendingRoyalMailTracking(options = {}) {
+  const limit = options.limit ?? 40;
+  const orders = await fetchResource("orders") || [];
+  const pending = orders.filter((o) => {
+    const rm = o?.data?.royalMail;
+    if (!rm?.royalMailOrderId) return false;
+    if (o.fulfillmentStatus === "Cancelled") return false;
+    const hasTracking = Boolean(o.trackingNumber || o.trackingId || rm.trackingNumber);
+    return !hasTracking;
+  }).slice(0, limit);
+  const results = [];
+  let updated = 0;
+  for (const order of pending) {
+    const orderId = String(order.id);
+    try {
+      const res = await syncRoyalMailOrderStatus(orderId);
+      const tracking = res.order?.trackingNumber || res.order?.data?.royalMail?.trackingNumber || null;
+      if (tracking) {
+        updated++;
+        console.log(`[RoyalMail Sync] Order ${orderId}: tracking ${tracking} collected from Click & Drop.`);
+        results.push({ orderId, status: "tracking_found", trackingNumber: tracking });
+      } else {
+        results.push({ orderId, status: "awaiting_label" });
+      }
+    } catch (err) {
+      console.warn(`[RoyalMail Sync] Order ${orderId} could not be synced:`, err?.message);
+      results.push({ orderId, status: "error", reason: err?.message || "Sync failed" });
+    }
+  }
+  return { success: true, checked: pending.length, updated, results };
 }
 async function createRoyalMailReturnLabel(orderId) {
   const { pdf, royalMailOrderId } = await getRoyalMailLabelForOrder(orderId, {
@@ -6563,10 +6738,12 @@ var init_royalMailService = __esm({
 var subscriptionCron_exports = {};
 __export(subscriptionCron_exports, {
   addBillingInterval: () => addBillingInterval,
+  buildRenewalOrderRef: () => buildRenewalOrderRef,
   calculateNextBillingDate: () => calculateNextBillingDate,
   nextBillingDateAfterCharge: () => nextBillingDateAfterCharge,
   normalizeBillingInterval: () => normalizeBillingInterval,
   processDueSubscriptions: () => processDueSubscriptions,
+  renewalTransactionReference: () => renewalTransactionReference,
   startSubscriptionRenewalWorker: () => startSubscriptionRenewalWorker
 });
 function normalizeBillingInterval(raw) {
@@ -6667,6 +6844,28 @@ async function persistSubscriptionUpdate(subId, updateData) {
   } catch (_e) {
   }
 }
+function renewalTransactionReference(orderId) {
+  return `SUB-ORD-${String(orderId).trim()}`;
+}
+function buildRenewalOrderRef(sub, dueDate) {
+  const parentId = String(sub.sourceOrderId || sub.id || "").trim() || String(sub.id);
+  const periodStart = dueDate && !isNaN(new Date(dueDate).getTime()) ? new Date(dueDate) : /* @__PURE__ */ new Date();
+  const stamp = `${periodStart.getUTCFullYear()}${String(periodStart.getUTCMonth() + 1).padStart(2, "0")}${String(periodStart.getUTCDate()).padStart(2, "0")}`;
+  return { orderId: `${parentId}-R${stamp}`, periodStart };
+}
+async function renewalOrderExists(orderId) {
+  try {
+    const row = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
+    if (row) return true;
+  } catch (_e) {
+  }
+  try {
+    const stored = await fetchResource("orders") || [];
+    if (stored.some((o) => String(o?.id) === orderId)) return true;
+  } catch (_e) {
+  }
+  return false;
+}
 async function resolveDueDate(sub, now) {
   const interval = normalizeBillingInterval(sub.billingInterval);
   if (sub.nextBillingDate) {
@@ -6704,8 +6903,16 @@ async function processDueSubscriptions() {
     const results = [];
     let succeeded = 0;
     let failed = 0;
+    const runStartedAt = Date.now();
     for (const { sub, scheduledFor } of subscriptions) {
       const subId = String(sub.id);
+      if (Date.now() - runStartedAt > RUN_TIME_BUDGET_MS) {
+        console.warn(
+          `[Subscription Worker] Run time budget reached; deferring ${subId} and any remaining subscriptions to the next run. They are still due and have not been charged.`
+        );
+        results.push({ id: subId, status: "deferred", reason: "Run time budget reached" });
+        continue;
+      }
       const customerEmail = String(sub.customerEmail || "").toLowerCase().trim();
       const recurringHref = sub.worldpayRecurringHref || sub.recurringHref;
       const schemeReference = sub.worldpaySchemeReference;
@@ -6724,20 +6931,35 @@ async function processDueSubscriptions() {
           `[Subscription Worker] Sub ${subId} skipped: ` + (hasAgreementOnly ? `Worldpay issued the customer agreement (scheme=${schemeReference}) but never delivered a card token, so there is no payment instrument to present. This plan needs the customer to re-authorise. ` : `no usable Worldpay stored credential (token=${tokenHref || "none"}, href=${recurringHref || "none"}, scheme=${schemeReference || "none"}). `) + `The initial payment must be taken with createToken and a customer agreement so Worldpay stores the card and sends the tokenCreated webhook.`
         );
         failed++;
+        const credentialFailCount = (sub.failedPaymentCount || 0) + 1;
+        const credentialPastDue = credentialFailCount >= MAX_CONSECUTIVE_FAILURES;
         await persistSubscriptionUpdate(subId, {
-          nextBillingDate: nextBillingDateAfterCharge(interval, scheduledFor, now),
-          lastPaymentStatus: hasAgreementOnly ? "missing_card_token" : "missing_credential"
+          lastPaymentStatus: hasAgreementOnly ? "missing_card_token" : "missing_credential",
+          lastPaymentError: hasAgreementOnly ? "Worldpay issued the agreement but never delivered a card token" : "No usable Worldpay stored credential",
+          failedPaymentCount: credentialFailCount,
+          status: credentialPastDue ? "past_due" : "active"
         });
         results.push({
           id: subId,
           status: "skipped",
-          reason: hasAgreementOnly ? "Agreement present but no stored card token \u2014 customer must re-authorise" : "Missing Worldpay stored credential"
+          nextBillingDate: "unchanged (still due)",
+          reason: (hasAgreementOnly ? "Agreement present but no stored card token \u2014 customer must re-authorise" : "Missing Worldpay stored credential") + (credentialPastDue ? ` \u2014 set to past_due after ${credentialFailCount} attempts` : "")
         });
         continue;
       }
-      const claimedNextBilling = nextBillingDateAfterCharge(interval, scheduledFor, now);
-      await persistSubscriptionUpdate(subId, { nextBillingDate: claimedNextBilling });
-      const transactionReference = `SUB-ORD-${Math.floor(1e4 + Math.random() * 9e4)}-${Date.now().toString().slice(-4)}`;
+      const { orderId: newOrderId, periodStart } = buildRenewalOrderRef(sub, scheduledFor || now);
+      const transactionReference = renewalTransactionReference(newOrderId);
+      if (await renewalOrderExists(newOrderId)) {
+        console.warn(
+          `[Subscription Worker] Sub ${subId}: order ${newOrderId} already exists, so this period is already paid. Advancing the schedule without charging again.`
+        );
+        await persistSubscriptionUpdate(subId, {
+          nextBillingDate: nextBillingDateAfterCharge(interval, periodStart, now)
+        });
+        results.push({ id: subId, status: "skipped", reason: `Already billed as ${newOrderId}` });
+        continue;
+      }
+      const claimedNextBilling = nextBillingDateAfterCharge(interval, periodStart, now);
       try {
         const chargeResult = await chargeRecurringSubscription({
           tokenHref,
@@ -6752,7 +6974,6 @@ async function processDueSubscriptions() {
         console.log(`[Subscription Worker] Charge SUCCESS for ${subId}: Tx ${transactionReference}`);
         const shippingAmount = typeof sub.shippingFee === "number" ? sub.shippingFee : typeof sub.shippingCost === "number" ? sub.shippingCost : typeof sub.shippingAmount === "number" ? sub.shippingAmount : typeof sub.deliveryCost === "number" ? sub.deliveryCost : amount >= 40 ? 0 : 2.99;
         const itemSubtotal = Number(Math.max(0, amount - shippingAmount).toFixed(2)) || amount;
-        const newOrderId = `PS${Math.floor(1e4 + Math.random() * 9e4)}`;
         const orderItems = buildRenewalOrderItems(sub, itemSubtotal, planTitleFromSubscription(sub));
         const newOrderData = {
           id: newOrderId,
@@ -6790,8 +7011,21 @@ async function processDueSubscriptions() {
           date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           subscriptionId: subId,
           isSubscription: true,
+          // The order this plan was originally bought with. Renewals used to
+          // carry only the subscription id, so an admin looking at a renewal had
+          // no way back to the checkout it came from.
+          parentOrderId: sub.sourceOrderId ? String(sub.sourceOrderId) : null,
+          isRenewal: true,
+          billingPeriodStart: periodStart.toISOString(),
           data: {
             subscriptionId: subId,
+            parentOrderId: sub.sourceOrderId ? String(sub.sourceOrderId) : null,
+            isRenewal: true,
+            billingPeriodStart: periodStart.toISOString(),
+            // The reference Worldpay booked this payment under: this order's id
+            // under the SUB-ORD- prefix, so a gateway record maps straight onto
+            // this order.
+            transactionReference,
             schemeReference: chargeResult?.schemeReference || schemeReference,
             paymentMethod: "Worldpay Access MIT",
             recurringRenewal: true,
@@ -6808,6 +7042,21 @@ async function processDueSubscriptions() {
           const storedOrders = await fetchResource("orders") || [];
           storedOrders.unshift(newOrderData);
           await saveResource("orders", storedOrders);
+        }
+        const orderPersisted = await renewalOrderExists(newOrderId);
+        if (!orderPersisted) {
+          console.error(
+            `[RENEWAL ORDER NOT PERSISTED] Sub ${subId} was charged ${currency} ${amount.toFixed(2)} under reference ${transactionReference}, but order ${newOrderId} is in neither store. The schedule is deliberately NOT advanced, so the next run retries this same reference rather than billing again. Payload: ${JSON.stringify(newOrderData).slice(0, 1500)}`
+          );
+          failed++;
+          results.push({
+            id: subId,
+            status: "charged_order_missing",
+            orderId: newOrderId,
+            transactionReference,
+            nextBillingDate: "unchanged (still due)"
+          });
+          continue;
         }
         try {
           const { getRoyalMailSettings: getRoyalMailSettings2, createRoyalMailShipment: createRoyalMailShipment2 } = await Promise.resolve().then(() => (init_royalMailService(), royalMailService_exports));
@@ -6864,14 +7113,11 @@ async function processDueSubscriptions() {
         console.error(`[Subscription Worker] Charge FAILED for sub ${subId}:`, chargeErr.message);
         failed++;
         const newFailedCount = (sub.failedPaymentCount || 0) + 1;
-        const isPastDue = newFailedCount >= 3;
-        const retryBillingDate = new Date(now);
-        retryBillingDate.setDate(retryBillingDate.getDate() + 1);
+        const isPastDue = newFailedCount >= MAX_CONSECUTIVE_FAILURES;
         const failUpdate = {
           lastPaymentStatus: "failed",
           lastPaymentError: String(chargeErr.message || chargeErr).slice(0, 500),
           failedPaymentCount: newFailedCount,
-          nextBillingDate: isPastDue ? null : retryBillingDate,
           status: isPastDue ? "past_due" : "active"
         };
         await persistSubscriptionUpdate(subId, failUpdate);
@@ -6879,7 +7125,9 @@ async function processDueSubscriptions() {
           id: subId,
           status: "failed",
           error: chargeErr.message,
-          retryScheduled: isPastDue ? "none (past_due)" : retryBillingDate.toISOString()
+          transactionReference,
+          nextBillingDate: "unchanged (still due)",
+          retryScheduled: isPastDue ? `none \u2014 ${newFailedCount} consecutive failures, subscription set to past_due` : "next worker run"
         });
       }
     }
@@ -6905,7 +7153,7 @@ function startSubscriptionRenewalWorker(intervalMs = 5 * 60 * 1e3) {
     processDueSubscriptions().catch((err) => console.error("[Subscription Worker] Periodic run error:", err));
   }, intervalMs);
 }
-var PRISMA_SUBSCRIPTION_FIELDS, isProcessing, cronIntervalHandle;
+var PRISMA_SUBSCRIPTION_FIELDS, MAX_CONSECUTIVE_FAILURES, RUN_TIME_BUDGET_MS, isProcessing, cronIntervalHandle;
 var init_subscriptionCron = __esm({
   "backend/services/subscriptionCron.ts"() {
     init_prisma();
@@ -6942,6 +7190,8 @@ var init_subscriptionCron = __esm({
       "cancelledAt",
       "cancellationReason"
     ]);
+    MAX_CONSECUTIVE_FAILURES = 3;
+    RUN_TIME_BUDGET_MS = 45 * 1e3;
     isProcessing = false;
     cronIntervalHandle = null;
   }
@@ -8282,6 +8532,268 @@ init_subscriptionCron();
 init_ukValidation();
 import { Router as Router8 } from "express";
 import crypto3 from "crypto";
+
+// src/utils/discountUtils.ts
+var MYSTERY_BOX_IMAGE = "/reward-assets/mystery-box.svg";
+var MERCH_GIFT_IMAGE = "/reward-assets/merch-gift.svg";
+var STANDARD_DELIVERY_COST = 2.99;
+var FREE_SHIPPING_THRESHOLD = 40;
+var MYSTERY_GIFT = {
+  id: "gift-mystery-box",
+  label: "Mystery Reward \u{1F381}",
+  image: MYSTERY_BOX_IMAGE,
+  note: "A surprise chosen for you by Pouch Supply \u2014 revealed when your parcel arrives."
+};
+var MERCH_GIFT = {
+  id: "gift-merch",
+  label: "Exclusive Pouch Supply merchandise \u{1F381}",
+  image: MERCH_GIFT_IMAGE,
+  note: "Stickers, keyring, bottle opener and other Pouch Supply extras."
+};
+var PREMIUM_MERCH_GIFT = {
+  id: "gift-merch-premium",
+  label: "Premium Pouch Supply merchandise \u{1F455}",
+  image: MERCH_GIFT_IMAGE,
+  note: "Premium branded apparel, packed with your order."
+};
+var NO_MONEY_OFF = { type: "Amount off order", valueType: "Fixed amount", valueAmount: 0 };
+var LOYALTY_MILESTONE_DEFINITIONS = {
+  BRONZE1: {
+    code: "BRONZE1",
+    order: 1,
+    tier: "bronze",
+    reward: "Members receive 10% OFF",
+    type: "Amount off order",
+    valueType: "Percentage",
+    valueAmount: 10,
+    details: "10% Bronze Member Welcome Discount",
+    kind: "discount"
+  },
+  BRONZE3: {
+    code: "BRONZE3",
+    order: 3,
+    tier: "bronze",
+    reward: "FREE can of your choice",
+    ...NO_MONEY_OFF,
+    details: "1 FREE can of your choice",
+    kind: "free-cans",
+    freeCanCount: 1
+  },
+  BRONZE5: {
+    code: "BRONZE5",
+    order: 5,
+    tier: "bronze",
+    reward: "Free Delivery on your next order",
+    type: "Free shipping",
+    valueType: "Fixed amount",
+    valueAmount: 0,
+    details: "Free Delivery on this order",
+    kind: "free-shipping"
+  },
+  SILVER7: {
+    code: "SILVER7",
+    order: 7,
+    tier: "silver",
+    reward: "FREE can of your choice \u{1F96B}",
+    ...NO_MONEY_OFF,
+    details: "1 FREE can of your choice",
+    kind: "free-cans",
+    freeCanCount: 1
+  },
+  SILVER9: {
+    code: "SILVER9",
+    order: 9,
+    tier: "silver",
+    reward: "\xA35 Store Credit \u{1F381}",
+    type: "Amount off order",
+    valueType: "Fixed amount",
+    valueAmount: 5,
+    details: "\xA35.00 Store Credit",
+    kind: "discount"
+  },
+  SILVER11: {
+    code: "SILVER11",
+    order: 11,
+    tier: "silver",
+    reward: "FREE can of your choice \u{1F96B}",
+    ...NO_MONEY_OFF,
+    details: "1 FREE can of your choice",
+    kind: "free-cans",
+    freeCanCount: 1
+  },
+  SILVER13: {
+    code: "SILVER13",
+    order: 13,
+    tier: "silver",
+    reward: "Exclusive Pouch Supply merchandise (stickers, keyring, bottle opener, etc.) \u{1F381}",
+    ...NO_MONEY_OFF,
+    details: "Exclusive Pouch Supply merchandise included free",
+    kind: "gift",
+    gifts: [MERCH_GIFT]
+  },
+  SILVER15: {
+    code: "SILVER15",
+    order: 15,
+    tier: "silver",
+    reward: "2 FREE cans of your choice \u{1F96B}",
+    ...NO_MONEY_OFF,
+    details: "2 FREE cans of your choice",
+    kind: "free-cans",
+    freeCanCount: 2
+  },
+  GOLD17: {
+    code: "GOLD17",
+    order: 17,
+    tier: "gold",
+    reward: "20% off your purchase \u{1F381}",
+    type: "Amount off order",
+    valueType: "Percentage",
+    valueAmount: 20,
+    details: "20% Gold Member Discount",
+    kind: "discount"
+  },
+  GOLD19: {
+    code: "GOLD19",
+    order: 19,
+    tier: "gold",
+    reward: "2 FREE cans of your choice \u{1F96B}",
+    ...NO_MONEY_OFF,
+    details: "2 FREE cans of your choice",
+    kind: "free-cans",
+    freeCanCount: 2
+  },
+  GOLD21: {
+    code: "GOLD21",
+    order: 21,
+    tier: "gold",
+    reward: "Mystery Reward (chosen by Pouch Supply) \u{1F381}",
+    ...NO_MONEY_OFF,
+    details: "Mystery Reward included free with this order",
+    kind: "gift",
+    gifts: [MYSTERY_GIFT]
+  },
+  GOLD23: {
+    code: "GOLD23",
+    order: 23,
+    tier: "gold",
+    reward: "2 FREE cans of your choice \u{1F96B}",
+    ...NO_MONEY_OFF,
+    details: "2 FREE cans of your choice",
+    kind: "free-cans",
+    freeCanCount: 2
+  },
+  GOLD25: {
+    code: "GOLD25",
+    order: 25,
+    tier: "gold",
+    reward: "Premium Pouch Supply merchandise \u{1F455}",
+    ...NO_MONEY_OFF,
+    details: "Premium Pouch Supply merchandise included free",
+    kind: "gift",
+    gifts: [PREMIUM_MERCH_GIFT]
+  },
+  GOLD27: {
+    code: "GOLD27",
+    order: 27,
+    tier: "gold",
+    reward: "20% off your purchase \u{1F381}",
+    type: "Amount off order",
+    valueType: "Percentage",
+    valueAmount: 20,
+    details: "20% Gold Member Discount",
+    kind: "discount"
+  },
+  GOLD29: {
+    code: "GOLD29",
+    order: 29,
+    tier: "gold",
+    reward: "2 FREE cans of your choice \u{1F96B}",
+    ...NO_MONEY_OFF,
+    details: "2 FREE cans of your choice",
+    kind: "free-cans",
+    freeCanCount: 2
+  },
+  GOLD30: {
+    code: "GOLD30",
+    order: 30,
+    tier: "gold",
+    reward: "Unlock Platinum Member \u{1F3C6}",
+    type: "Amount off order",
+    valueType: "Percentage",
+    valueAmount: 25,
+    details: "25% Platinum Unlock Welcome Discount",
+    kind: "discount"
+  },
+  PLATINUM_ODD: {
+    code: "PLATINUM_ODD",
+    order: 31,
+    tier: "platinum",
+    reward: "Odd order reward: choose 3 FREE cans, \xA310 Store Credit, Free Delivery, exclusive merchandise, or a Mystery Reward",
+    ...NO_MONEY_OFF,
+    details: "Platinum VIP odd-order reward",
+    kind: "choice",
+    choices: [
+      {
+        id: "cans",
+        label: "3 FREE cans of your choice \u{1F96B}",
+        kind: "free-cans",
+        details: "3 FREE cans of your choice",
+        ...NO_MONEY_OFF,
+        freeCanCount: 3
+      },
+      {
+        id: "credit",
+        label: "\xA310.00 Store Credit \u{1F4B7}",
+        kind: "discount",
+        details: "\xA310.00 Store Credit",
+        type: "Amount off order",
+        valueType: "Fixed amount",
+        valueAmount: 10
+      },
+      {
+        id: "delivery",
+        label: "Free Priority Delivery \u{1F69A}",
+        kind: "free-shipping",
+        details: "Free Delivery on this order",
+        type: "Free shipping",
+        valueType: "Fixed amount",
+        valueAmount: 0
+      },
+      {
+        id: "merch",
+        label: "Exclusive Pouch Supply merchandise \u{1F381}",
+        kind: "gift",
+        details: "Exclusive Pouch Supply merchandise included free",
+        ...NO_MONEY_OFF,
+        gifts: [MERCH_GIFT]
+      },
+      {
+        id: "mystery",
+        label: "Mystery Reward \u{1F3B2}",
+        kind: "gift",
+        details: "Mystery Reward included free with this order",
+        ...NO_MONEY_OFF,
+        gifts: [MYSTERY_GIFT]
+      }
+    ]
+  }
+};
+function isFreeShippingReward(discount) {
+  if (!discount) return false;
+  if (discount.rewardKind === "free-shipping") return true;
+  if (discount.type === "Free shipping") return true;
+  const details = (discount.details || "").toLowerCase();
+  const title = (discount.title || "").toUpperCase();
+  return title.includes("BRONZE5") || details.includes("free shipping") || details.includes("free delivery") || details.includes("free royal mail");
+}
+function resolveDeliveryCost(subtotalAfterDiscount, discount, baseCost = STANDARD_DELIVERY_COST) {
+  if (isFreeShippingReward(discount)) return 0;
+  if (subtotalAfterDiscount >= FREE_SHIPPING_THRESHOLD) return 0;
+  return baseCost;
+}
+
+// backend/routes/worldpay.ts
+init_klaviyoService();
 var router10 = Router8();
 function assertDeliverable(body) {
   const address = body?.shippingAddress && typeof body.shippingAddress === "object" ? body.shippingAddress : {};
@@ -8707,7 +9219,7 @@ async function saveVerifiedOrder(orderId, details) {
   const subItemsList = items.filter(isSubscriptionLine);
   const subItem = subItemsList[0];
   const subItemsTotal = subItemsList.reduce((sum, it) => sum + Number(it.price || 0) * (Number(it.quantity) || 1), 0);
-  const effectiveShipping = typeof pending?.shippingCost === "number" ? pending.shippingCost : typeof pending?.deliveryCost === "number" ? pending.deliveryCost : typeof details.shippingCost === "number" ? details.shippingCost : typeof details.deliveryCost === "number" ? details.deliveryCost : total > subItemsTotal && subItemsTotal > 0 ? Number((total - subItemsTotal).toFixed(2)) : total >= 40 ? 0 : 2.99;
+  const effectiveShipping = typeof pending?.shippingCost === "number" ? pending.shippingCost : typeof pending?.deliveryCost === "number" ? pending.deliveryCost : typeof details.shippingCost === "number" ? details.shippingCost : typeof details.deliveryCost === "number" ? details.deliveryCost : total > subItemsTotal && subItemsTotal > 0 ? Number((total - subItemsTotal).toFixed(2)) : resolveDeliveryCost(total, discountApplied);
   const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || "Royal Mail Tracked 24/48";
   const paymentConfirmed = details.paymentConfirmed !== false;
   let createdSubscriptionId;
@@ -8755,7 +9267,9 @@ async function saveVerifiedOrder(orderId, details) {
           `[Worldpay Order] Subscription for order ${orderId} has no Worldpay stored-credential reference. Recurring renewals cannot be charged until the initial payment returns a scheme transaction reference (the Hosted Payment Page must be created with a customer agreement).`
         );
       }
-      const subAmount = total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2));
+      const rewardWaivedDelivery = effectiveShipping === 0 && isFreeShippingReward(discountApplied);
+      const recurringShipping = rewardWaivedDelivery ? resolveDeliveryCost(subItemsTotal, null) : effectiveShipping;
+      const subAmount = rewardWaivedDelivery ? Number((subItemsTotal + recurringShipping).toFixed(2)) : total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2));
       const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       createdSubscriptionId = subId;
       const subData = {
@@ -8771,10 +9285,10 @@ async function saveVerifiedOrder(orderId, details) {
         amount: subAmount,
         // Total recurring charge (includes shipping fee)
         itemPrice: subItemsTotal || Number(subItem.price) || subAmount,
-        shippingCost: effectiveShipping,
-        shippingFee: effectiveShipping,
-        shippingAmount: effectiveShipping,
-        deliveryCost: effectiveShipping,
+        shippingCost: recurringShipping,
+        shippingFee: recurringShipping,
+        shippingAmount: recurringShipping,
+        deliveryCost: recurringShipping,
         shippingAddress: destination,
         deliveryMethod,
         currency: "GBP",
@@ -8826,6 +9340,7 @@ async function saveVerifiedOrder(orderId, details) {
         }
       } catch (_e) {
       }
+      trackSubscriptionStarted(subData, { id: orderId, customerEmail, customerName }).catch((e) => console.warn(`[Klaviyo] Started Subscription failed for ${subId}:`, e?.message || e));
     } catch (subErr) {
       console.error(
         `[SUBSCRIPTION CREATION FAILED] Order ${orderId} is paid but its subscription could not be created: ${subErr?.message || subErr}`,
@@ -8857,6 +9372,7 @@ async function saveVerifiedOrder(orderId, details) {
     deliveryCost: effectiveShipping,
     storeCreditApplied,
     discountApplied,
+    discountAmount: typeof pending?.discountAmount === "number" ? pending.discountAmount : typeof details.discountAmount === "number" ? details.discountAmount : void 0,
     // Never invented. "status=SUCCESS" in the return URL is the browser's claim;
     // only a payment Worldpay reports as authorised makes this Paid. An
     // unconfirmed order stays Pending and is completed by the webhook, or by the
@@ -9365,6 +9881,7 @@ async function handleCreateHostedPaymentPage(req, res) {
       items,
       recurring,
       discountApplied,
+      discountAmount: reqDiscountAmount,
       storeCreditApplied,
       origin: bodyOrigin
     } = req.body;
@@ -9387,7 +9904,7 @@ async function handleCreateHostedPaymentPage(req, res) {
       priceNum = Math.round(reqTotal * 100);
     }
     const effectiveTotal = typeof amount === "number" ? amount : typeof reqTotal === "number" ? reqTotal : parseFloat(amount) || 0;
-    const effectiveShippingCost = typeof reqShippingCost === "number" ? reqShippingCost : typeof reqDeliveryCost === "number" ? reqDeliveryCost : effectiveTotal >= 40 ? 0 : 2.99;
+    const effectiveShippingCost = typeof reqShippingCost === "number" ? reqShippingCost : typeof reqDeliveryCost === "number" ? reqDeliveryCost : resolveDeliveryCost(effectiveTotal, discountApplied);
     const pendingPayload = {
       orderId: transactionReference,
       customerName: customerName || "Valued Customer",
@@ -9437,6 +9954,7 @@ async function handleCreateHostedPaymentPage(req, res) {
       deliveryCost: effectiveShippingCost,
       deliveryMethod: reqDeliveryMethod || "Royal Mail Tracked 24/48",
       discountApplied: discountApplied || null,
+      discountAmount: typeof reqDiscountAmount === "number" ? reqDiscountAmount : void 0,
       storeCreditApplied: storeCreditApplied || 0,
       isTestMode: false,
       createdAt: Date.now()
@@ -10110,6 +10628,7 @@ var worldpay_default = router10;
 // backend/routes/subscriptions.ts
 init_prisma();
 init_subscriptionRow();
+init_klaviyoService();
 init_serverDb();
 init_worldpaySubscription();
 init_subscriptionCron();
@@ -10588,6 +11107,7 @@ router11.post(
         }
       } catch (_e) {
       }
+      trackSubscriptionStarted(subData, sourceOrderId ? { id: String(sourceOrderId), customerEmail: emailClean, customerName } : void 0).catch((e) => console.warn(`[Klaviyo] Started Subscription failed for ${subId}:`, e?.message || e));
       return res.status(201).json({
         success: true,
         subscription
@@ -10644,7 +11164,8 @@ router11.post(
           message: "This subscription has no Worldpay stored credential, so no recurring payment can be taken. Worldpay must store the card on the first payment and deliver its token href to the tokenCreated webhook."
         });
       }
-      const transactionReference = `SUB-${Date.now()}-${crypto4.randomBytes(4).toString("hex").toUpperCase()}`;
+      const newOrderId = `PS${Math.floor(1e4 + Math.random() * 9e4)}`;
+      const transactionReference = renewalTransactionReference(newOrderId);
       const chargeAmount = Number(subscription.amount);
       const result = await chargeRecurringSubscription({
         tokenHref: subscription.worldpayTokenHref,
@@ -10689,7 +11210,6 @@ router11.post(
       }
       const shippingAmount = typeof subscription.shippingFee === "number" ? subscription.shippingFee : typeof subscription.shippingCost === "number" ? subscription.shippingCost : typeof subscription.shippingAmount === "number" ? subscription.shippingAmount : typeof subscription.deliveryCost === "number" ? subscription.deliveryCost : chargeAmount >= 40 ? 0 : 2.99;
       const itemSubtotal = Number(Math.max(0, chargeAmount - shippingAmount).toFixed(2)) || chargeAmount;
-      const newOrderId = `PS${Math.floor(1e4 + Math.random() * 9e4)}`;
       const orderItems = buildRenewalOrderItems(subscription, itemSubtotal, planTitleFromSubscription(subscription));
       const newOrderData = {
         id: newOrderId,
@@ -10728,6 +11248,9 @@ router11.post(
         isSubscription: true,
         data: {
           subscriptionId: subscription.id,
+          // The reference Worldpay booked this payment under: this order's id
+          // under the SUB-ORD- prefix, matching the renewal worker.
+          transactionReference,
           schemeReference: result?.schemeReference || subscription.worldpaySchemeReference,
           paymentMethod: "Worldpay Access MIT",
           recurringRenewal: true,
@@ -11860,7 +12383,11 @@ router14.post("/track", async (req, res) => {
           await trackAddToCart(customerEmail, data?.item, data?.quantity || 1);
           break;
         case "checkout_started":
-          await trackCheckoutStarted(customerEmail, data?.items || [], data?.total || 0);
+          await trackCheckoutStarted(customerEmail, data?.items || [], data?.total || 0, {
+            checkoutId: data?.checkoutId,
+            customerName: data?.customerName,
+            recurring: data?.recurring
+          });
           break;
         case "purchase":
           await trackPurchaseCompleted(data || { customerEmail, total: eventProperties?.total });
@@ -12153,6 +12680,22 @@ router15.post("/sync-status/:orderId", async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to sync order status");
   }
 });
+var handleSyncPending = async (req, res) => {
+  try {
+    const rawLimit = Number(req.query?.limit ?? (req.body || {}).limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : void 0;
+    const result = await syncPendingRoyalMailTracking({ limit });
+    res.json({
+      ...result,
+      message: `Checked ${result.checked} shipment(s) awaiting tracking; ${result.updated} tracking number(s) collected.`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  } catch (err) {
+    return sendRoyalMailError(res, err, "Failed to sync pending Royal Mail tracking");
+  }
+};
+router15.get("/sync-pending", handleSyncPending);
+router15.post("/sync-pending", handleSyncPending);
 router15.post("/cancel-shipment", async (req, res) => {
   try {
     const { orderId, royalMailOrderId } = req.body;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Truck, CheckCircle2, AlertCircle, RefreshCw, Printer, Download, 
   RotateCcw, ExternalLink, X, Compass, FileText, Send, ShieldCheck, Edit3, Check
@@ -25,6 +25,8 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   const [creating, setCreating] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [returning, setReturning] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   // 'info' covers the real middle case: Click & Drop accepted the order but
   // issued no tracking, which is neither a success nor a failure.
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -47,6 +49,32 @@ export const RoyalMailOrderActions: React.FC<RoyalMailOrderActionsProps> = ({
   // A Click & Drop order exists but Royal Mail has not allocated tracking yet —
   // that happens when the postage label is generated.
   const awaitingTracking = Boolean(royalMailOrderId && !trackingNumber);
+
+  // A Click & Drop shipment exists, which is the real precondition for anything
+  // that talks to Royal Mail about this order. Printing was previously offered
+  // whenever the order merely looked shipped, so an order whose tracking number
+  // had been typed in by hand showed a Print Label button the server could never
+  // satisfy.
+  const hasShipment = Boolean(royalMailOrderId);
+
+  // The label state Royal Mail actually reports, recorded by the last sync.
+  // `labelGenerated` is what allocates the tracking number, so a number present
+  // with no recorded status still means the label exists.
+  const labelStatus: string =
+    order.data?.royalMail?.labelStatus ||
+    (order.data?.royalMail?.labelGenerated || trackingNumber ? 'generated' : royalMailOrderId ? 'awaiting_label' : 'none');
+  const labelPrintedOn = order.data?.royalMail?.printedOn || null;
+  const lastSyncedAt = order.data?.royalMail?.syncedAt || null;
+  // Tracking that came from Royal Mail rather than being typed in by an operator.
+  const trackingIsFromRoyalMail = Boolean(royalMailOrderId && order.data?.royalMail?.trackingNumber);
+
+  const formatStamp = (value: string | null) => {
+    if (!value) return null;
+    const d = new Date(value);
+    return isNaN(d.getTime())
+      ? null
+      : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  };
 
   const handleSaveRealTracking = async (newTracking: string, carrierName: string) => {
     const trimmed = newTracking.trim();
@@ -199,14 +227,109 @@ ${label}
     }
   };
 
-  // Opens the genuine Royal Mail postage label PDF issued by Click & Drop.
-  const handlePrintLabel = () => {
-    const printUrl = `/api/royalmail/label/${order.id}/order-pdf`;
-    const win = window.open(printUrl, '_blank');
-    if (win) {
+  /**
+   * Opens the genuine Royal Mail postage label PDF issued by Click & Drop.
+   *
+   * Fetched rather than opened directly. `window.open` on the endpoint sent the
+   * browser to a URL that answers with JSON on any failure, so a refusal from
+   * Royal Mail surfaced as a new tab full of raw JSON — the "Print Label error".
+   * Reading the response here means the reason lands in the status banner, the
+   * same way the returns label already worked.
+   */
+  const handlePrintLabel = async () => {
+    setPrinting(true);
+    setStatusMessage(null);
+    try {
+      const res = await fetch(`/api/royalmail/label/${encodeURIComponent(order.id)}/order-pdf`);
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        const detail = String(err.details || err.message || err.error || '');
+
+        // Royal Mail gates label downloading per account. Nothing about the order
+        // is wrong in that case, so say what it is rather than reporting it as a
+        // failed print, and offer the route that does work.
+        if (res.status === 403 || /feature not available/i.test(detail)) {
+          throw new Error(
+            'Royal Mail will not release the label to the API: label printing is not enabled on this ' +
+              'Click & Drop account. Ask Royal Mail to enable API label generation, or print this label ' +
+              'from the Click & Drop website in the meantime.'
+          );
+        }
+        throw new Error(err.message || err.error || `Royal Mail returned ${res.status} for this label`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, '_blank');
+      if (!win) {
+        // Popups blocked. Previously this failed silently.
+        throw new Error('Your browser blocked the label window. Allow popups for this site and try again.');
+      }
       win.focus();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+      setStatusMessage({ type: 'success', text: 'Royal Mail postage label opened in a new tab.' });
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Could not retrieve the Royal Mail label' });
+    } finally {
+      setPrinting(false);
     }
   };
+
+  /**
+   * Pulls the live label and tracking state for this order from Click & Drop.
+   *
+   * Royal Mail allocates the tracking number when the postage label is generated,
+   * which is normally well after the shipment was created here — so the record
+   * written at creation time has none. The half-hourly cron collects these on its
+   * own; this is the same sync on demand, for when an operator is looking at the
+   * order right now.
+   */
+  const handleSyncStatus = async (silent = false) => {
+    if (!royalMailOrderId) return;
+    setSyncing(true);
+    if (!silent) setStatusMessage(null);
+    try {
+      const res = await fetch(`/api/royalmail/sync-status/${encodeURIComponent(order.id)}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({} as any));
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Could not reach Royal Mail');
+      }
+
+      if (data.order) onUpdateOrder(data.order as Order);
+
+      const found = data.order?.trackingNumber || data.order?.data?.royalMail?.trackingNumber;
+      if (!silent || found) {
+        setStatusMessage({ type: found ? 'success' : 'info', text: data.message });
+      }
+      if (found && !trackingNumber && onAddTimelineComment) {
+        onAddTimelineComment(`Royal Mail allocated tracking number ${found}.`);
+      }
+    } catch (err: any) {
+      if (!silent) {
+        setStatusMessage({ type: 'error', text: err.message || 'Royal Mail sync failed' });
+      }
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  /**
+   * Collects the tracking number as soon as the order is opened, when Royal Mail
+   * has a shipment for it but no number has arrived yet. This is what removes the
+   * manual step: by the time the order is on screen the number is already in.
+   * Runs once per order, and stays quiet unless it actually finds something.
+   */
+  useEffect(() => {
+    if (royalMailOrderId && !trackingNumber) {
+      handleSyncStatus(true);
+    }
+    // Deliberately keyed on the order alone: re-running on every state change
+    // would hammer Click & Drop while the operator sits on the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.id, royalMailOrderId]);
 
   const handleTrackShipment = async () => {
     if (!trackingNumber) return;
@@ -359,8 +482,12 @@ ${label}
         </div>
       )}
 
-      {/* UNFULFILLED: Create Shipment Controls */}
-      {!isShipped && (
+      {/* NO SHIPMENT YET: Create Shipment Controls.
+          Also gated on hasShipment, not just isShipped. A Click & Drop shipment
+          whose label has not been generated has no tracking number, so it did not
+          count as shipped and this form came back — offering to buy postage a
+          second time for an order that already had it. */}
+      {!isShipped && !hasShipment && (
         <div className="space-y-3 pt-1">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -437,25 +564,74 @@ ${label}
         </div>
       )}
 
-      {/* SHIPPED: Active Tracking & Label Management */}
-      {isShipped && (
+      {/* SHIPMENT EXISTS: Label status, tracking & label management.
+          Shown for any order with a Click & Drop shipment, not only ones that
+          already have tracking — the label-not-yet-generated state is the one an
+          operator most needs to see, and it used to render nothing at all. */}
+      {(isShipped || hasShipment) && (
         <div className="space-y-3 pt-1">
           <div className="p-3 bg-white border border-rose-200 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 shadow-2xs">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
                   Royal Mail Tracking Number
                 </span>
-                <span className="text-[9px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
-                  Live
-                </span>
+
+                {/* The label state Royal Mail reports, not a fixed badge. This
+                    read "Live" on every order, including tracking typed in by
+                    hand for an order Click & Drop had never heard of. */}
+                {labelStatus === 'despatched' ? (
+                  <span className="text-[9px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded">
+                    Label despatched
+                  </span>
+                ) : labelStatus === 'generated' ? (
+                  <span className="text-[9px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded">
+                    Label generated
+                  </span>
+                ) : labelStatus === 'awaiting_label' ? (
+                  <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded">
+                    Awaiting label
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded">
+                    Entered manually
+                  </span>
+                )}
+
+                {trackingNumber && !trackingIsFromRoyalMail && (
+                  <span
+                    className="text-[9px] font-black uppercase bg-slate-100 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded"
+                    title="This tracking number was typed in, not returned by Royal Mail"
+                  >
+                    Manual entry
+                  </span>
+                )}
               </div>
-              <span className="text-sm font-mono font-black text-rose-950 tracking-wider block mt-0.5">
-                {trackingNumber}
-              </span>
+
+              {trackingNumber ? (
+                <span className="text-sm font-mono font-black text-rose-950 tracking-wider block mt-0.5">
+                  {trackingNumber}
+                </span>
+              ) : (
+                <span className="text-xs font-bold text-amber-800 block mt-0.5">
+                  Not allocated yet — Royal Mail issues the number when the postage label is generated.
+                </span>
+              )}
+
               <span className="text-xs text-slate-500 font-semibold block">
                 {order.carrier || 'Royal Mail 1st Class'}
+                {royalMailOrderId && (
+                  <span className="text-slate-400 font-medium"> • Click &amp; Drop #{royalMailOrderId}</span>
+                )}
               </span>
+
+              {(labelPrintedOn || lastSyncedAt) && (
+                <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">
+                  {labelPrintedOn && <>Label generated {formatStamp(labelPrintedOn)}</>}
+                  {labelPrintedOn && lastSyncedAt && ' • '}
+                  {lastSyncedAt && <>Checked with Royal Mail {formatStamp(lastSyncedAt)}</>}
+                </span>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -472,21 +648,48 @@ ${label}
                 <span>Enter Real Tracking #</span>
               </button>
 
-              <button
-                onClick={handlePrintLabel}
-                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
-              >
-                <Printer className="h-3.5 w-3.5" />
-                <span>Print Label</span>
-              </button>
+              {/* Re-reads the label state and tracking number from Click & Drop.
+                  The half-hourly cron does this unattended; this is for an
+                  operator who wants it now. */}
+              {hasShipment && (
+                <button
+                  onClick={() => handleSyncStatus(false)}
+                  disabled={syncing}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer disabled:opacity-60"
+                  title="Check Royal Mail for the label status and tracking number"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 text-slate-600 ${syncing ? 'animate-spin' : ''}`} />
+                  <span>{syncing ? 'Checking…' : 'Sync with Royal Mail'}</span>
+                </button>
+              )}
 
-              <button
-                onClick={handleTrackShipment}
-                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
-              >
-                <Compass className="h-3.5 w-3.5" />
-                <span>Track Package</span>
-              </button>
+              {/* Printing needs a Click & Drop shipment, not merely the look of a
+                  shipped order — the server has nothing to fetch otherwise. */}
+              {hasShipment && (
+                <button
+                  onClick={handlePrintLabel}
+                  disabled={printing}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer disabled:opacity-60"
+                  title={
+                    labelStatus === 'awaiting_label'
+                      ? 'Royal Mail has not generated this label yet'
+                      : 'Open the Royal Mail postage label PDF'
+                  }
+                >
+                  {printing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                  <span>{printing ? 'Fetching…' : 'Print Label'}</span>
+                </button>
+              )}
+
+              {trackingNumber && (
+                <button
+                  onClick={handleTrackShipment}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
+                >
+                  <Compass className="h-3.5 w-3.5" />
+                  <span>Track Package</span>
+                </button>
+              )}
 
               <button
                 onClick={handleCreateReturnLabel}

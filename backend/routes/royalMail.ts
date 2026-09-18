@@ -9,6 +9,7 @@ import {
   cancelRoyalMailShipment,
   getRoyalMailTracking,
   syncRoyalMailOrderStatus,
+  syncPendingRoyalMailTracking,
   createReturnLabel as createRoyalMailReturnLabel,
   getRoyalMailLabelForOrder,
   dispatchRoyalMailShipment,
@@ -353,6 +354,27 @@ router.post("/sync-status/:orderId", async (req: Request, res: Response) => {
     return sendRoyalMailError(res, err, "Failed to sync order status");
   }
 });
+
+// GET|POST /api/royalmail/sync-pending - Collect tracking numbers for every
+// shipment still waiting on one. Driven by the Vercel cron; also safe to hit by
+// hand. GET is supported because Vercel crons issue GET.
+const handleSyncPending = async (req: Request, res: Response) => {
+  try {
+    const rawLimit = Number((req.query?.limit ?? (req.body || {}).limit) as any);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : undefined;
+    const result = await syncPendingRoyalMailTracking({ limit });
+    res.json({
+      ...result,
+      message: `Checked ${result.checked} shipment(s) awaiting tracking; ${result.updated} tracking number(s) collected.`,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return sendRoyalMailError(res, err, "Failed to sync pending Royal Mail tracking");
+  }
+};
+
+router.get("/sync-pending", handleSyncPending);
+router.post("/sync-pending", handleSyncPending);
 
 // POST /api/royalmail/cancel-shipment - Cancel shipment in Click & Drop
 router.post("/cancel-shipment", async (req: Request, res: Response) => {

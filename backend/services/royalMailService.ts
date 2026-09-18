@@ -1434,6 +1434,43 @@ export async function getRoyalMailTracking(trackingNumberOrQuery: string): Promi
 /**
  * 9. Sync live status for an order from Royal Mail Click & Drop.
  */
+/** What Click & Drop reports about one order's label and tracking. */
+export interface ClickAndDropState {
+  trackingNumber: string | null;
+  /** When the postage label was generated. Null until it has been. */
+  printedOn: string | null;
+  despatchedOn: string | null;
+  labelGenerated: boolean;
+  /** 'awaiting_label' | 'generated' | 'despatched' */
+  labelStatus: string;
+}
+
+/**
+ * Reads the label and tracking state out of a Click & Drop order.
+ *
+ * Click & Drop returns no status field — an order carries `printedOn` and
+ * `trackingNumber` only once its postage label has been generated, and that is
+ * the moment the tracking number comes into existence. So the presence of those
+ * timestamps IS the status, and reading them is the only way to know whether a
+ * label exists without asking an operator.
+ */
+export function readClickAndDropState(cdOrder: any): ClickAndDropState {
+  const trackingNumber =
+    cdOrder?.trackingNumber || cdOrder?.packages?.[0]?.trackingNumber || null;
+
+  const printedOn = cdOrder?.printedOn || null;
+  const despatchedOn = cdOrder?.despatchedOn || cdOrder?.manifestedOn || null;
+  const labelGenerated = Boolean(printedOn || trackingNumber);
+
+  return {
+    trackingNumber: trackingNumber ? String(trackingNumber) : null,
+    printedOn,
+    despatchedOn,
+    labelGenerated,
+    labelStatus: despatchedOn ? 'despatched' : labelGenerated ? 'generated' : 'awaiting_label'
+  };
+}
+
 export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
   success: boolean;
   order: any;
@@ -1459,20 +1496,25 @@ export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
     throw new Error(`Royal Mail returned no record for Click & Drop order ${royalMailOrderId}.`);
   }
 
-  const cdStatus = (cdOrder.status || cdOrder.orderStatus || '').toLowerCase();
+  const state = readClickAndDropState(cdOrder);
+
   const newTrackingNumber =
-    cdOrder.trackingNumber ||
-    cdOrder.packages?.[0]?.trackingNumber ||
+    state.trackingNumber ||
     order.trackingNumber ||
     order.trackingId ||
     null;
 
+  // Click & Drop does not report a status field on an order, so the fulfilment
+  // state is derived from the timestamps it does report. Despatch is the
+  // strongest signal; a generated label plus a tracking number means the parcel
+  // is labelled and on its way, which is what the customer's dispatch email is
+  // about. Nothing moves to Shipped without a real tracking number, because that
+  // email quotes it.
   let updatedFulfillment = order.fulfillmentStatus;
-  if (cdStatus.includes('deliver')) {
-    updatedFulfillment = 'Delivered';
-  } else if (cdStatus.includes('despatch') || cdStatus.includes('manifest') || cdStatus.includes('shipped')) {
-    // Only advance to Shipped once there is a real tracking number to send.
-    updatedFulfillment = newTrackingNumber ? 'Shipped' : order.fulfillmentStatus;
+  if (order.fulfillmentStatus !== 'Delivered' && order.fulfillmentStatus !== 'Cancelled') {
+    if (newTrackingNumber && (state.despatchedOn || state.labelGenerated)) {
+      updatedFulfillment = 'Shipped';
+    }
   }
 
   const syncedOrder = {
@@ -1484,10 +1526,17 @@ export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
       ...(order.data || {}),
       royalMail: {
         ...(order.data?.royalMail || {}),
-        status: cdOrder.status || cdOrder.orderStatus,
         trackingNumber: newTrackingNumber,
-        syncedAt: new Date().toISOString(),
-        clickAndDropDetails: cdOrder
+        // The real label state as Royal Mail reports it, so the dashboard shows
+        // what Click & Drop actually holds instead of an admin's guess.
+        labelStatus: state.labelStatus,
+        labelGenerated: state.labelGenerated,
+        printedOn: state.printedOn,
+        despatchedOn: state.despatchedOn,
+        shippedAt:
+          order.data?.royalMail?.shippedAt ||
+          (updatedFulfillment === 'Shipped' ? new Date().toISOString() : null),
+        syncedAt: new Date().toISOString()
       }
     }
   };
@@ -1498,12 +1547,81 @@ export async function syncRoyalMailOrderStatus(orderId: string): Promise<{
   const { saveSingleOrder } = await import('../routes/orders');
   const updatedOrder = await saveSingleOrder(syncedOrder);
 
+  const message = newTrackingNumber
+    ? `Synced with Royal Mail. Tracking ${newTrackingNumber}${
+        updatedFulfillment === 'Shipped' && order.fulfillmentStatus !== 'Shipped' ? ', order marked Shipped' : ''
+      }.`
+    : `Synced with Royal Mail. Click & Drop order ${royalMailOrderId} exists but its label has not been ` +
+      `generated yet, so no tracking number has been allocated.`;
+
   return {
     success: true,
     order: updatedOrder,
-    message: `Synced with Royal Mail Click & Drop. Status: ${cdOrder.status || 'Updated'}`,
-    clickAndDropStatus: cdOrder.status || cdOrder.orderStatus
+    message,
+    clickAndDropStatus: state.labelStatus
   };
+}
+
+/**
+ * Pulls tracking numbers for every shipment still waiting on one.
+ *
+ * Royal Mail allocates a tracking number when the postage label is generated,
+ * which is usually after the shipment is created here — often days after, when
+ * the labels for a batch are actually printed. `createRoyalMailShipment` re-reads
+ * the order once and then gives up, so before this existed an order whose label
+ * was printed later kept `trackingNumber: null` forever and no dispatch email was
+ * ever sent. This is what the cron calls.
+ *
+ * Only orders that already hold a Click & Drop identifier are touched, and each
+ * goes through `syncRoyalMailOrderStatus`, so persistence and the dispatch
+ * notification stay on the one funnel. One order's failure does not stop the rest.
+ */
+export async function syncPendingRoyalMailTracking(options: { limit?: number } = {}): Promise<{
+  success: boolean;
+  checked: number;
+  updated: number;
+  results: Array<{ orderId: string; status: string; trackingNumber?: string | null; reason?: string }>;
+}> {
+  const limit = options.limit ?? 40;
+  const orders: any[] = (await fetchResource('orders')) || [];
+
+  // A shipment exists but has no tracking yet. Orders already carrying one need
+  // no call — Royal Mail never reissues it — and neither do cancelled orders.
+  const pending = orders
+    .filter((o: any) => {
+      const rm = o?.data?.royalMail;
+      if (!rm?.royalMailOrderId) return false;
+      if (o.fulfillmentStatus === 'Cancelled') return false;
+      const hasTracking = Boolean(o.trackingNumber || o.trackingId || rm.trackingNumber);
+      // Re-check a despatched order once more only if it somehow has no tracking.
+      return !hasTracking;
+    })
+    .slice(0, limit);
+
+  const results: Array<{ orderId: string; status: string; trackingNumber?: string | null; reason?: string }> = [];
+  let updated = 0;
+
+  for (const order of pending) {
+    const orderId = String(order.id);
+    try {
+      const res = await syncRoyalMailOrderStatus(orderId);
+      const tracking = res.order?.trackingNumber || res.order?.data?.royalMail?.trackingNumber || null;
+      if (tracking) {
+        updated++;
+        console.log(`[RoyalMail Sync] Order ${orderId}: tracking ${tracking} collected from Click & Drop.`);
+        results.push({ orderId, status: 'tracking_found', trackingNumber: tracking });
+      } else {
+        results.push({ orderId, status: 'awaiting_label' });
+      }
+    } catch (err: any) {
+      // A single unreadable order must not stop the sweep — the next one may be
+      // the one whose label has just been printed.
+      console.warn(`[RoyalMail Sync] Order ${orderId} could not be synced:`, err?.message);
+      results.push({ orderId, status: 'error', reason: err?.message || 'Sync failed' });
+    }
+  }
+
+  return { success: true, checked: pending.length, updated, results };
 }
 
 /**
