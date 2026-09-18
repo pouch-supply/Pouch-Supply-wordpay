@@ -1,31 +1,75 @@
 import { Discount, CartItem } from './types';
 
+/** The unit price every tier below is quoted against. A product priced differently
+ *  gets the same discount curve, scaled by its own price / this one. */
+const VOLUME_BASE_UNIT_PRICE = 4.99;
+
 /**
- * Calculates total price for a product based on volume pricing tiers:
- * - 1 to 4 cans: £4.99 each (1 = £4.99, 2 = £9.98, 3 = £14.97, 4 = £19.96)
- * - 5 cans = £23.50 (£4.70/can)
- * - 10 cans = £42.00 (£4.20/can)
- * - 20 cans = £77.00 (£3.85/can)
+ * Volume pricing tiers, in pence, for a product at the base unit price.
+ *
+ * Held in pence because the cost table below adds these together repeatedly and
+ * pounds as floats do not survive that (0.1 + 0.2 territory) — a penny of drift
+ * is a penny wrong on a real basket total.
+ *
+ * Per can these run 4.99 → 4.85 → 4.70 → 4.40 → 4.20 → 4.10 → 3.85, so a bigger
+ * bundle is always better value than a smaller one.
+ */
+const VOLUME_TIERS: ReadonlyArray<{ size: number; pence: number }> = [
+  { size: 1, pence: 499 },
+  { size: 3, pence: 1455 },
+  { size: 5, pence: 2350 },
+  { size: 8, pence: 3520 },
+  { size: 10, pence: 4200 },
+  { size: 12, pence: 4920 },
+  { size: 20, pence: 7700 }
+];
+
+/** The pack sizes offered as a ready-made choice in the storefront dropdowns. */
+export const PACK_SIZES: ReadonlyArray<number> = [3, 5, 8, 10, 12];
+
+/** Cheapest cost in pence for each quantity, grown on demand and memoised. */
+const volumeCostPence: number[] = [0];
+
+/**
+ * The cheapest way to buy at least `qty` units, in pence, at the base unit price.
+ *
+ * "At least" rather than "exactly" is deliberate, and it is what stops the curve
+ * from ever punishing a larger basket. Tiers do not divide into each other, so an
+ * exact-fit rule made some quantities cost more than a bigger one — under the old
+ * greedy split 19 cans came to £85.46 while 20 came to £77.00. Allowing a
+ * quantity to be covered by the next bundle up means the price can only ever go
+ * down as the tier is approached.
+ */
+function volumeCostAtBasePrice(qty: number): number {
+  for (let n = volumeCostPence.length; n <= qty; n++) {
+    let best = Infinity;
+    for (const tier of VOLUME_TIERS) {
+      // max(0, …) is the "covered by a bigger bundle" case: a tier larger than
+      // what is left still satisfies the remainder, at its own price.
+      const candidate = volumeCostPence[Math.max(0, n - tier.size)] + tier.pence;
+      if (candidate < best) best = candidate;
+    }
+    volumeCostPence[n] = best;
+  }
+  return volumeCostPence[qty];
+}
+
+/**
+ * Total price for `quantity` units of a product, under the volume tiers above.
+ *
+ * Pack sizes land exactly on their tier — at the £4.99 base, 3 = £14.55,
+ * 5 = £23.50, 8 = £35.20, 10 = £42.00, 12 = £49.20, 20 = £77.00 — and every
+ * quantity in between is priced at the cheapest combination of tiers that covers
+ * it.
  */
 export function calculateVolumePrice(basePrice: number, quantity: number): number {
-  if (quantity <= 0) return 0;
+  const qty = Math.floor(quantity);
+  if (qty <= 0) return 0;
 
   // Scale ratio if base price is custom (default base is £4.99)
-  const ratio = basePrice > 0 ? basePrice / 4.99 : 1;
+  const ratio = basePrice > 0 ? basePrice / VOLUME_BASE_UNIT_PRICE : 1;
 
-  const twenties = Math.floor(quantity / 20);
-  let rem = quantity % 20;
-
-  const tens = Math.floor(rem / 10);
-  rem = rem % 10;
-
-  const fives = Math.floor(rem / 5);
-  rem = rem % 5;
-
-  const singles = rem;
-
-  const totalBaseTiers = (twenties * 77.00) + (tens * 42.00) + (fives * 23.50) + (singles * 4.99);
-  return Number((totalBaseTiers * ratio).toFixed(2));
+  return Number(((volumeCostAtBasePrice(qty) / 100) * ratio).toFixed(2));
 }
 
 export function calculateDiscountAmount(

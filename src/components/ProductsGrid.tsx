@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Product, Collection, Customer } from '../types';
 import { cleanMediaUrl } from '../utils/mediaUtils';
 import { calculateVolumePrice } from '../utils';
+import { PackSizeSelect } from './PackSizeSelect';
 import { 
   Search, Heart, ArrowUpDown, Tag, ShoppingCart, Info, Sparkles, 
   Grid, List, Check, CheckCircle2, ChevronRight, HelpCircle, 
@@ -1039,9 +1040,21 @@ export default function ProductsGrid({
 
                         
 
+                        {/* Pack size chooser. Sits above the basket CTA so the
+                            pack — and its price — is picked before adding. The
+                            stepper below still works for quantities that are not
+                            one of the packs. */}
+                        <div className="pt-2">
+                          <PackSizeSelect
+                            unitPrice={prod.price}
+                            quantity={localQty}
+                            onChange={(qty) => setQuantities(prev => ({ ...prev, [prod.id]: qty }))}
+                          />
+                        </div>
+
                         {/* Quantity selection & Action CTA Row */}
                         <div className="flex items-center justify-between gap-2.5 pt-2">
-                          
+
                           {/* Basket trigger CTA */}
                           <button
                             onClick={() => {

@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Collection, Product, Customer } from '../types';
 import { cleanMediaUrl, PLACEHOLDER_IMAGE } from '../utils/mediaUtils';
 import { calculateVolumePrice } from '../utils';
+import { PackSizeSelect } from './PackSizeSelect';
 import { 
   ArrowLeft, 
   SlidersHorizontal, 
@@ -835,9 +836,22 @@ export default function CollectionDetailView({
                           <span className="flex items-center gap-1"><Award className="h-3 w-3 text-slate-350" /> Lab Tested</span>
                         </div>
 
+                        {/* Pack size chooser. Sits above the basket CTA so the
+                            pack — and its price — is picked before adding. The
+                            stepper below still works for quantities that are not
+                            one of the packs. */}
+                        <div className="pt-2">
+                          <PackSizeSelect
+                            unitPrice={prod.price}
+                            quantity={localQty}
+                            disabled={prod.inventory === 0}
+                            onChange={(qty) => setQuantities(prev => ({ ...prev, [prod.id]: qty }))}
+                          />
+                        </div>
+
                         {/* Quantity selection & Action CTA Row */}
                         <div className="flex items-center justify-between gap-2.5 pt-2">
-                          
+
                           {/* Basket trigger CTA */}
                           <button
                             onClick={(e) => {
