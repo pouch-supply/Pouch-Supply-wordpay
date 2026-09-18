@@ -213,16 +213,33 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const RUN_TIME_BUDGET_MS = 45 * 1000;
 
 /**
- * The id for the next renewal order on a subscription, and the gateway reference
- * to charge it under.
+ * The Worldpay transaction reference for a recurring order.
  *
- * Both are the same string, and it carries the order the plan was bought with:
- * "PS65700-R3" is the third renewal of order PS65700. Worldpay's transaction
- * reference used to be a random `SUB-ORD-48120-3391` generated before the order
- * even existed, so a payment in the Worldpay dashboard could not be matched to
- * the order it paid for.
+ * The reference is the order id under a fixed `SUB-ORD-` prefix, so a payment
+ * in the Worldpay dashboard names the order it paid for — `SUB-ORD-PS65700-R20260918`
+ * is the renewal order `PS65700-R20260918`. The prefix is what tells an admin
+ * scanning Worldpay that the payment is a recurring charge rather than a
+ * checkout, without having to cross-reference anything.
  *
- * Deriving the id from the renewal count rather than a random number also makes
+ * Nothing parses this back into an order id: the reference is stored on the
+ * order as `gatewayTxId`, and the webhook matches it by exact string equality
+ * against `id` / `worldpayTxId` / `gatewayTxId`. It is a label, not a key.
+ */
+export function renewalTransactionReference(orderId: string): string {
+  return `SUB-ORD-${String(orderId).trim()}`;
+}
+
+/**
+ * The id for the next renewal order on a subscription, and the period it bills.
+ *
+ * The id carries the order the plan was bought with: "PS65700-R20260918" is the
+ * renewal of order PS65700 for the period starting 18 Sep 2026. Worldpay's
+ * transaction reference used to be a random `SUB-ORD-48120-3391` generated
+ * before the order even existed, so a payment in the Worldpay dashboard could
+ * not be matched to the order it paid for; the reference is now
+ * `renewalTransactionReference(orderId)` of this id.
+ *
+ * Deriving the id from the billing period rather than a random number also makes
  * it stable: a period that was interrupted before its order was written produces
  * the same id and reference on the retry, which is what makes the retry safe.
  */
@@ -413,9 +430,9 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       }
 
       // The order this renewal will create, decided BEFORE the charge so the
-      // gateway reference can be the order id itself.
+      // gateway reference can name the order it is paying for.
       const { orderId: newOrderId, periodStart } = buildRenewalOrderRef(sub, scheduledFor || now);
-      const transactionReference = newOrderId;
+      const transactionReference = renewalTransactionReference(newOrderId);
 
       // This period is already billed. Reached when a previous run charged the
       // card and wrote the order but was killed before it could record the
@@ -525,8 +542,9 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
             parentOrderId: sub.sourceOrderId ? String(sub.sourceOrderId) : null,
             isRenewal: true,
             billingPeriodStart: periodStart.toISOString(),
-            // The reference Worldpay booked this payment under. Identical to the
-            // order id, so a gateway record maps straight onto this order.
+            // The reference Worldpay booked this payment under: this order's id
+            // under the SUB-ORD- prefix, so a gateway record maps straight onto
+            // this order.
             transactionReference,
             schemeReference: chargeResult?.schemeReference || schemeReference,
             paymentMethod: 'Worldpay Access MIT',

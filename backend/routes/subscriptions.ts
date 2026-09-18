@@ -17,7 +17,8 @@ import {
   processDueSubscriptions,
   calculateNextBillingDate,
   nextBillingDateAfterCharge,
-  normalizeBillingInterval
+  normalizeBillingInterval,
+  renewalTransactionReference
 } from "../services/subscriptionCron";
 import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from "../services/subscriptionBox";
 
@@ -759,10 +760,13 @@ router.post(
         });
       }
 
-      const transactionReference = `SUB-${Date.now()}-${crypto
-        .randomBytes(4)
-        .toString("hex")
-        .toUpperCase()}`;
+      // The order this charge will create, decided BEFORE the gateway call so
+      // the reference can name it. The reference used to be a random
+      // `SUB-<timestamp>-<hex>` minted here while the order id was generated
+      // further down, after the charge — which left a payment in the Worldpay
+      // dashboard with nothing on it pointing at the order it paid for.
+      const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
+      const transactionReference = renewalTransactionReference(newOrderId);
 
       const chargeAmount = Number(subscription.amount);
       const result = await chargeRecurringSubscription({
@@ -825,8 +829,8 @@ router.post(
 
       const itemSubtotal = Number(Math.max(0, chargeAmount - shippingAmount).toFixed(2)) || chargeAmount;
 
-      // Create recurring order record in database
-      const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
+      // Create recurring order record in database, under the id the gateway
+      // reference above was built from.
       const orderItems = buildRenewalOrderItems(subscription, itemSubtotal, planTitleFromSubscription(subscription));
 
       const newOrderData = {
@@ -866,6 +870,9 @@ router.post(
         isSubscription: true,
         data: {
           subscriptionId: subscription.id,
+          // The reference Worldpay booked this payment under: this order's id
+          // under the SUB-ORD- prefix, matching the renewal worker.
+          transactionReference,
           schemeReference: result?.schemeReference || subscription.worldpaySchemeReference,
           paymentMethod: 'Worldpay Access MIT',
           recurringRenewal: true,

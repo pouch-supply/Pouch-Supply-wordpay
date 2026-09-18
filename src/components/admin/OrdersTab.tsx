@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Download, Upload, Search, Eye, ArrowLeft, AlertTriangle, 
   ChevronDown, ChevronUp, MoreHorizontal, Calendar, Truck, Tag, MessageSquare, Send, Trash2, RotateCcw, CheckSquare, Square,
-  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink, Package, CornerDownRight
+  RefreshCw, CheckCircle2, Loader2, Check, X, ShieldAlert, DollarSign, ExternalLink, Package, CornerDownRight, Copy
 } from 'lucide-react';
 import { Order, Product } from '../../types';
 import { parseOrderTime } from '../../utils';
@@ -82,6 +82,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [customRefundAmount, setCustomRefundAmount] = useState<string>('');
   const [isProcessingRefund, setIsProcessingRefund] = useState(false);
   const [refundToastMessage, setRefundToastMessage] = useState<string | null>(null);
+  /** Which row's Worldpay reference was just copied, for the tick confirmation. */
+  const [copiedRefOrderId, setCopiedRefOrderId] = useState<string | null>(null);
 
   // Helper to detect if an order is a subscription order
   const isSubOrder = (order: Order) => {
@@ -102,6 +104,23 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     if (Array.isArray(order.tags) && order.tags.some(t => typeof t === 'string' && t.toLowerCase().includes('subscription cancelled'))) return true;
     return false;
   };
+
+  /**
+   * The reference this recurring order was charged under in Worldpay, or '' when
+   * there is none to show.
+   *
+   * Read straight off the order rather than rebuilt from the id, because it has
+   * to be the string that is actually in the Worldpay dashboard. Renewals taken
+   * from now on carry `SUB-ORD-<order id>`, but ones taken earlier are booked
+   * under the formats used at the time — a bare `PS65700-R20260917`, or a random
+   * `SUB-1758…`. Recomputing would show those orders a reference Worldpay has
+   * never seen, which is worse than showing nothing.
+   *
+   * `gatewayTxId` is always the reference; `worldpayTxId` is the payment id and
+   * is only a fallback for older rows written before the reference was kept.
+   */
+  const getGatewayReference = (order: Order): string =>
+    String(order.gatewayTxId || order.worldpayTxId || '').trim();
 
   // Helper to extract subscription metadata and selected products for detailed display.
   // The catalogue is passed in so every box item is reported under its exact
@@ -504,6 +523,41 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                               <CornerDownRight className="w-2.5 h-2.5" />
                               <span>Renewal of</span>
                               <span className="font-mono text-slate-700 normal-case">#{parentId}</span>
+                            </button>
+                          );
+                        })()}
+
+                        {/* The Worldpay reference this recurring charge was
+                            booked under, so a payment in the Worldpay dashboard
+                            can be matched to the order it paid for without
+                            opening anything. Renewals only — a checkout order is
+                            already findable in Worldpay by its own id. */}
+                        {(() => {
+                          if (!isRenewalOrder(order)) return null;
+                          const ref = getGatewayReference(order);
+                          if (!ref) return null;
+                          return (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigator.clipboard?.writeText(ref).then(
+                                  () => {
+                                    setCopiedRefOrderId(String(order.id));
+                                    setTimeout(() => setCopiedRefOrderId(null), 1500);
+                                  },
+                                  () => {}
+                                );
+                              }}
+                              title={`Worldpay transaction reference for this recurring order — click to copy\n${ref}`}
+                              className="mt-1 inline-flex items-center gap-1 text-[9px] font-mono font-bold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 px-1.5 py-0.5 rounded transition-colors cursor-pointer max-w-full"
+                            >
+                              <span className="font-sans font-black text-violet-500 shrink-0">WP</span>
+                              <span className="truncate">{ref}</span>
+                              {copiedRefOrderId === String(order.id) ? (
+                                <Check className="w-2.5 h-2.5 shrink-0 text-emerald-600" />
+                              ) : (
+                                <Copy className="w-2.5 h-2.5 shrink-0 opacity-60" />
+                              )}
                             </button>
                           );
                         })()}

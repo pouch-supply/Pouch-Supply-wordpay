@@ -103,7 +103,14 @@ export interface Order {
     completedAt?: string;
     declinedReason?: string;
   };
+  /**
+   * The reference Worldpay booked the payment under — for a recurring order,
+   * `SUB-ORD-<order id>`. This is the field an inbound Worldpay webhook matches
+   * on, and the one the admin dashboard shows against the order.
+   */
   gatewayTxId?: string;
+  /** Worldpay's own payment id, falling back to the reference when it returns none. */
+  worldpayTxId?: string;
   gatewayAuthCode?: string;
   cardBrand?: string;
   total: number;
