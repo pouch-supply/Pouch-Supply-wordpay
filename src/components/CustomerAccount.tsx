@@ -3621,8 +3621,13 @@ export default function CustomerAccount({
                         const estimatedArrival = liveTrackingInfo?.estimatedDelivery ||
                           (isDelivered(trackedOrder.fulfillmentStatus) ? 'Delivered successfully' : 'Within 24-48 Hours');
 
-                        const lastDepot = liveTrackingInfo?.recipientLocation ||
-                          (events.length > 0 ? events[0].location : 'Royal Mail National Hub');
+                        // The newest real scan, and nothing else. `recipientLocation`
+                        // is the DESTINATION address, not a scan — putting it here
+                        // showed the customer their own doorstep captioned as a
+                        // Royal Mail depot.
+                        const lastDepot = events.length > 0
+                          ? events[0].location
+                          : 'Awaiting first scan';
 
                         return (
                           <div className="bg-[#f8fafc] border-2 border-slate-800 rounded-3xl overflow-hidden shadow-xs">

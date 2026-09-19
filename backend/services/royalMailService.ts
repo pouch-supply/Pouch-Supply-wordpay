@@ -1369,25 +1369,50 @@ export async function getRoyalMailTracking(trackingNumberOrQuery: string): Promi
     matchedOrder?.trackingNumber ||
     null;
 
+  // Click & Drop carries no status field on an order — the timestamps ARE the
+  // status, which is why `readClickAndDropState` exists. Deriving the headline
+  // from `status`/`orderStatus` therefore fell to the 'Awaiting Despatch'
+  // default on EVERY order forever, including despatched ones, so this card
+  // contradicted the despatch event listed in its own history directly below.
+  // The same timestamps now drive both.
+  const state = readClickAndDropState(cdOrder);
+
+  // Kept as an override in case Click & Drop ever does return a status: a real
+  // one is better than anything inferred, and delivery/cancellation cannot be
+  // derived from despatch timestamps at all.
   const rawStatus = String(cdOrder?.status || cdOrder?.orderStatus || '').trim();
   const statusLower = rawStatus.toLowerCase();
 
-  let displayStatus = rawStatus || 'Awaiting Despatch';
-  let statusDescription = 'Royal Mail has the order. No scan events have been recorded yet.';
-  let estimatedDelivery = 'Awaiting despatch';
+  let displayStatus: string;
+  let statusDescription: string;
+  let estimatedDelivery: string;
 
   if (statusLower.includes('deliver')) {
     displayStatus = 'Delivered';
     statusDescription = 'Royal Mail has recorded this item as delivered.';
     estimatedDelivery = 'Delivered';
-  } else if (statusLower.includes('despatch') || statusLower.includes('manifest') || statusLower.includes('shipped')) {
-    displayStatus = 'In Transit';
-    statusDescription = 'Item has been despatched and is moving through the Royal Mail network.';
-    estimatedDelivery = 'In transit';
   } else if (statusLower.includes('cancel')) {
     displayStatus = 'Cancelled';
     statusDescription = 'This Click & Drop order has been cancelled.';
     estimatedDelivery = 'Cancelled';
+  } else if (state.despatchedOn) {
+    // Handed to Royal Mail. Click & Drop tracks despatch, not the network, so
+    // this is the furthest it can ever attest to — "In Transit" would be
+    // claiming a movement scan we have no source for.
+    displayStatus = 'Dispatched';
+    statusDescription = 'Item has been despatched to Royal Mail.';
+    // Click & Drop supplies no delivery estimate, and inventing one under a
+    // heading that reads "Estimated arrival" would be a promise we cannot keep.
+    estimatedDelivery = 'See Royal Mail tracking';
+  } else if (state.labelGenerated) {
+    displayStatus = 'Awaiting Despatch';
+    statusDescription =
+      'Postage label generated. Royal Mail has not yet confirmed the parcel was handed over.';
+    estimatedDelivery = 'Awaiting despatch';
+  } else {
+    displayStatus = rawStatus || 'Awaiting Despatch';
+    statusDescription = 'Royal Mail has the order. No scan events have been recorded yet.';
+    estimatedDelivery = 'Awaiting despatch';
   }
 
   // Only real, dated events from Click & Drop — no synthesised scan history.

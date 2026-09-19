@@ -6475,23 +6475,32 @@ async function getRoyalMailTracking(trackingNumberOrQuery) {
     throw err;
   }
   const trackingNumber = cdOrder?.trackingNumber || cdOrder?.packages?.[0]?.trackingNumber || matchedOrder?.trackingNumber || null;
+  const state = readClickAndDropState(cdOrder);
   const rawStatus = String(cdOrder?.status || cdOrder?.orderStatus || "").trim();
   const statusLower = rawStatus.toLowerCase();
-  let displayStatus = rawStatus || "Awaiting Despatch";
-  let statusDescription = "Royal Mail has the order. No scan events have been recorded yet.";
-  let estimatedDelivery = "Awaiting despatch";
+  let displayStatus;
+  let statusDescription;
+  let estimatedDelivery;
   if (statusLower.includes("deliver")) {
     displayStatus = "Delivered";
     statusDescription = "Royal Mail has recorded this item as delivered.";
     estimatedDelivery = "Delivered";
-  } else if (statusLower.includes("despatch") || statusLower.includes("manifest") || statusLower.includes("shipped")) {
-    displayStatus = "In Transit";
-    statusDescription = "Item has been despatched and is moving through the Royal Mail network.";
-    estimatedDelivery = "In transit";
   } else if (statusLower.includes("cancel")) {
     displayStatus = "Cancelled";
     statusDescription = "This Click & Drop order has been cancelled.";
     estimatedDelivery = "Cancelled";
+  } else if (state.despatchedOn) {
+    displayStatus = "Dispatched";
+    statusDescription = "Item has been despatched to Royal Mail.";
+    estimatedDelivery = "See Royal Mail tracking";
+  } else if (state.labelGenerated) {
+    displayStatus = "Awaiting Despatch";
+    statusDescription = "Postage label generated. Royal Mail has not yet confirmed the parcel was handed over.";
+    estimatedDelivery = "Awaiting despatch";
+  } else {
+    displayStatus = rawStatus || "Awaiting Despatch";
+    statusDescription = "Royal Mail has the order. No scan events have been recorded yet.";
+    estimatedDelivery = "Awaiting despatch";
   }
   const history = [];
   const pushEvent = (iso, status, description) => {
