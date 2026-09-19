@@ -8,7 +8,7 @@ import {
 } from './initialData';
 import { DEFAULT_DEV_SETTINGS } from './data/initialDevSettings';
 import { applyDevSettingsToDOM } from './utils/devModeInjector';
-import { getAdminToken, clearAdminToken } from './lib/adminApi';
+import { getAdminToken, clearAdminToken, getCustomerToken, clearCustomerToken } from './lib/adminApi';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import ProductsGrid from './components/ProductsGrid';
@@ -362,6 +362,18 @@ export default function App() {
   // Reusable, highly robust sync engine that checks database connectivity headers and avoids redundant syncs
   const syncToApi = async (resource: string, payload: any[]) => {
     try {
+      // These endpoints REPLACE a whole resource and are administrators-only.
+      //
+      // The effects that call this are gated on `isInitialLoadDone`, not on who
+      // is looking, so they used to run for every anonymous shopper. That was
+      // not merely pointless: when a GET failed, the matching `lastSyncedHash`
+      // entry was never seeded, and the next state change posted the visitor's
+      // stale localStorage copy over the live catalogue or customer list.
+      // Stopping here keeps that impossible rather than merely unauthorised.
+      if (!getAdminToken()) {
+        return;
+      }
+
       const serialized = JSON.stringify(payload);
       if (lastSyncedHash.current[resource] === serialized) {
         return; // Data has not changed since last load/sync, avoid redundant POST
@@ -417,6 +429,25 @@ export default function App() {
           }
         };
 
+        // Orders and customers are no longer world-readable. An administrator
+        // still loads the whole store; a signed-in shopper loads only their own
+        // record and their own orders; a signed-out visitor loads neither,
+        // because nothing on the storefront needs them.
+        const ordersUrl = getAdminToken()
+          ? '/api/orders'
+          : getCustomerToken()
+            ? '/api/orders/mine'
+            : null;
+
+        const savedCustomerEmail = loggedInCustomer?.email
+          ? String(loggedInCustomer.email).trim().toLowerCase()
+          : '';
+        const customersUrl = getAdminToken()
+          ? '/api/customers'
+          : getCustomerToken() && savedCustomerEmail
+            ? `/api/customers/by-email?email=${encodeURIComponent(savedCustomerEmail)}`
+            : null;
+
         // Fetch store data
         const [
           prodsRes, collsRes, ordersRes, filesRes,
@@ -424,9 +455,9 @@ export default function App() {
         ] = await Promise.all([
           safeFetchJson('/api/products'),
           safeFetchJson('/api/collections'),
-          safeFetchJson('/api/orders'),
+          ordersUrl ? safeFetchJson(ordersUrl) : Promise.resolve(null),
           safeFetchJson('/api/files'),
-          safeFetchJson('/api/customers'),
+          customersUrl ? safeFetchJson(customersUrl) : Promise.resolve(null),
           safeFetchJson('/api/discounts'),
           safeFetchJson('/api/custompages'),
           safeFetchJson('/api/blogs'),
@@ -486,18 +517,26 @@ export default function App() {
           });
           loadedFilesSuccess.current = true;
         }
-        if (Array.isArray(custsRes) && custsRes.length > 0) {
-          setCustomers(custsRes);
-          lastSyncedHash.current['customers'] = JSON.stringify(custsRes);
+        // An admin gets the array; a shopper gets { customer } from by-email and
+        // is the only entry their session is allowed to see.
+        const custsList: any[] | null = Array.isArray(custsRes)
+          ? custsRes
+          : (custsRes as any)?.customer
+            ? [(custsRes as any).customer]
+            : null;
+
+        if (custsList && custsList.length > 0) {
+          setCustomers(custsList);
+          lastSyncedHash.current['customers'] = JSON.stringify(custsList);
           loadedCustomersSuccess.current = true;
-          
+
           // Sync currently logged-in customer's details immediately on load
           const savedStr = localStorage.getItem('ps_logged_in_customer');
           if (savedStr && savedStr !== 'undefined') {
             try {
               const savedObj = JSON.parse(savedStr);
               if (savedObj && savedObj.email) {
-                const fresh = custsRes.find((c: any) => c.id === savedObj.id || (c.email && c.email.toLowerCase() === savedObj.email.toLowerCase()));
+                const fresh = custsList.find((c: any) => c.id === savedObj.id || (c.email && c.email.toLowerCase() === savedObj.email.toLowerCase()));
                 if (fresh) {
                   setLoggedInCustomer(fresh);
                 }
@@ -978,7 +1017,10 @@ export default function App() {
 
     const handleOrderCompleted = async () => {
       try {
-        const res = await fetch('/api/orders');
+        // Same scoping as the mount load: the full list is administrators only.
+        const url = getAdminToken() ? '/api/orders' : getCustomerToken() ? '/api/orders/mine' : null;
+        if (!url) return;
+        const res = await fetch(url);
         if (res.ok) {
           const freshOrders = await res.json();
           if (Array.isArray(freshOrders)) {
@@ -1074,6 +1116,33 @@ export default function App() {
       syncToApi('customers', customers);
     }
   }, [customers, isInitialLoadDone]);
+
+  /**
+   * Persists the signed-in shopper's own record.
+   *
+   * Wishlist entries, saved addresses and post-order stats are written by
+   * handlers that only touch React state; they reached the database as a side
+   * effect of the store-wide customers sync above. That sync is now
+   * administrators-only, so without this a shopper's wishlist would look saved
+   * until they reloaded the page.
+   *
+   * Goes through update-profile, which writes only the account named in the
+   * caller's own token.
+   */
+  const lastCustomerProfileHash = useRef<string>('');
+  useEffect(() => {
+    if (!isInitialLoadDone || !loggedInCustomer?.email || !getCustomerToken()) return;
+
+    const serialized = JSON.stringify(loggedInCustomer);
+    if (lastCustomerProfileHash.current === serialized) return;
+    lastCustomerProfileHash.current = serialized;
+
+    fetch('/api/customers/update-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer: loggedInCustomer })
+    }).catch(err => console.warn('[Profile Sync] Could not save your account changes:', err));
+  }, [loggedInCustomer, isInitialLoadDone]);
 
   useEffect(() => {
     safeSaveToLocalStorage('ps_discounts', discounts);
@@ -1435,6 +1504,7 @@ export default function App() {
 
   const handleCustomerLogout = () => {
     setLoggedInCustomer(null);
+    clearCustomerToken();
   };
 
   const handleUpdateProfile = (updated: Customer) => {

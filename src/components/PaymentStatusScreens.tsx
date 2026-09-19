@@ -75,16 +75,18 @@ export function PaymentSuccessScreen({ onReturnToShop }: PaymentSuccessScreenPro
     // Fetch the order from db to show authentic rich confirmation details
     const fetchOrder = async () => {
       try {
-        const res = await fetch(`/api/orders`);
+        // Fetches the one order this receipt is for. It used to download the
+        // entire order list and pick its own out of it, which is why that
+        // endpoint had to be world-readable; it is now administrators-only.
+        const res = await fetch(`/api/orders/${encodeURIComponent(parsedOrderId)}`);
         if (res.ok) {
           const text = await res.text().catch(() => '');
-          let list: Order[] = [];
+          let found: Order | null = null;
           try {
-            list = JSON.parse(text);
+            found = JSON.parse(text);
           } catch (_e) {}
-          if (Array.isArray(list)) {
-            const found = list.find(o => o.id === parsedOrderId);
-            if (found) {
+          {
+            if (found && found.id) {
               setOrder(found);
               const foundAny = found as any;
               if (!parsedTxId && (foundAny.worldpayTxId || foundAny.gatewayTxId)) {

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { fetchResource, saveResource, getDb } from "../../serverDb";
 
+import { requireAdmin } from "../middleware/requireAdmin";
+
 const router = Router();
 
 // GET all blogs
@@ -15,7 +17,7 @@ router.get("/", async (req, res) => {
 });
 
 // POST update/sync blogs
-router.post("/", async (req, res) => {
+router.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {

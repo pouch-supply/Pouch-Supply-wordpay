@@ -1,6 +1,14 @@
 import { Router } from "express";
 import { fetchResource, saveResource, fetchSingleItem, saveSingleItem, deleteSingleItem, getDb } from "../../serverDb";
+import { requireAdmin } from "../middleware/requireAdmin";
 
+/**
+ * Generic store resource router (products, collections, pages, contact messages).
+ *
+ * Reads stay public — the storefront renders from them. Writes are administrative
+ * and are now gated: POST with an array REPLACES the entire resource, so an
+ * anonymous request could previously empty or rewrite the whole catalogue.
+ */
 export function createCrudRouter(resourceName: string): Router {
   const router = Router();
 
@@ -30,7 +38,7 @@ export function createCrudRouter(resourceName: string): Router {
   });
 
   // POST update/sync items (Supports both array batch sync and single item payload)
-  router.post("/", async (req, res) => {
+  router.post("/", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
 
@@ -57,7 +65,7 @@ export function createCrudRouter(resourceName: string): Router {
   });
 
   // PUT update single item by ID
-  router.put("/:id", async (req, res) => {
+  router.put("/:id", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       if (!payload || typeof payload !== "object") {
@@ -81,7 +89,7 @@ export function createCrudRouter(resourceName: string): Router {
   });
 
   // DELETE single item by ID
-  router.delete("/:id", async (req, res) => {
+  router.delete("/:id", requireAdmin, async (req, res) => {
     try {
       const database = await getDb();
       if (!database) {

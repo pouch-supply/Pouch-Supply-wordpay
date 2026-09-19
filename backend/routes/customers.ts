@@ -6,7 +6,13 @@ import { prisma } from "../../src/lib/prisma";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, sendLoginNotificationEmail } from "../services/emailService";
 import { trackCustomerSignup, trackEmailVerified } from "../services/klaviyoService";
 import { verifyRecaptchaToken } from "../services/recaptchaService";
-import { signAdminToken, verifyAdminCredentials, AdminAuthNotConfiguredError } from "../services/adminAuth";
+import {
+  signAdminToken,
+  signCustomerToken,
+  verifyAdminCredentials,
+  AdminAuthNotConfiguredError
+} from "../services/adminAuth";
+import { requireAdmin, requireCustomer, mayActOnCustomer, AdminRequest } from "../middleware/requireAdmin";
 
 const router = Router();
 
@@ -51,7 +57,9 @@ async function enrichCustomerAgeStatus(customer: any) {
 }
 
 // GET all customers (Admin use)
-router.get("/", async (req, res) => {
+// Returned every customer's name, email, address history and spend to anyone
+// who asked. Stripping passwordHash was never the point — the rest is the PII.
+router.get("/", requireAdmin, async (req, res) => {
   try {
     const data = await fetchResource("customers");
     // Remove password hashes from output for security
@@ -63,12 +71,19 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET customer by email
-router.get("/by-email", async (req, res) => {
+// GET customer by email — the shopper's own record, or any record for an admin.
+// This was an open lookup: anyone could read any account by guessing an email.
+router.get("/by-email", requireCustomer, async (req: AdminRequest, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
     if (!email) {
       return res.status(400).json({ error: "Email query parameter is required." });
+    }
+
+    if (!mayActOnCustomer(req, email)) {
+      // 404 rather than 403: a 403 would confirm the address has an account here,
+      // which is exactly what an address-guessing attempt is trying to learn.
+      return res.status(404).json({ error: "Customer not found." });
     }
 
     const customersList = await fetchResource("customers");
@@ -86,8 +101,8 @@ router.get("/by-email", async (req, res) => {
   }
 });
 
-// POST update/sync customers (Admin use)
-router.post("/", async (req, res) => {
+// POST update/sync customers (Admin use) — replaces the whole customer list.
+router.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -202,7 +217,10 @@ router.post("/signup", async (req, res) => {
     const { passwordHash, ...safeCustomer } = newCustomer;
     res.status(201).json({
       message: "Registration successful!",
-      customer: safeCustomer
+      customer: safeCustomer,
+      // Signs the new account in. Without a token the client would hold a
+      // customer object it cannot prove belongs to it.
+      token: signCustomerToken(emailTrim)
     });
   } catch (err: any) {
     console.error("[Customer Auth] Signup Error:", err);
@@ -460,7 +478,8 @@ router.post("/login", async (req, res) => {
     const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     res.json({
       message: "Login successful!",
-      customer: enrichedCustomer
+      customer: enrichedCustomer,
+      token: signCustomerToken(emailTrim)
     });
   } catch (err: any) {
     console.error("[Customer Auth] Login Error:", err);
@@ -508,7 +527,8 @@ router.post("/google-login", async (req, res) => {
       const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
       return res.json({
         message: "Logged in via Google successfully!",
-        customer: enrichedCustomer
+        customer: enrichedCustomer,
+        token: signCustomerToken(emailTrim)
       });
     }
 
@@ -548,7 +568,8 @@ router.post("/google-login", async (req, res) => {
     const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     return res.json({
       message: "Account created with Google!",
-      customer: enrichedCustomer
+      customer: enrichedCustomer,
+      token: signCustomerToken(emailTrim)
     });
   } catch (err: any) {
     console.error("[Customer Auth] Google Login Error:", err);
@@ -606,7 +627,9 @@ router.post("/admin-login", async (req, res) => {
 });
 
 // POST: Update Customer Profile & Subscription Settings
-router.post("/update-profile", async (req, res) => {
+// Identified the account to edit purely from the email or id in the body, so
+// anyone could rewrite anyone's profile by naming them.
+router.post("/update-profile", requireCustomer, async (req: AdminRequest, res) => {
   try {
     const customerData = req.body.customer || req.body;
     if (!customerData || (!customerData.email && !customerData.id)) {
@@ -629,6 +652,12 @@ router.post("/update-profile", async (req, res) => {
     }
 
     const existing = customersList[foundIndex];
+
+    // Checked against the record actually found, not the email in the body: an
+    // id and a mismatched email in one request must not edit someone else.
+    if (!mayActOnCustomer(req, existing.email)) {
+      return res.status(403).json({ error: "You can only update your own profile." });
+    }
     const updated = {
       ...existing,
       ...customerData,

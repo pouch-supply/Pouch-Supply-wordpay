@@ -16,16 +16,35 @@ import crypto from "crypto";
 const TOKEN_VERSION = "v1";
 
 /** Eight hours: long enough for a working day, short enough that a leaked token dies. */
-const DEFAULT_TTL_SECONDS = 8 * 60 * 60;
+const ADMIN_TTL_SECONDS = 8 * 60 * 60;
 
-export interface AdminTokenPayload {
-  /** Who the token was issued to — the admin email. */
+/**
+ * Thirty days for shoppers. A customer session protects their own order history
+ * rather than the whole store, and being signed out of a shop every eight hours
+ * is the kind of friction that pushes people to stop using an account at all.
+ */
+const CUSTOMER_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Who a token speaks for. Carried in the payload and checked on verification so
+ * a customer token can never be replayed against an admin endpoint: without
+ * this, any signed token would satisfy any gate.
+ */
+export type TokenScope = "admin" | "customer";
+
+export interface SessionTokenPayload {
+  /** Who the token was issued to — the account email. */
   sub: string;
+  /** What the token authorises. */
+  scope: TokenScope;
   /** Issued-at, epoch seconds. */
   iat: number;
   /** Expiry, epoch seconds. */
   exp: number;
 }
+
+/** Retained under the old name; admin code reads this shape. */
+export type AdminTokenPayload = SessionTokenPayload;
 
 export class AdminAuthNotConfiguredError extends Error {
   constructor(message: string) {
@@ -62,13 +81,22 @@ function sign(data: string, secret: string): string {
   return b64url(crypto.createHmac("sha256", secret).update(data).digest());
 }
 
-/** Mints a signed admin token. Throws if AUTH_SECRET is unconfigured. */
-export function signAdminToken(subject: string, ttlSeconds: number = DEFAULT_TTL_SECONDS): string {
+function signToken(subject: string, scope: TokenScope, ttlSeconds: number): string {
   const secret = getSigningSecret();
   const now = Math.floor(Date.now() / 1000);
-  const payload: AdminTokenPayload = { sub: subject, iat: now, exp: now + ttlSeconds };
+  const payload: SessionTokenPayload = { sub: subject, scope, iat: now, exp: now + ttlSeconds };
   const body = `${TOKEN_VERSION}.${b64url(JSON.stringify(payload))}`;
   return `${body}.${sign(body, secret)}`;
+}
+
+/** Mints a signed admin token. Throws if AUTH_SECRET is unconfigured. */
+export function signAdminToken(subject: string, ttlSeconds: number = ADMIN_TTL_SECONDS): string {
+  return signToken(subject, "admin", ttlSeconds);
+}
+
+/** Mints a signed customer token, scoped to that shopper's own data. */
+export function signCustomerToken(email: string, ttlSeconds: number = CUSTOMER_TTL_SECONDS): string {
+  return signToken(String(email).trim().toLowerCase(), "customer", ttlSeconds);
 }
 
 /**
@@ -79,7 +107,10 @@ export function signAdminToken(subject: string, ttlSeconds: number = DEFAULT_TTL
  * configuration, which is a deployment fault the caller must not mistake for
  * "this visitor is not an admin".
  */
-export function verifyAdminToken(token: string | undefined | null): AdminTokenPayload | null {
+export function verifyToken(
+  token: string | undefined | null,
+  expectedScope: TokenScope
+): SessionTokenPayload | null {
   if (!token || typeof token !== "string") return null;
 
   const parts = token.split(".");
@@ -98,7 +129,7 @@ export function verifyAdminToken(token: string | undefined | null): AdminTokenPa
   if (givenBuf.length !== expectedBuf.length) return null;
   if (!crypto.timingSafeEqual(givenBuf, expectedBuf)) return null;
 
-  let payload: AdminTokenPayload;
+  let payload: SessionTokenPayload;
   try {
     payload = JSON.parse(b64urlDecode(payloadPart).toString("utf8"));
   } catch {
@@ -108,7 +139,19 @@ export function verifyAdminToken(token: string | undefined | null): AdminTokenPa
   if (!payload || typeof payload.exp !== "number" || typeof payload.sub !== "string") return null;
   if (Math.floor(Date.now() / 1000) >= payload.exp) return null;
 
+  // A valid signature only proves we issued the token, not that it may be used
+  // here. Without this a shopper's own token would open every admin endpoint.
+  if (payload.scope !== expectedScope) return null;
+
   return payload;
+}
+
+export function verifyAdminToken(token: string | undefined | null): SessionTokenPayload | null {
+  return verifyToken(token, "admin");
+}
+
+export function verifyCustomerToken(token: string | undefined | null): SessionTokenPayload | null {
+  return verifyToken(token, "customer");
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   sendOrderRefundedEmail
 } from "../services/emailService";
 import { trackPurchaseCompleted, trackOrderRefunded, trackOrderShipped } from "../services/klaviyoService";
-import { requireAdmin } from "../middleware/requireAdmin";
+import { requireAdmin, requireCustomer, mayActOnCustomer, AdminRequest } from "../middleware/requireAdmin";
 import { UK_COUNTRY_NAME, validateUkDelivery } from "../../src/utils/ukValidation";
 
 const router = Router();
@@ -528,7 +528,10 @@ export async function saveSingleOrder(orderData: any) {
 }
 
 // GET all orders - return all valid persisted orders
-router.get("/", async (_req: Request, res: Response) => {
+// Returns EVERY order in the store — names, addresses, phone numbers, gateway
+// transaction ids. This was open to anonymous callers, which made the whole
+// order database downloadable by anyone. Shoppers use GET /mine below instead.
+router.get("/", requireAdmin, async (_req: Request, res: Response) => {
   try {
     const data: any[] = (await fetchResource("orders")) || [];
     const validOrders = data.filter((o: any) => o && o.id);
@@ -539,7 +542,45 @@ router.get("/", async (_req: Request, res: Response) => {
   }
 });
 
-// GET single order by ID
+/**
+ * The signed-in shopper's own orders.
+ *
+ * The account page used to filter the full store-wide list in the browser,
+ * which meant every visitor had to be handed every order for one person to read
+ * their own. The filtering now happens here, against the email in the token
+ * rather than one supplied by the caller.
+ *
+ * Registered before "/:id" so the literal path is not swallowed by the
+ * parameter route.
+ */
+router.get("/mine", requireCustomer, async (req: AdminRequest, res: Response) => {
+  try {
+    const email = req.customer?.email;
+    if (!email) {
+      // An admin token reached a route that only means something for a shopper.
+      return res.status(400).json({
+        error: "This endpoint returns the signed-in customer's own orders. Use GET /api/orders as an administrator."
+      });
+    }
+
+    const data: any[] = (await fetchResource("orders")) || [];
+    const mine = data.filter(
+      (o: any) => o && o.id && String(o.customerEmail || "").toLowerCase() === email
+    );
+    res.json(mine);
+  } catch (err: any) {
+    console.error("[Orders Router] GET /mine Error:", err);
+    res.status(500).json({ error: err.message || "Failed to fetch your orders" });
+  }
+});
+
+// GET single order by ID.
+//
+// Deliberately still anonymous: the post-payment receipt has only the order id
+// from the Worldpay return URL, and a guest checkout has no account to
+// authenticate against. It therefore remains guessable by order id, which is a
+// far smaller exposure than the full list above but not nothing — closing it
+// properly needs a signed order-access token carried in the return URL.
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -633,7 +674,10 @@ router.post("/create", async (req: Request, res: Response) => {
 });
 
 // POST / - Create or sync orders (accepts single order or array)
-router.post("/", async (req: Request, res: Response) => {
+// Bulk order sync (admin dashboard). Checkout does NOT use this: card orders are
+// written server-side from the Worldpay callback, and £0 orders go through
+// POST /create, so gating it costs the storefront nothing.
+router.post("/", requireAdmin, async (req: Request, res: Response) => {
   try {
     const payload = req.body;
 
@@ -686,7 +730,7 @@ router.post("/", async (req: Request, res: Response) => {
 });
 
 // POST /:id/cancel - Customer Cancel Order Workflow
-router.post("/:id/cancel", async (req: Request, res: Response) => {
+router.post("/:id/cancel", requireCustomer, async (req: AdminRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { reason, refundMethod = "original", customerEmail } = req.body;
@@ -699,6 +743,13 @@ router.post("/:id/cancel", async (req: Request, res: Response) => {
     }
 
     const order = currentOrders[foundIdx];
+
+    // Checked against the order's own email, not the one in the body. The body
+    // already carried `customerEmail` but nothing compared it to anything, so
+    // any order id could be cancelled and refunded by anyone who knew it.
+    if (!mayActOnCustomer(req, order.customerEmail)) {
+      return res.status(404).json({ error: "Order not found" });
+    }
 
     if (order.fulfillmentStatus === "Shipped" || order.fulfillmentStatus === "Delivered") {
       return res.status(400).json({ error: "Order has already shipped and cannot be directly cancelled. Please request a return." });
@@ -774,7 +825,7 @@ router.post("/:id/cancel", async (req: Request, res: Response) => {
 });
 
 // POST /:id/return-request - Customer Return / Refund / Exchange Request Workflow
-router.post("/:id/return-request", async (req: Request, res: Response) => {
+router.post("/:id/return-request", requireCustomer, async (req: AdminRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { type, reason, itemsToReturn, exchangeNotes, refundMethod } = req.body;
@@ -791,6 +842,12 @@ router.post("/:id/return-request", async (req: Request, res: Response) => {
     }
 
     const order = currentOrders[foundIdx];
+
+    // Raising a return against someone else's order was possible with nothing
+    // but its id.
+    if (!mayActOnCustomer(req, order.customerEmail)) {
+      return res.status(404).json({ error: "Order not found" });
+    }
 
     const returnRequest = {
       type: type || "Return", // 'Return' | 'Refund' | 'Exchange'

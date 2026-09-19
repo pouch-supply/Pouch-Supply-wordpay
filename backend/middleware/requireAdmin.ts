@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
-import { verifyAdminToken, AdminAuthNotConfiguredError } from "../services/adminAuth";
+import {
+  verifyAdminToken,
+  verifyCustomerToken,
+  AdminAuthNotConfiguredError
+} from "../services/adminAuth";
 
 /**
  * Gate for administrative endpoints.
@@ -18,11 +22,79 @@ import { verifyAdminToken, AdminAuthNotConfiguredError } from "../services/admin
 
 export interface AdminRequest extends Request {
   admin?: { email: string };
+  /** Set by requireCustomer. The ONLY trustworthy statement of who is calling. */
+  customer?: { email: string };
+}
+
+function bearer(req: Request): string {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+}
+
+/**
+ * Gate for a shopper acting on their own data.
+ *
+ * Identity comes from a signed token and nothing else. Routes used to take the
+ * customer's email from the request body or an `x-user-email` header and trust
+ * it, which meant anyone could read or change anyone's account by typing a
+ * different address.
+ *
+ * An admin token is accepted too, so support staff can act on a customer's
+ * behalf; `req.customer` is then the email named in the request rather than the
+ * admin's own, and `req.admin` records who actually did it.
+ */
+export function requireCustomer(req: AdminRequest, res: Response, next: NextFunction) {
+  const token = bearer(req);
+
+  let customer: ReturnType<typeof verifyCustomerToken>;
+  let admin: ReturnType<typeof verifyAdminToken>;
+  try {
+    customer = verifyCustomerToken(token);
+    admin = customer ? null : verifyAdminToken(token);
+  } catch (err) {
+    if (err instanceof AdminAuthNotConfiguredError) {
+      console.error("[Customer Auth] Refusing request:", err.message);
+      return res.status(503).json({
+        error: "Authentication is not configured on this server.",
+        code: "AUTH_NOT_CONFIGURED"
+      });
+    }
+    throw err;
+  }
+
+  if (customer) {
+    req.customer = { email: customer.sub };
+    return next();
+  }
+
+  if (admin) {
+    req.admin = { email: admin.sub };
+    // Left unset deliberately: an admin has no single customer identity, so the
+    // handler must decide which account it is acting on and say so explicitly.
+    return next();
+  }
+
+  return res.status(401).json({
+    error: "You must be signed in to do this.",
+    code: "CUSTOMER_AUTH_REQUIRED"
+  });
+}
+
+/**
+ * Confirms the caller may act on `email`.
+ *
+ * Returns true for that customer themselves, and for any admin. Handlers call
+ * this rather than comparing an email from the body, which proves nothing.
+ */
+export function mayActOnCustomer(req: AdminRequest, email: string | undefined | null): boolean {
+  if (req.admin) return true;
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return false;
+  return req.customer?.email === target;
 }
 
 export function requireAdmin(req: AdminRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const token = bearer(req);
 
   let payload: ReturnType<typeof verifyAdminToken>;
   try {

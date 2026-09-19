@@ -2195,6 +2195,191 @@ var init_serverDb = __esm({
   }
 });
 
+// backend/services/adminAuth.ts
+import crypto from "crypto";
+function getSigningSecret() {
+  const secret = process.env.AUTH_SECRET || process.env.ADMIN_TOKEN_SECRET || "";
+  if (!secret || secret.trim().length < 16) {
+    throw new AdminAuthNotConfiguredError(
+      "AUTH_SECRET is not set (or is shorter than 16 characters). Admin authentication is disabled until it is configured."
+    );
+  }
+  return secret;
+}
+function sign(data, secret) {
+  return b64url(crypto.createHmac("sha256", secret).update(data).digest());
+}
+function signToken(subject, scope, ttlSeconds) {
+  const secret = getSigningSecret();
+  const now = Math.floor(Date.now() / 1e3);
+  const payload = { sub: subject, scope, iat: now, exp: now + ttlSeconds };
+  const body = `${TOKEN_VERSION}.${b64url(JSON.stringify(payload))}`;
+  return `${body}.${sign(body, secret)}`;
+}
+function signAdminToken(subject, ttlSeconds = ADMIN_TTL_SECONDS) {
+  return signToken(subject, "admin", ttlSeconds);
+}
+function signCustomerToken(email, ttlSeconds = CUSTOMER_TTL_SECONDS) {
+  return signToken(String(email).trim().toLowerCase(), "customer", ttlSeconds);
+}
+function verifyToken(token, expectedScope) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [version, payloadPart, signaturePart] = parts;
+  if (version !== TOKEN_VERSION) return null;
+  const secret = getSigningSecret();
+  const expected = sign(`${version}.${payloadPart}`, secret);
+  const givenBuf = Buffer.from(signaturePart);
+  const expectedBuf = Buffer.from(expected);
+  if (givenBuf.length !== expectedBuf.length) return null;
+  if (!crypto.timingSafeEqual(givenBuf, expectedBuf)) return null;
+  let payload;
+  try {
+    payload = JSON.parse(b64urlDecode(payloadPart).toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload.exp !== "number" || typeof payload.sub !== "string") return null;
+  if (Math.floor(Date.now() / 1e3) >= payload.exp) return null;
+  if (payload.scope !== expectedScope) return null;
+  return payload;
+}
+function verifyAdminToken(token) {
+  return verifyToken(token, "admin");
+}
+function verifyCustomerToken(token) {
+  return verifyToken(token, "customer");
+}
+function verifyAdminCredentials(email, password) {
+  const adminEmail = (process.env.ADMIN_EMAIL || "").trim();
+  const adminPassword = process.env.ADMIN_PASSWORD || "";
+  if (!adminEmail || !adminPassword) {
+    throw new AdminAuthNotConfiguredError(
+      "ADMIN_EMAIL and ADMIN_PASSWORD must be set for admin login to work."
+    );
+  }
+  const emailOk = String(email || "").trim().toLowerCase() === adminEmail.toLowerCase();
+  const given = crypto.createHash("sha256").update(String(password || "")).digest();
+  const expectedHash = crypto.createHash("sha256").update(adminPassword).digest();
+  const passwordOk = crypto.timingSafeEqual(given, expectedHash);
+  return emailOk && passwordOk;
+}
+var TOKEN_VERSION, ADMIN_TTL_SECONDS, CUSTOMER_TTL_SECONDS, AdminAuthNotConfiguredError, b64url, b64urlDecode;
+var init_adminAuth = __esm({
+  "backend/services/adminAuth.ts"() {
+    TOKEN_VERSION = "v1";
+    ADMIN_TTL_SECONDS = 8 * 60 * 60;
+    CUSTOMER_TTL_SECONDS = 30 * 24 * 60 * 60;
+    AdminAuthNotConfiguredError = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "AdminAuthNotConfiguredError";
+      }
+    };
+    b64url = (input) => Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    b64urlDecode = (input) => Buffer.from(input.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  }
+});
+
+// backend/middleware/requireAdmin.ts
+import crypto2 from "crypto";
+function bearer(req) {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+}
+function requireCustomer(req, res, next) {
+  const token = bearer(req);
+  let customer;
+  let admin;
+  try {
+    customer = verifyCustomerToken(token);
+    admin = customer ? null : verifyAdminToken(token);
+  } catch (err) {
+    if (err instanceof AdminAuthNotConfiguredError) {
+      console.error("[Customer Auth] Refusing request:", err.message);
+      return res.status(503).json({
+        error: "Authentication is not configured on this server.",
+        code: "AUTH_NOT_CONFIGURED"
+      });
+    }
+    throw err;
+  }
+  if (customer) {
+    req.customer = { email: customer.sub };
+    return next();
+  }
+  if (admin) {
+    req.admin = { email: admin.sub };
+    return next();
+  }
+  return res.status(401).json({
+    error: "You must be signed in to do this.",
+    code: "CUSTOMER_AUTH_REQUIRED"
+  });
+}
+function mayActOnCustomer(req, email) {
+  if (req.admin) return true;
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return false;
+  return req.customer?.email === target;
+}
+function requireAdmin(req, res, next) {
+  const token = bearer(req);
+  let payload;
+  try {
+    payload = verifyAdminToken(token);
+  } catch (err) {
+    if (err instanceof AdminAuthNotConfiguredError) {
+      console.error("[Admin Auth] Refusing admin request:", err.message);
+      return res.status(503).json({
+        error: "Admin authentication is not configured on this server.",
+        code: "ADMIN_AUTH_NOT_CONFIGURED"
+      });
+    }
+    throw err;
+  }
+  if (!payload) {
+    return res.status(401).json({
+      error: "Administrator authentication required.",
+      code: "ADMIN_AUTH_REQUIRED"
+    });
+  }
+  req.admin = { email: payload.sub };
+  next();
+}
+function requireCronOrAdmin(req, res, next) {
+  const header = req.headers.authorization || "";
+  const presented = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const cronSecret = process.env.CRON_SECRET || "";
+  if (cronSecret && presented) {
+    const a = Buffer.from(presented);
+    const b = Buffer.from(cronSecret);
+    if (a.length === b.length && crypto2.timingSafeEqual(a, b)) return next();
+  }
+  try {
+    if (verifyAdminToken(presented)) return next();
+  } catch (err) {
+    if (!(err instanceof AdminAuthNotConfiguredError)) throw err;
+  }
+  if (!cronSecret) {
+    console.error("[Cron Auth] CRON_SECRET is not set \u2014 refusing scheduled job request.");
+    return res.status(503).json({
+      error: "Scheduled job authentication is not configured on this server.",
+      code: "CRON_SECRET_NOT_CONFIGURED"
+    });
+  }
+  return res.status(401).json({
+    error: "Scheduled job authentication required.",
+    code: "CRON_AUTH_REQUIRED"
+  });
+}
+var init_requireAdmin = __esm({
+  "backend/middleware/requireAdmin.ts"() {
+    init_adminAuth();
+  }
+});
+
 // backend/services/emailTemplates.ts
 function renderBaseHeader(title, subtitle, data) {
   const logoUrl = data?.headerLogoImage || data?.logoUrl || "";
@@ -4026,138 +4211,6 @@ var init_klaviyoService = __esm({
   }
 });
 
-// backend/services/adminAuth.ts
-import crypto from "crypto";
-function getSigningSecret() {
-  const secret = process.env.AUTH_SECRET || process.env.ADMIN_TOKEN_SECRET || "";
-  if (!secret || secret.trim().length < 16) {
-    throw new AdminAuthNotConfiguredError(
-      "AUTH_SECRET is not set (or is shorter than 16 characters). Admin authentication is disabled until it is configured."
-    );
-  }
-  return secret;
-}
-function sign(data, secret) {
-  return b64url(crypto.createHmac("sha256", secret).update(data).digest());
-}
-function signAdminToken(subject, ttlSeconds = DEFAULT_TTL_SECONDS) {
-  const secret = getSigningSecret();
-  const now = Math.floor(Date.now() / 1e3);
-  const payload = { sub: subject, iat: now, exp: now + ttlSeconds };
-  const body = `${TOKEN_VERSION}.${b64url(JSON.stringify(payload))}`;
-  return `${body}.${sign(body, secret)}`;
-}
-function verifyAdminToken(token) {
-  if (!token || typeof token !== "string") return null;
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [version, payloadPart, signaturePart] = parts;
-  if (version !== TOKEN_VERSION) return null;
-  const secret = getSigningSecret();
-  const expected = sign(`${version}.${payloadPart}`, secret);
-  const givenBuf = Buffer.from(signaturePart);
-  const expectedBuf = Buffer.from(expected);
-  if (givenBuf.length !== expectedBuf.length) return null;
-  if (!crypto.timingSafeEqual(givenBuf, expectedBuf)) return null;
-  let payload;
-  try {
-    payload = JSON.parse(b64urlDecode(payloadPart).toString("utf8"));
-  } catch {
-    return null;
-  }
-  if (!payload || typeof payload.exp !== "number" || typeof payload.sub !== "string") return null;
-  if (Math.floor(Date.now() / 1e3) >= payload.exp) return null;
-  return payload;
-}
-function verifyAdminCredentials(email, password) {
-  const adminEmail = (process.env.ADMIN_EMAIL || "").trim();
-  const adminPassword = process.env.ADMIN_PASSWORD || "";
-  if (!adminEmail || !adminPassword) {
-    throw new AdminAuthNotConfiguredError(
-      "ADMIN_EMAIL and ADMIN_PASSWORD must be set for admin login to work."
-    );
-  }
-  const emailOk = String(email || "").trim().toLowerCase() === adminEmail.toLowerCase();
-  const given = crypto.createHash("sha256").update(String(password || "")).digest();
-  const expectedHash = crypto.createHash("sha256").update(adminPassword).digest();
-  const passwordOk = crypto.timingSafeEqual(given, expectedHash);
-  return emailOk && passwordOk;
-}
-var TOKEN_VERSION, DEFAULT_TTL_SECONDS, AdminAuthNotConfiguredError, b64url, b64urlDecode;
-var init_adminAuth = __esm({
-  "backend/services/adminAuth.ts"() {
-    TOKEN_VERSION = "v1";
-    DEFAULT_TTL_SECONDS = 8 * 60 * 60;
-    AdminAuthNotConfiguredError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.name = "AdminAuthNotConfiguredError";
-      }
-    };
-    b64url = (input) => Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    b64urlDecode = (input) => Buffer.from(input.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-  }
-});
-
-// backend/middleware/requireAdmin.ts
-import crypto2 from "crypto";
-function requireAdmin(req, res, next) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  let payload;
-  try {
-    payload = verifyAdminToken(token);
-  } catch (err) {
-    if (err instanceof AdminAuthNotConfiguredError) {
-      console.error("[Admin Auth] Refusing admin request:", err.message);
-      return res.status(503).json({
-        error: "Admin authentication is not configured on this server.",
-        code: "ADMIN_AUTH_NOT_CONFIGURED"
-      });
-    }
-    throw err;
-  }
-  if (!payload) {
-    return res.status(401).json({
-      error: "Administrator authentication required.",
-      code: "ADMIN_AUTH_REQUIRED"
-    });
-  }
-  req.admin = { email: payload.sub };
-  next();
-}
-function requireCronOrAdmin(req, res, next) {
-  const header = req.headers.authorization || "";
-  const presented = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  const cronSecret = process.env.CRON_SECRET || "";
-  if (cronSecret && presented) {
-    const a = Buffer.from(presented);
-    const b = Buffer.from(cronSecret);
-    if (a.length === b.length && crypto2.timingSafeEqual(a, b)) return next();
-  }
-  try {
-    if (verifyAdminToken(presented)) return next();
-  } catch (err) {
-    if (!(err instanceof AdminAuthNotConfiguredError)) throw err;
-  }
-  if (!cronSecret) {
-    console.error("[Cron Auth] CRON_SECRET is not set \u2014 refusing scheduled job request.");
-    return res.status(503).json({
-      error: "Scheduled job authentication is not configured on this server.",
-      code: "CRON_SECRET_NOT_CONFIGURED"
-    });
-  }
-  return res.status(401).json({
-    error: "Scheduled job authentication required.",
-    code: "CRON_AUTH_REQUIRED"
-  });
-}
-var init_requireAdmin = __esm({
-  "backend/middleware/requireAdmin.ts"() {
-    init_adminAuth();
-  }
-});
-
 // src/utils/ukValidation.ts
 function isUkCountry(value) {
   const raw = String(value ?? "").trim().toLowerCase();
@@ -4709,7 +4762,7 @@ var init_orders = __esm({
       Delivered: "order_delivered",
       Cancelled: "order_cancelled"
     };
-    router3.get("/", async (_req, res) => {
+    router3.get("/", requireAdmin, async (_req, res) => {
       try {
         const data = await fetchResource("orders") || [];
         const validOrders = data.filter((o) => o && o.id);
@@ -4717,6 +4770,24 @@ var init_orders = __esm({
       } catch (err) {
         console.error("[Orders Router] GET Error:", err);
         res.status(500).json({ error: err.message || "Failed to fetch orders" });
+      }
+    });
+    router3.get("/mine", requireCustomer, async (req, res) => {
+      try {
+        const email = req.customer?.email;
+        if (!email) {
+          return res.status(400).json({
+            error: "This endpoint returns the signed-in customer's own orders. Use GET /api/orders as an administrator."
+          });
+        }
+        const data = await fetchResource("orders") || [];
+        const mine = data.filter(
+          (o) => o && o.id && String(o.customerEmail || "").toLowerCase() === email
+        );
+        res.json(mine);
+      } catch (err) {
+        console.error("[Orders Router] GET /mine Error:", err);
+        res.status(500).json({ error: err.message || "Failed to fetch your orders" });
       }
     });
     router3.get("/:id", async (req, res) => {
@@ -4784,7 +4855,7 @@ var init_orders = __esm({
         res.status(500).json({ error: err.message || "Failed to create order" });
       }
     });
-    router3.post("/", async (req, res) => {
+    router3.post("/", requireAdmin, async (req, res) => {
       try {
         const payload = req.body;
         if (Array.isArray(payload)) {
@@ -4818,7 +4889,7 @@ var init_orders = __esm({
         res.status(500).json({ error: err.message || "Failed to persist orders" });
       }
     });
-    router3.post("/:id/cancel", async (req, res) => {
+    router3.post("/:id/cancel", requireCustomer, async (req, res) => {
       try {
         const { id } = req.params;
         const { reason, refundMethod = "original", customerEmail } = req.body;
@@ -4828,6 +4899,9 @@ var init_orders = __esm({
           return res.status(404).json({ error: "Order not found" });
         }
         const order = currentOrders[foundIdx];
+        if (!mayActOnCustomer(req, order.customerEmail)) {
+          return res.status(404).json({ error: "Order not found" });
+        }
         if (order.fulfillmentStatus === "Shipped" || order.fulfillmentStatus === "Delivered") {
           return res.status(400).json({ error: "Order has already shipped and cannot be directly cancelled. Please request a return." });
         }
@@ -4886,7 +4960,7 @@ var init_orders = __esm({
         res.status(500).json({ error: err.message || "Failed to cancel order" });
       }
     });
-    router3.post("/:id/return-request", async (req, res) => {
+    router3.post("/:id/return-request", requireCustomer, async (req, res) => {
       try {
         const { id } = req.params;
         const { type, reason, itemsToReturn, exchangeNotes, refundMethod } = req.body;
@@ -4899,6 +4973,9 @@ var init_orders = __esm({
           return res.status(404).json({ error: "Order not found" });
         }
         const order = currentOrders[foundIdx];
+        if (!mayActOnCustomer(req, order.customerEmail)) {
+          return res.status(404).json({ error: "Order not found" });
+        }
         const returnRequest = {
           type: type || "Return",
           // 'Return' | 'Refund' | 'Exchange'
@@ -7365,6 +7442,7 @@ import fs4 from "fs";
 
 // backend/routes/crudHelper.ts
 init_serverDb();
+init_requireAdmin();
 import { Router } from "express";
 function createCrudRouter(resourceName) {
   const router19 = Router();
@@ -7389,7 +7467,7 @@ function createCrudRouter(resourceName) {
       res.status(500).json({ error: err.message || `Failed to fetch ${resourceName} item` });
     }
   });
-  router19.post("/", async (req, res) => {
+  router19.post("/", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       const database = await getDb();
@@ -7412,7 +7490,7 @@ function createCrudRouter(resourceName) {
       res.status(500).json({ error: err.message || `Failed to persist ${resourceName}` });
     }
   });
-  router19.put("/:id", async (req, res) => {
+  router19.put("/:id", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       if (!payload || typeof payload !== "object") {
@@ -7432,7 +7510,7 @@ function createCrudRouter(resourceName) {
       res.status(500).json({ error: err.message || `Failed to update ${resourceName} item` });
     }
   });
-  router19.delete("/:id", async (req, res) => {
+  router19.delete("/:id", requireAdmin, async (req, res) => {
     try {
       const database = await getDb();
       if (!database) {
@@ -7900,7 +7978,7 @@ router5.get("/", async (_req, res) => {
     return res.status(500).json({ error: err.message || "Failed to fetch files" });
   }
 });
-router5.post("/", async (req, res) => {
+router5.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -8083,6 +8161,7 @@ async function verifyRecaptchaToken(token, expectedAction) {
 
 // backend/routes/customers.ts
 init_adminAuth();
+init_requireAdmin();
 var router6 = Router5();
 function hashPassword(password) {
   return crypto3.createHash("sha256").update(password + "pouch_supply_salt_123!").digest("hex");
@@ -8115,7 +8194,7 @@ async function enrichCustomerAgeStatus(customer) {
   }
   return customer;
 }
-router6.get("/", async (req, res) => {
+router6.get("/", requireAdmin, async (req, res) => {
   try {
     const data = await fetchResource("customers");
     const sanitized = data.map(({ passwordHash, ...rest }) => rest);
@@ -8125,11 +8204,14 @@ router6.get("/", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch customers" });
   }
 });
-router6.get("/by-email", async (req, res) => {
+router6.get("/by-email", requireCustomer, async (req, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
     if (!email) {
       return res.status(400).json({ error: "Email query parameter is required." });
+    }
+    if (!mayActOnCustomer(req, email)) {
+      return res.status(404).json({ error: "Customer not found." });
     }
     const customersList = await fetchResource("customers");
     const found = customersList.find((c) => c.email.toLowerCase() === email);
@@ -8143,7 +8225,7 @@ router6.get("/by-email", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch customer" });
   }
 });
-router6.post("/", async (req, res) => {
+router6.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -8237,7 +8319,10 @@ router6.post("/signup", async (req, res) => {
     const { passwordHash, ...safeCustomer } = newCustomer;
     res.status(201).json({
       message: "Registration successful!",
-      customer: safeCustomer
+      customer: safeCustomer,
+      // Signs the new account in. Without a token the client would hold a
+      // customer object it cannot prove belongs to it.
+      token: signCustomerToken(emailTrim)
     });
   } catch (err) {
     console.error("[Customer Auth] Signup Error:", err);
@@ -8434,7 +8519,8 @@ router6.post("/login", async (req, res) => {
     const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     res.json({
       message: "Login successful!",
-      customer: enrichedCustomer
+      customer: enrichedCustomer,
+      token: signCustomerToken(emailTrim)
     });
   } catch (err) {
     console.error("[Customer Auth] Login Error:", err);
@@ -8471,7 +8557,8 @@ router6.post("/google-login", async (req, res) => {
       const enrichedCustomer2 = await enrichCustomerAgeStatus(safeCustomer2);
       return res.json({
         message: "Logged in via Google successfully!",
-        customer: enrichedCustomer2
+        customer: enrichedCustomer2,
+        token: signCustomerToken(emailTrim)
       });
     }
     const newId = `cust_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -8505,7 +8592,8 @@ router6.post("/google-login", async (req, res) => {
     const enrichedCustomer = await enrichCustomerAgeStatus(safeCustomer);
     return res.json({
       message: "Account created with Google!",
-      customer: enrichedCustomer
+      customer: enrichedCustomer,
+      token: signCustomerToken(emailTrim)
     });
   } catch (err) {
     console.error("[Customer Auth] Google Login Error:", err);
@@ -8545,7 +8633,7 @@ router6.post("/admin-login", async (req, res) => {
     res.status(500).json({ error: err.message || "Internal server error during admin validation" });
   }
 });
-router6.post("/update-profile", async (req, res) => {
+router6.post("/update-profile", requireCustomer, async (req, res) => {
   try {
     const customerData = req.body.customer || req.body;
     if (!customerData || !customerData.email && !customerData.id) {
@@ -8564,6 +8652,9 @@ router6.post("/update-profile", async (req, res) => {
       return res.status(404).json({ error: "Customer account not found." });
     }
     const existing = customersList[foundIndex];
+    if (!mayActOnCustomer(req, existing.email)) {
+      return res.status(403).json({ error: "You can only update your own profile." });
+    }
     const updated = {
       ...existing,
       ...customerData,
@@ -8620,6 +8711,7 @@ var customers_default = router6;
 
 // backend/routes/discounts.ts
 init_serverDb();
+init_requireAdmin();
 import { Router as Router6 } from "express";
 var router7 = Router6();
 router7.get("/", async (req, res) => {
@@ -8631,7 +8723,7 @@ router7.get("/", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch discounts" });
   }
 });
-router7.post("/", async (req, res) => {
+router7.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -8658,6 +8750,7 @@ var customPages_default = router8;
 
 // backend/routes/blogs.ts
 init_serverDb();
+init_requireAdmin();
 import { Router as Router7 } from "express";
 var router9 = Router7();
 router9.get("/", async (req, res) => {
@@ -8669,7 +8762,7 @@ router9.get("/", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch blogs" });
   }
 });
-router9.post("/", async (req, res) => {
+router9.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -13516,6 +13609,7 @@ var agechecked_default = router17;
 // backend/routes/auth.ts
 init_serverDb();
 init_emailService();
+init_adminAuth();
 import { Router as Router15 } from "express";
 var router18 = Router15();
 function getRedirectUri(req) {
@@ -13766,26 +13860,37 @@ async function handleGoogleOAuthCallback(req, res) {
 }
 router18.get("/session", async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const email = req.headers["x-user-email"];
-      if (email) {
-        const customersList = await fetchResource("customers");
-        const found = customersList.find((c) => c.email.toLowerCase() === email.toLowerCase());
-        if (found) {
-          const { passwordHash, ...safeCustomer } = found;
-          return res.json({
-            user: {
-              name: safeCustomer.name,
-              email: safeCustomer.email,
-              image: safeCustomer.avatarUrl
-            },
-            customer: safeCustomer
-          });
-        }
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    let session = null;
+    try {
+      session = verifyCustomerToken(token);
+    } catch (err) {
+      if (err instanceof AdminAuthNotConfiguredError) {
+        console.error("[Auth] Session lookup refused:", err.message);
+        return res.status(503).json({ user: null, customer: null, code: "AUTH_NOT_CONFIGURED" });
       }
+      throw err;
     }
-    return res.json({ user: null, customer: null });
+    if (!session) {
+      return res.json({ user: null, customer: null });
+    }
+    const customersList = await fetchResource("customers");
+    const found = customersList.find(
+      (c) => String(c?.email || "").toLowerCase() === session.sub
+    );
+    if (!found) {
+      return res.json({ user: null, customer: null });
+    }
+    const { passwordHash, ...safeCustomer } = found;
+    return res.json({
+      user: {
+        name: safeCustomer.name,
+        email: safeCustomer.email,
+        image: safeCustomer.avatarUrl
+      },
+      customer: safeCustomer
+    });
   } catch (err) {
     return res.json({ user: null, customer: null });
   }

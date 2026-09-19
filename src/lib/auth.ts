@@ -387,6 +387,9 @@ export async function signOut(): Promise<void> {
   try {
     localStorage.removeItem('ps_logged_in_customer');
     sessionStorage.removeItem('ps_logged_in_customer');
+    // The session token is the actual credential — leaving it behind would keep
+    // the account reachable from this browser after signing out.
+    localStorage.removeItem('ps_customer_token');
     localStorage.removeItem('agechecked-approved');
     localStorage.removeItem('ageVerified');
     localStorage.removeItem('agechecked-verified-at');

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { fetchResource, saveResource } from '../../serverDb';
 import { sendWelcomeEmail } from '../services/emailService';
+import { verifyCustomerToken, AdminAuthNotConfiguredError } from '../services/adminAuth';
 
 const router = Router();
 
@@ -310,26 +311,52 @@ export async function handleGoogleOAuthCallback(req: Request, res: Response) {
 // Endpoint to get active Auth session
 router.get('/session', async (req: Request, res: Response) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const email = req.headers['x-user-email'] as string;
-      if (email) {
-        const customersList = await fetchResource('customers');
-        const found = customersList.find((c: any) => c.email.toLowerCase() === email.toLowerCase());
-        if (found) {
-          const { passwordHash, ...safeCustomer } = found;
-          return res.json({
-            user: {
-              name: safeCustomer.name,
-              email: safeCustomer.email,
-              image: safeCustomer.avatarUrl
-            },
-            customer: safeCustomer
-          });
-        }
+    // The session is whoever the SIGNED TOKEN says it is.
+    //
+    // This previously accepted any string beginning with "Bearer " and then read
+    // the account to return out of an `x-user-email` header — so
+    //   Authorization: Bearer x
+    //   x-user-email: someone@else.com
+    // returned that person's full customer record, with no password and no
+    // token of any kind. The header is now ignored entirely: it is caller-
+    // supplied text, and nothing about it was ever verified.
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+
+    let session: ReturnType<typeof verifyCustomerToken> = null;
+    try {
+      session = verifyCustomerToken(token);
+    } catch (err) {
+      if (err instanceof AdminAuthNotConfiguredError) {
+        console.error('[Auth] Session lookup refused:', err.message);
+        return res.status(503).json({ user: null, customer: null, code: 'AUTH_NOT_CONFIGURED' });
       }
+      throw err;
     }
-    return res.json({ user: null, customer: null });
+
+    if (!session) {
+      return res.json({ user: null, customer: null });
+    }
+
+    const customersList = await fetchResource('customers');
+    const found = customersList.find(
+      (c: any) => String(c?.email || '').toLowerCase() === session!.sub
+    );
+
+    if (!found) {
+      // Signed in, but the account no longer exists.
+      return res.json({ user: null, customer: null });
+    }
+
+    const { passwordHash, ...safeCustomer } = found;
+    return res.json({
+      user: {
+        name: safeCustomer.name,
+        email: safeCustomer.email,
+        image: safeCustomer.avatarUrl
+      },
+      customer: safeCustomer
+    });
   } catch (err: any) {
     return res.json({ user: null, customer: null });
   }

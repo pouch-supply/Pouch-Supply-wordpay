@@ -19,7 +19,7 @@ router.get("/", async (_req, res) => {
 });
 
 // POST update/sync files
-router.post("/", async (req, res) => {
+router.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -42,9 +42,6 @@ router.post("/", async (req, res) => {
 });
 
 // DELETE single file by id or url
-// POST "/" is deliberately NOT gated yet: the storefront's bulk-sync effect in
-// App.tsx posts to it on every visit, so locking it before that is refactored
-// would break the shop. Tracked as the next stage.
 router.delete("/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
