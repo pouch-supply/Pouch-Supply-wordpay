@@ -6528,7 +6528,7 @@ async function getRoyalMailTracking(trackingNumberOrQuery) {
 function readClickAndDropState(cdOrder) {
   const trackingNumber = cdOrder?.trackingNumber || cdOrder?.packages?.[0]?.trackingNumber || null;
   const printedOn = cdOrder?.printedOn || null;
-  const despatchedOn = cdOrder?.despatchedOn || cdOrder?.manifestedOn || null;
+  const despatchedOn = cdOrder?.shippedOn || cdOrder?.despatchedOn || cdOrder?.manifestedOn || null;
   const labelGenerated = Boolean(printedOn || trackingNumber);
   return {
     trackingNumber: trackingNumber ? String(trackingNumber) : null,
@@ -6555,7 +6555,9 @@ async function syncRoyalMailOrderStatus(orderId) {
   }
   const state = readClickAndDropState(cdOrder);
   const newTrackingNumber = state.trackingNumber || order.trackingNumber || order.trackingId || null;
-  const updatedFulfillment = order.fulfillmentStatus === "Unfulfilled" && newTrackingNumber && (state.despatchedOn || state.labelGenerated) ? "Shipped" : order.fulfillmentStatus;
+  const canAdvanceFromCurrentStatus = order.fulfillmentStatus === "Unfulfilled";
+  const despatchConfirmedByRoyalMail = Boolean(state.despatchedOn);
+  const updatedFulfillment = canAdvanceFromCurrentStatus && Boolean(newTrackingNumber) && despatchConfirmedByRoyalMail ? "Shipped" : order.fulfillmentStatus;
   const syncedOrder = {
     ...order,
     fulfillmentStatus: updatedFulfillment,
@@ -6579,7 +6581,8 @@ async function syncRoyalMailOrderStatus(orderId) {
   };
   const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
   const updatedOrder = await saveSingleOrder2(syncedOrder);
-  const message = newTrackingNumber ? `Synced with Royal Mail. Tracking ${newTrackingNumber}${updatedFulfillment === "Shipped" && order.fulfillmentStatus !== "Shipped" ? ", order marked Shipped" : ""}.` : `Synced with Royal Mail. Click & Drop order ${royalMailOrderId} exists but its label has not been generated yet, so no tracking number has been allocated.`;
+  const statusChanged = updatedFulfillment !== order.fulfillmentStatus;
+  const message = newTrackingNumber ? `Synced with Royal Mail. Tracking ${newTrackingNumber}.` + (statusChanged ? " Royal Mail confirmed despatch, so the order is now marked Shipped." : despatchConfirmedByRoyalMail ? "" : " Royal Mail has not confirmed despatch yet, so the fulfilment status is unchanged.") : `Synced with Royal Mail. Click & Drop order ${royalMailOrderId} exists but its label has not been generated yet, so no tracking number has been allocated.`;
   return {
     success: true,
     order: updatedOrder,
@@ -6594,20 +6597,28 @@ async function syncPendingRoyalMailTracking(options = {}) {
     const rm = o?.data?.royalMail;
     if (!rm?.royalMailOrderId) return false;
     if (o.fulfillmentStatus === "Cancelled") return false;
-    const hasTracking = Boolean(o.trackingNumber || o.trackingId || rm.trackingNumber);
-    return !hasTracking;
+    if (!rm.trackingNumber) return true;
+    return !rm.despatchedOn && o.fulfillmentStatus === "Unfulfilled";
   }).slice(0, limit);
   const results = [];
   let updated = 0;
   for (const order of pending) {
     const orderId = String(order.id);
     try {
+      const hadTracking = Boolean(order?.data?.royalMail?.trackingNumber);
       const res = await syncRoyalMailOrderStatus(orderId);
       const tracking = res.order?.trackingNumber || res.order?.data?.royalMail?.trackingNumber || null;
-      if (tracking) {
+      const despatched = Boolean(res.order?.data?.royalMail?.despatchedOn);
+      if (tracking && !hadTracking) {
         updated++;
         console.log(`[RoyalMail Sync] Order ${orderId}: tracking ${tracking} collected from Click & Drop.`);
         results.push({ orderId, status: "tracking_found", trackingNumber: tracking });
+      } else if (despatched) {
+        if (!hadTracking) updated++;
+        console.log(`[RoyalMail Sync] Order ${orderId}: despatch confirmed by Royal Mail.`);
+        results.push({ orderId, status: "despatch_confirmed", trackingNumber: tracking });
+      } else if (tracking) {
+        results.push({ orderId, status: "awaiting_despatch", trackingNumber: tracking });
       } else {
         results.push({ orderId, status: "awaiting_label" });
       }

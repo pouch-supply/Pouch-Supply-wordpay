@@ -10,6 +10,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import SubscriptionIcon from './SubscriptionIcon';
 import { signInWithGoogle } from '../lib/auth';
+import { isProcessing, dispatchStage, dispatchLabel } from '../lib/orderStatus';
 import { useRecaptcha } from '../hooks/useRecaptcha';
 
 interface CustomerDrawerProps {
@@ -750,11 +751,13 @@ export default function CustomerDrawer({
                                       <div className="flex flex-wrap items-center gap-1.5">
                                         <span className="font-extrabold text-xs text-slate-900">{order.id}</span>
                                         <span className={`text-[8.5px] font-black uppercase py-0.5 px-2 rounded-full leading-none shrink-0 ${
-                                          order.fulfillmentStatus === 'Fulfilled' || order.fulfillmentStatus === 'Delivered'
-                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                                            : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                          dispatchStage(order.fulfillmentStatus) === 'exception'
+                                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                            : isProcessing(order.fulfillmentStatus)
+                                            ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                         }`}>
-                                          {order.fulfillmentStatus}
+                                          {dispatchLabel(order.fulfillmentStatus)}
                                         </span>
                                         {isSubOrder && (
                                           <span className="text-[8.5px] font-black uppercase py-0.5 px-2 rounded-full leading-none shrink-0 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-2xs flex items-center gap-1">
@@ -810,9 +813,10 @@ export default function CustomerDrawer({
 
                                             <div className="relative pl-5 space-y-4 before:absolute before:left-1.5 before:top-1 before:bottom-1 before:w-0.5 before:bg-slate-250">
                                               {(() => {
-                                                const isUnfulfilled = order.fulfillmentStatus === 'Unfulfilled';
-                                                const isFulfilled = order.fulfillmentStatus === 'Fulfilled';
-                                                const isDelivered = order.fulfillmentStatus === 'Delivered';
+                                                const stage = dispatchStage(order.fulfillmentStatus);
+                                                const isUnfulfilled = stage === 'processing';
+                                                const isFulfilled = stage === 'dispatched';
+                                                const isDelivered = stage === 'delivered';
 
                                                 const steps = [
                                                   {
@@ -833,8 +837,8 @@ export default function CustomerDrawer({
                                                     label: 'Dispatched',
                                                     active: isFulfilled,
                                                     completed: isDelivered,
-                                                    date: isUnfulfilled ? 'Pending' : (isFulfilled ? 'In Transit' : 'Departed hub'),
-                                                    desc: 'In transit with postal carrier.'
+                                                    date: isUnfulfilled ? 'Pending' : (isFulfilled ? 'Dispatched' : 'Departed hub'),
+                                                    desc: 'Handed over to postal carrier.'
                                                   },
                                                   {
                                                     label: 'Delivered',

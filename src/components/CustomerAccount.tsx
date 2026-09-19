@@ -24,6 +24,7 @@ import FreeCanPicker from './FreeCanPicker';
 import { RewardChoicePicker, AppliedRewardLines } from './RewardSelection';
 import { motion, AnimatePresence } from 'motion/react';
 import { signInWithGoogle } from '../lib/auth';
+import { isDelivered, isDispatched, isProcessing, dispatchStage, dispatchLabel } from '../lib/orderStatus';
 import SubscriptionIcon from './SubscriptionIcon';
 import { useRecaptcha } from '../hooks/useRecaptcha';
 import { getPlanImage, getPlanSlug, detectPlanTier } from '../utils/planImages';
@@ -1411,8 +1412,15 @@ export default function CustomerAccount({
       return { label: 'Delivered', detail: delivered?.timestamp || null };
     }
 
+    // A tracking number is allocated when the label is generated, which happens
+    // days before the parcel is handed over. Only Royal Mail's own despatch
+    // confirmation — or an admin moving the order — means it has actually left.
+    if (isDispatched(fulfilment) || rm?.despatchedOn) {
+      return { label: 'Dispatched with Royal Mail', detail: tracking ? `Tracking ${tracking}` : null };
+    }
+
     if (tracking) {
-      return { label: 'In transit with Royal Mail', detail: `Tracking ${tracking}` };
+      return { label: 'Label printed, awaiting despatch', detail: `Tracking ${tracking}` };
     }
 
     if (rm?.royalMailOrderId) {
@@ -2560,14 +2568,15 @@ export default function CustomerAccount({
   };
 
   const getTimelineSteps = (order: Order) => {
-    const isUnfulfilled = order.fulfillmentStatus === 'Unfulfilled';
-    const isFulfilled = order.fulfillmentStatus === 'Fulfilled';
-    const isDelivered = order.fulfillmentStatus === 'Delivered';
+    const stage = dispatchStage(order.fulfillmentStatus);
+    const isProcessingStage = stage === 'processing';
+    const isDispatchedStage = stage === 'dispatched';
+    const isDeliveredStage = stage === 'delivered';
     return [
       { key: 'placed', label: 'Placed', description: 'Order received and payment confirmed.', status: 'completed', date: order.date },
-      { key: 'processing', label: 'Processing', description: 'Active assembly & quality inspection.', status: isUnfulfilled ? 'current' : 'completed', date: isUnfulfilled ? 'Current step' : `${order.date} (Success)` },
-      { key: 'dispatched', label: 'Dispatched', description: 'Departed sorting facility.', status: isUnfulfilled ? 'pending' : (isFulfilled ? 'current' : 'completed'), date: isUnfulfilled ? 'Pending shipment' : (isFulfilled ? 'In Transit' : 'Departed hub') },
-      { key: 'delivered', label: 'Delivered', description: 'Arrived at your doorstep successfully.', status: isDelivered ? 'completed' : 'pending', date: isDelivered ? 'Handed to customer' : 'Awaiting delivery estimates' }
+      { key: 'processing', label: 'Processing', description: 'Active assembly & quality inspection.', status: isProcessingStage ? 'current' : 'completed', date: isProcessingStage ? 'Current step' : `${order.date} (Success)` },
+      { key: 'dispatched', label: 'Dispatched', description: 'Departed sorting facility.', status: isProcessingStage ? 'pending' : (isDispatchedStage ? 'current' : 'completed'), date: isProcessingStage ? 'Pending shipment' : (isDispatchedStage ? 'Dispatched' : 'Departed hub') },
+      { key: 'delivered', label: 'Delivered', description: 'Arrived at your doorstep successfully.', status: isDeliveredStage ? 'completed' : 'pending', date: isDeliveredStage ? 'Handed to customer' : 'Awaiting delivery estimates' }
     ];
   };
 
@@ -2863,8 +2872,8 @@ export default function CustomerAccount({
                     <div className="space-y-1">
                       <span className="text-[8.5px] text-slate-400 uppercase font-extrabold block">Current Location / Status</span>
                       <strong className="text-slate-800 font-black uppercase text-[11px] block">
-                        {trackedOrder.fulfillmentStatus === 'Delivered' ? 'DELIVERED & SIGNED' : 
-                         trackedOrder.fulfillmentStatus === 'Fulfilled' ? 'IN TRANSIT' : 'AWAITING COLLECTION'}
+                        {isDelivered(trackedOrder.fulfillmentStatus) ? 'DELIVERED & SIGNED' :
+                         isDispatched(trackedOrder.fulfillmentStatus) ? 'DISPATCHED' : 'AWAITING COLLECTION'}
                       </strong>
                     </div>
 
@@ -3325,12 +3334,11 @@ export default function CustomerAccount({
                               Your Latest Order (#{myOrders[0].id})
                             </h3>
                             <span className={`text-[10px] font-bold py-1 px-3 rounded-full border ${
-                              myOrders[0].fulfillmentStatus === 'Delivered' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                              myOrders[0].fulfillmentStatus === 'Fulfilled' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                              isDelivered(myOrders[0].fulfillmentStatus) ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                              isDispatched(myOrders[0].fulfillmentStatus) ? 'bg-blue-50 text-blue-700 border-blue-200' :
                               'bg-amber-50 text-amber-700 border-amber-200'
                             }`}>
-                              {myOrders[0].fulfillmentStatus === 'Delivered' ? 'Delivered' : 
-                               myOrders[0].fulfillmentStatus === 'Fulfilled' ? 'Dispatched' : 'Processing'}
+                              {dispatchLabel(myOrders[0].fulfillmentStatus)}
                             </span>
                           </div>
 
@@ -3596,18 +3604,24 @@ export default function CustomerAccount({
                         }
 
                         // Royal Mail Live Tracking Card
-                        const events = (liveTrackingInfo?.events && liveTrackingInfo.events.length > 0)
-                          ? liveTrackingInfo.events
+                        // `history` and `recipientLocation` are what the tracking
+                        // endpoint returns (TrackingResult). Reading `events` and
+                        // `lastLocation` here meant the live scan list and depot
+                        // silently fell back to the stored copy on every lookup.
+                        const events = (liveTrackingInfo?.history && liveTrackingInfo.history.length > 0)
+                          ? liveTrackingInfo.history
                           : (trackedOrder.trackingHistory || []);
-                        
-                        const displayStatus = liveTrackingInfo?.status || 
-                          (trackedOrder.fulfillmentStatus === 'Delivered' ? 'Delivered & Signed' : 
-                           trackedOrder.fulfillmentStatus === 'Fulfilled' || trackedOrder.fulfillmentStatus === 'Shipped' ? 'In Transit via Royal Mail' : 'Awaiting Collection');
 
-                        const estimatedArrival = liveTrackingInfo?.estimatedDelivery || 
-                          (trackedOrder.fulfillmentStatus === 'Delivered' ? 'Delivered successfully' : 'Within 24-48 Hours');
+                        // Only a live Royal Mail scan may claim the parcel is moving;
+                        // without one we can say it left us, and no more than that.
+                        const displayStatus = liveTrackingInfo?.status ||
+                          (isDelivered(trackedOrder.fulfillmentStatus) ? 'Delivered & Signed' :
+                           isDispatched(trackedOrder.fulfillmentStatus) ? 'Dispatched via Royal Mail' : 'Awaiting Collection');
 
-                        const lastDepot = liveTrackingInfo?.lastLocation || 
+                        const estimatedArrival = liveTrackingInfo?.estimatedDelivery ||
+                          (isDelivered(trackedOrder.fulfillmentStatus) ? 'Delivered successfully' : 'Within 24-48 Hours');
+
+                        const lastDepot = liveTrackingInfo?.recipientLocation ||
                           (events.length > 0 ? events[0].location : 'Royal Mail National Hub');
 
                         return (
@@ -3656,7 +3670,7 @@ export default function CustomerAccount({
                                   <span className="text-[9px] text-slate-400 uppercase font-extrabold block">Current Status</span>
                                   <span className={`text-sm font-black uppercase tracking-wide flex items-center gap-1.5 mt-0.5 ${
                                     trackedOrder.fulfillmentStatus === 'Delivered' ? 'text-emerald-600' :
-                                    (trackedOrder.fulfillmentStatus === 'Fulfilled' || trackedOrder.fulfillmentStatus === 'Shipped') ? 'text-rose-600 animate-pulse' : 'text-[#dfa047]'
+                                    isDispatched(trackedOrder.fulfillmentStatus) ? 'text-rose-600 animate-pulse' : 'text-[#dfa047]'
                                   }`}>
                                     <span className="inline-block w-2.5 h-2.5 rounded-full bg-current" />
                                     {displayStatus}
@@ -3680,15 +3694,15 @@ export default function CustomerAccount({
                               <div className="relative pt-2 pb-4">
                                 <div className="absolute top-[2.1rem] left-8 right-8 h-1 bg-slate-200" />
                                 <div className="absolute top-[2.1rem] left-8 h-1 bg-[#e1192e] transition-all duration-500" style={{
-                                  width: trackedOrder.fulfillmentStatus === 'Delivered' ? 'calc(100% - 64px)' :
-                                         (trackedOrder.fulfillmentStatus === 'Fulfilled' || trackedOrder.fulfillmentStatus === 'Shipped') ? '50%' : '0%'
+                                  width: isDelivered(trackedOrder.fulfillmentStatus) ? 'calc(100% - 64px)' :
+                                         isDispatched(trackedOrder.fulfillmentStatus) ? '50%' : '0%'
                                 }} />
 
                                 <div className="flex justify-between items-start text-center relative z-10">
                                   {[
                                     { id: 'placed', label: 'Accepted', desc: 'Package registered', status: 'completed' },
-                                    { id: 'transit', label: 'In Transit', desc: 'Outward MC hub', status: trackedOrder.fulfillmentStatus !== 'Unfulfilled' ? 'completed' : 'pending' },
-                                    { id: 'delivered', label: 'Delivered', desc: 'At destination', status: trackedOrder.fulfillmentStatus === 'Delivered' ? 'completed' : 'pending' }
+                                    { id: 'transit', label: 'Dispatched', desc: 'Outward MC hub', status: isProcessing(trackedOrder.fulfillmentStatus) ? 'pending' : 'completed' },
+                                    { id: 'delivered', label: 'Delivered', desc: 'At destination', status: isDelivered(trackedOrder.fulfillmentStatus) ? 'completed' : 'pending' }
                                   ].map((pt, idx) => (
                                     <div key={idx} className="flex flex-col items-center flex-1">
                                       <div className={`w-10 h-10 rounded-full border-4 flex items-center justify-center transition-all ${
@@ -5764,12 +5778,12 @@ export default function CustomerAccount({
                 <div className="flex justify-between items-center text-slate-500">
                   <span>Fulfillment Status</span>
                   <span className={`font-black uppercase text-[10px] px-2.5 py-0.5 rounded-md ${
-                    selectedOrderDetails.fulfillmentStatus === 'Fulfilled' ? 'bg-emerald-100 text-emerald-800' :
                     selectedOrderDetails.fulfillmentStatus === 'Cancelled' ? 'bg-rose-100 text-rose-800' :
                     selectedOrderDetails.fulfillmentStatus === 'Exchanged' ? 'bg-indigo-100 text-indigo-800' :
+                    !isProcessing(selectedOrderDetails.fulfillmentStatus) ? 'bg-emerald-100 text-emerald-800' :
                     'bg-amber-100 text-amber-800'
                   }`}>
-                    {selectedOrderDetails.fulfillmentStatus}
+                    {dispatchLabel(selectedOrderDetails.fulfillmentStatus)}
                   </span>
                 </div>
 
