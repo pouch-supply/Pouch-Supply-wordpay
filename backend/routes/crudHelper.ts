@@ -9,7 +9,19 @@ import { requireAdmin } from "../middleware/requireAdmin";
  * and are now gated: POST with an array REPLACES the entire resource, so an
  * anonymous request could previously empty or rewrite the whole catalogue.
  */
-export function createCrudRouter(resourceName: string): Router {
+export interface CrudRouterOptions {
+  /**
+   * Runs after a successful array save, with the resource as it was before and
+   * as it now is. Used where a save has consequences beyond the row itself —
+   * a subscription plan price change has to reach existing subscribers.
+   *
+   * Awaited but never allowed to fail the request: the save has already
+   * happened, so throwing here would report failure for work that succeeded.
+   */
+  onAfterReplace?: (before: any[], after: any[]) => Promise<void>;
+}
+
+export function createCrudRouter(resourceName: string, options: CrudRouterOptions = {}): Router {
   const router = Router();
 
   // GET all items
@@ -50,7 +62,18 @@ export function createCrudRouter(resourceName: string): Router {
       }
 
       if (Array.isArray(payload)) {
+        // Captured before the write so a hook can see what actually changed.
+        const before = options.onAfterReplace ? ((await fetchResource(resourceName)) || []) : [];
         const updated = await saveResource(resourceName, payload);
+
+        if (options.onAfterReplace) {
+          try {
+            await options.onAfterReplace(before, payload);
+          } catch (hookErr: any) {
+            console.error(`[${resourceName} Router] after-save hook failed:`, hookErr?.message || hookErr);
+          }
+        }
+
         return res.json(updated);
       } else if (payload && typeof payload === "object") {
         const updatedItem = await saveSingleItem(resourceName, payload);

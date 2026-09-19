@@ -7,6 +7,7 @@ import {
   isPlaceholderCredential
 } from './worldpaySubscription';
 import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from './subscriptionBox';
+import { resolveEffectiveAmount, clearedPendingFields } from './subscriptionPricingService';
 
 export interface RenewalResult {
   processed: number;
@@ -359,7 +360,20 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       const recurringHref = sub.worldpayRecurringHref || sub.recurringHref;
       const schemeReference = sub.worldpaySchemeReference;
       const tokenHref = sub.worldpayTokenHref || sub.tokenHref;
-      const amount = Number(sub.amount || 25.0);
+      // The price in force for THIS renewal.
+      //
+      // A plan price an admin changed is held as a pending amount with an
+      // effective date, so a renewal falling inside the notice period is still
+      // charged the old price. Once the date has passed the pending amount
+      // becomes the charge, and is promoted into `amount` below after the
+      // payment succeeds — never before, so a failed charge does not silently
+      // move the customer onto a new price.
+      const { amount, promote: promotePendingAmount } = resolveEffectiveAmount(sub, now);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        console.warn(`[Subscription Worker] Sub ${subId} has no usable amount; skipping.`);
+        results.push({ subscriptionId: subId, status: 'skipped', reason: 'No chargeable amount' });
+        continue;
+      }
       const currency = sub.currency || 'GBP';
       const planName = planTitleFromSubscription(sub);
       const interval = normalizeBillingInterval(sub.billingInterval);
@@ -612,7 +626,7 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
         } catch (_rmErr) {}
 
         // 4. Record the successful payment against the subscription
-        const updateData = {
+        const updateData: Record<string, any> = {
           lastPaymentStatus: 'authorized',
           lastPaymentId: chargeResult?.id || transactionReference,
           lastPaymentAt: new Date(),
@@ -622,6 +636,17 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
           nextBillingDate: claimedNextBilling,
           failedPaymentCount: 0
         };
+
+        // A scheduled price that has now been charged becomes the standing one.
+        // Done only on success: promoting it after a declined payment would
+        // leave the customer on a new price they were never actually charged.
+        if (promotePendingAmount) {
+          updateData.amount = amount;
+          Object.assign(updateData, clearedPendingFields());
+          console.log(
+            `[Subscription Worker] Sub ${subId}: scheduled price £${amount.toFixed(2)} is now in force.`
+          );
+        }
         await persistSubscriptionUpdate(subId, updateData);
 
         // Update customer stats and next payment date

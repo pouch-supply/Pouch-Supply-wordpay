@@ -2657,6 +2657,64 @@ function renderDeliveredTemplate(data) {
     </div>
   ` + renderBaseFooter();
 }
+function renderSubscriptionPriceChangeTemplate(data) {
+  const name = data.customerName || "Valued Customer";
+  const plan = data.planName || "your plan";
+  const previous = Number(data.previousAmount) || 0;
+  const next = Number(data.newAmount) || 0;
+  const isIncrease = next > previous;
+  const every = data.billingInterval ? ` (${data.billingInterval})` : "";
+  const effective = (() => {
+    const d = data.effectiveFrom ? new Date(data.effectiveFrom) : null;
+    if (!d || isNaN(d.getTime())) return "your next renewal";
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  })();
+  const headline = isIncrease ? `The price of ${plan} is going up` : `Good news \u2014 ${plan} is getting cheaper`;
+  return renderBaseHeader("Your subscription price is changing", headline, data) + `
+    <div class="card">
+      <p style="font-size: 14px; color: #0f172a; font-weight: 700; margin: 0 0 12px 0;">
+        Hi ${name},
+      </p>
+      <p style="font-size: 13px; color: #475569; margin: 0 0 16px 0;">
+        We're letting you know that the price of your subscription is changing.
+        You don't need to do anything \u2014 your deliveries continue as normal.
+      </p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin: 0 0 16px 0;">
+        <tr>
+          <td style="padding: 8px 0; font-size: 13px; color: #64748b;">Your plan</td>
+          <td style="padding: 8px 0; font-size: 13px; color: #0f172a; font-weight: 800; text-align: right;">${plan}${every}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0;">Current price</td>
+          <td style="padding: 8px 0; font-size: 13px; color: #64748b; font-weight: 700; text-align: right; border-top: 1px solid #e2e8f0; text-decoration: line-through;">\xA3${previous.toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-size: 13px; color: #0f172a; font-weight: 800; border-top: 1px solid #e2e8f0;">New price</td>
+          <td style="padding: 8px 0; font-size: 16px; color: ${isIncrease ? "#b91c1c" : "#15803d"}; font-weight: 900; text-align: right; border-top: 1px solid #e2e8f0;">\xA3${next.toFixed(2)}</td>
+        </tr>
+      </table>
+
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+        <p style="font-size: 13px; color: #0f172a; margin: 0; font-weight: 700;">
+          From ${effective}, your next recurring payment will be \xA3${next.toFixed(2)}.
+        </p>
+        <p style="font-size: 12px; color: #64748b; margin: 6px 0 0 0;">
+          Any delivery before that date is charged at your current price of \xA3${previous.toFixed(2)}.
+        </p>
+      </div>
+    </div>
+
+    <p style="font-size: 13px; color: #475569; text-align: center;">
+      Happy with the change? There's nothing to do. If you'd rather adjust or cancel your plan,
+      you can do that any time from your account before ${effective}.
+    </p>
+
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${data.siteUrl || "#"}/pages/account/subscriptions" class="btn">Manage My Subscription</a>
+    </div>
+  ` + renderBaseFooter();
+}
 function renderOrderCancelledTemplate(data) {
   const name = data.customerName || "Valued Customer";
   const orderId = data.orderId || "PS10001";
@@ -2857,6 +2915,7 @@ __export(emailService_exports, {
   sendOrderShippedEmail: () => sendOrderShippedEmail,
   sendOutForDeliveryEmail: () => sendOutForDeliveryEmail,
   sendPasswordResetEmail: () => sendPasswordResetEmail,
+  sendSubscriptionPriceChangeEmail: () => sendSubscriptionPriceChangeEmail,
   sendWelcomeEmail: () => sendWelcomeEmail,
   verifyEmailConnection: () => verifyEmailConnection
 });
@@ -3105,6 +3164,9 @@ async function sendEmail(type, recipient, data, customSubject, apiKeyOverride, f
       break;
     case "order_delivered":
       html = renderDeliveredTemplate(data);
+      break;
+    case "subscription_price_change":
+      html = renderSubscriptionPriceChangeTemplate(data);
       break;
     case "order_cancelled":
       html = renderOrderCancelledTemplate(data);
@@ -3435,6 +3497,20 @@ async function sendDeliveredEmail(orderData) {
   };
   return sendEmail("order_delivered", recipient, data);
 }
+async function sendSubscriptionPriceChangeEmail(change) {
+  const recipient = String(change.customerEmail || "").trim();
+  if (!recipient) throw new Error("A price-change notice needs a recipient.");
+  const data = {
+    customerName: change.customerName,
+    customerEmail: recipient,
+    planName: change.planName,
+    previousAmount: change.previousAmount,
+    newAmount: change.newAmount,
+    effectiveFrom: change.effectiveFrom,
+    billingInterval: change.billingInterval
+  };
+  return sendEmail("subscription_price_change", recipient, data);
+}
 async function sendOrderCancelledEmail(orderData, reason) {
   const recipient = (orderData.customerEmail || "customer@pouch-supply.com").trim();
   const data = {
@@ -3542,6 +3618,7 @@ var init_emailService = __esm({
         order_cancelled: { enabled: true, subject: "Order Cancellation Notice - Pouch Supply Co." },
         order_refunded: { enabled: true, subject: "Refund Confirmation - Pouch Supply Co." },
         order_exchanged: { enabled: true, subject: "Product Exchange Confirmation - Pouch Supply Co." },
+        subscription_price_change: { enabled: true, subject: "Your subscription price is changing - Pouch Supply Co." },
         password_reset: { enabled: true, subject: "Reset Your Password - Pouch Supply Co." },
         email_verification: { enabled: true, subject: "Verify Your Email Address - Pouch Supply Co." },
         welcome_email: { enabled: true, subject: "Welcome to Pouch Supply Co. - 10% Off Inside!" },
@@ -5115,6 +5192,242 @@ var init_orders = __esm({
       }
     });
     orders_default = router3;
+  }
+});
+
+// backend/services/planCatalogue.ts
+function normalisePlan(raw) {
+  const slug = String(raw?.slug || "").trim().toLowerCase();
+  const price = Number(raw?.price);
+  if (!slug || !Number.isFinite(price) || price <= 0) return null;
+  return {
+    slug,
+    name: String(raw?.name || slug).trim(),
+    price,
+    limit: Number(raw?.limit) || 0
+  };
+}
+async function getPlanCatalogue(pages) {
+  let customPages = pages;
+  if (!customPages) {
+    try {
+      customPages = await fetchResource("customPages") || [];
+    } catch {
+      customPages = [];
+    }
+  }
+  const bySlug = /* @__PURE__ */ new Map();
+  for (const page of customPages || []) {
+    const sections = Array.isArray(page?.sections) ? page.sections : [];
+    for (const section of sections) {
+      if (String(section?.type || "") !== "Plans") continue;
+      const items = section?.settings?.planItems;
+      if (!Array.isArray(items)) continue;
+      for (const item of items) {
+        const plan = normalisePlan(item);
+        if (plan && !bySlug.has(plan.slug)) bySlug.set(plan.slug, plan);
+      }
+    }
+  }
+  if (bySlug.size === 0) return [...FALLBACK_PLANS];
+  for (const fallback of FALLBACK_PLANS) {
+    if (!bySlug.has(fallback.slug)) bySlug.set(fallback.slug, fallback);
+  }
+  return Array.from(bySlug.values());
+}
+function findPlan(catalogue, planIdOrName) {
+  const raw = String(planIdOrName || "").trim().toLowerCase();
+  if (!raw) return null;
+  const exact = catalogue.find((p) => p.slug === raw);
+  if (exact) return exact;
+  const byName = catalogue.find((p) => p.name.toLowerCase() === raw);
+  if (byName) return byName;
+  const firstWord = raw.split(/[\s(]+/)[0];
+  return catalogue.find((p) => p.slug === firstWord || p.name.toLowerCase() === firstWord) || null;
+}
+function planForSubscription(catalogue, sub) {
+  return findPlan(catalogue, sub?.planId) || findPlan(catalogue, sub?.planName);
+}
+var FALLBACK_PLANS;
+var init_planCatalogue = __esm({
+  "backend/services/planCatalogue.ts"() {
+    init_serverDb();
+    FALLBACK_PLANS = [
+      { slug: "lite", name: "LITE", price: 27.99, limit: 6 },
+      { slug: "core", name: "CORE", price: 35.99, limit: 9 },
+      { slug: "pro", name: "PRO", price: 40.99, limit: 12 },
+      { slug: "ultimate", name: "ULTIMATE", price: 46.99, limit: 12 }
+    ];
+  }
+});
+
+// src/lib/subscriptionPricing.ts
+function frequencyDiscountPercent(frequency) {
+  const f = String(frequency || "").trim().toLowerCase();
+  if (f === "weekly" || f === "week" || f === "1week") return 5;
+  if (f === "one month" || f === "monthly" || f === "month" || f === "1month") return 12;
+  return 10;
+}
+function computeRecurringAmount({
+  planPrice,
+  extraCans = 0,
+  frequency,
+  shippingCost = 0
+}) {
+  const base = Number(planPrice) || 0;
+  const extras = Math.max(0, Number(extraCans) || 0) * EXTRA_CAN_PRICE;
+  const discounted = (base + extras) * ((100 - frequencyDiscountPercent(frequency)) / 100);
+  const shipping = Math.max(0, Number(shippingCost) || 0);
+  return pennies(discounted + shipping);
+}
+function defaultShippingFor(itemsTotal) {
+  return Number(itemsTotal) >= FREE_SHIPPING_THRESHOLD ? 0 : STANDARD_SHIPPING;
+}
+function existingShippingFor(sub) {
+  const candidates = [
+    sub?.shippingCost,
+    sub?.shippingFee,
+    sub?.shippingAmount,
+    sub?.deliveryCost
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return defaultShippingFor(Number(sub?.itemPrice) || 0);
+}
+var EXTRA_CAN_PRICE, pennies, FREE_SHIPPING_THRESHOLD, STANDARD_SHIPPING;
+var init_subscriptionPricing = __esm({
+  "src/lib/subscriptionPricing.ts"() {
+    EXTRA_CAN_PRICE = 3.8;
+    pennies = (n) => Number((Math.round(n * 100) / 100).toFixed(2));
+    FREE_SHIPPING_THRESHOLD = 40;
+    STANDARD_SHIPPING = 2.99;
+  }
+});
+
+// backend/services/subscriptionPricingService.ts
+function noticeDateFrom(now = /* @__PURE__ */ new Date(), days = PRICE_CHANGE_NOTICE_DAYS) {
+  const d = new Date(now.getTime());
+  d.setDate(d.getDate() + days);
+  return d;
+}
+function resolveEffectiveAmount(sub, now = /* @__PURE__ */ new Date()) {
+  const current = Number(sub?.amount);
+  const pending = Number(sub?.pendingAmount);
+  const effectiveFrom = sub?.pendingAmountEffectiveFrom ? new Date(sub.pendingAmountEffectiveFrom) : null;
+  const hasPending = Number.isFinite(pending) && pending > 0 && effectiveFrom instanceof Date && !isNaN(effectiveFrom.getTime());
+  if (hasPending && now.getTime() >= effectiveFrom.getTime()) {
+    return { amount: pending, promote: true };
+  }
+  return { amount: Number.isFinite(current) && current > 0 ? current : 0, promote: false };
+}
+function clearedPendingFields() {
+  return {
+    pendingAmount: null,
+    pendingAmountEffectiveFrom: null,
+    pendingAmountPrevious: null,
+    pendingAmountReason: null,
+    pendingAmountScheduledAt: null
+  };
+}
+function repriceForPlan(sub, plan) {
+  const included = Number(plan.limit) || 0;
+  const cans = Number(sub?.cansCount) || 0;
+  const extraCans = included > 0 && cans > included ? cans - included : 0;
+  return computeRecurringAmount({
+    planPrice: plan.price,
+    extraCans,
+    frequency: sub?.billingInterval,
+    shippingCost: existingShippingFor(sub)
+  });
+}
+async function loadBillableSubscriptions() {
+  const byId = /* @__PURE__ */ new Map();
+  try {
+    const rows = await prisma.subscription.findMany({ where: { status: "active" } });
+    for (const row of rows || []) byId.set(String(row.id), row);
+  } catch {
+  }
+  try {
+    const stored = await fetchResource("subscriptions") || [];
+    for (const row of stored) {
+      if (!row?.id) continue;
+      const key = String(row.id);
+      byId.set(key, { ...row || {}, ...byId.get(key) || {} });
+    }
+  } catch {
+  }
+  return Array.from(byId.values()).filter(
+    (s) => String(s?.status || "").toLowerCase() === "active"
+  );
+}
+async function persistPendingFields(updates) {
+  if (updates.size === 0) return;
+  const stored = await fetchResource("subscriptions") || [];
+  const next = stored.map((s) => {
+    const patch = updates.get(String(s?.id));
+    return patch ? { ...s, ...patch } : s;
+  });
+  await saveResource("subscriptions", next);
+}
+async function schedulePlanPriceChange(changedSlugs, pages, now = /* @__PURE__ */ new Date()) {
+  if (!changedSlugs.length) return [];
+  const catalogue = await getPlanCatalogue(pages);
+  const wanted = new Set(changedSlugs.map((s) => s.toLowerCase()));
+  const subs = await loadBillableSubscriptions();
+  const effectiveFrom = noticeDateFrom(now).toISOString();
+  const updates = /* @__PURE__ */ new Map();
+  const scheduled = [];
+  for (const sub of subs) {
+    const plan = planForSubscription(catalogue, sub);
+    if (!plan || !wanted.has(plan.slug)) continue;
+    const currentAmount = Number(sub.amount) || 0;
+    const newAmount = repriceForPlan(sub, plan);
+    if (!Number.isFinite(newAmount) || newAmount <= 0) continue;
+    if (Math.abs(newAmount - currentAmount) < 0.01) continue;
+    const pending = {
+      pendingAmount: newAmount,
+      pendingAmountEffectiveFrom: effectiveFrom,
+      pendingAmountPrevious: currentAmount,
+      pendingAmountReason: "admin_plan_price",
+      pendingAmountScheduledAt: now.toISOString()
+    };
+    updates.set(String(sub.id), pending);
+    scheduled.push({
+      subscriptionId: String(sub.id),
+      customerEmail: String(sub.customerEmail || ""),
+      customerName: sub.customerName || void 0,
+      planName: plan.name,
+      previousAmount: currentAmount,
+      newAmount,
+      effectiveFrom,
+      billingInterval: sub.billingInterval || void 0
+    });
+  }
+  await persistPendingFields(updates);
+  return scheduled;
+}
+function diffPlanPrices(before, after) {
+  const beforeBySlug = new Map(before.map((p) => [p.slug, p]));
+  const changes = [];
+  for (const plan of after) {
+    const old = beforeBySlug.get(plan.slug);
+    if (!old) continue;
+    if (Math.abs(Number(old.price) - Number(plan.price)) >= 0.01) {
+      changes.push({ slug: plan.slug, from: Number(old.price), to: Number(plan.price) });
+    }
+  }
+  return changes;
+}
+var PRICE_CHANGE_NOTICE_DAYS;
+var init_subscriptionPricingService = __esm({
+  "backend/services/subscriptionPricingService.ts"() {
+    init_serverDb();
+    init_prisma();
+    init_subscriptionPricing();
+    init_planCatalogue();
+    PRICE_CHANGE_NOTICE_DAYS = 14;
   }
 });
 
@@ -7154,7 +7467,12 @@ async function processDueSubscriptions() {
       const recurringHref = sub.worldpayRecurringHref || sub.recurringHref;
       const schemeReference = sub.worldpaySchemeReference;
       const tokenHref = sub.worldpayTokenHref || sub.tokenHref;
-      const amount = Number(sub.amount || 25);
+      const { amount, promote: promotePendingAmount } = resolveEffectiveAmount(sub, now);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        console.warn(`[Subscription Worker] Sub ${subId} has no usable amount; skipping.`);
+        results.push({ subscriptionId: subId, status: "skipped", reason: "No chargeable amount" });
+        continue;
+      }
       const currency = sub.currency || "GBP";
       const planName = planTitleFromSubscription(sub);
       const interval = normalizeBillingInterval(sub.billingInterval);
@@ -7322,6 +7640,13 @@ async function processDueSubscriptions() {
           nextBillingDate: claimedNextBilling,
           failedPaymentCount: 0
         };
+        if (promotePendingAmount) {
+          updateData.amount = amount;
+          Object.assign(updateData, clearedPendingFields());
+          console.log(
+            `[Subscription Worker] Sub ${subId}: scheduled price \xA3${amount.toFixed(2)} is now in force.`
+          );
+        }
         await persistSubscriptionUpdate(subId, updateData);
         try {
           const customers = await fetchResource("customers") || [];
@@ -7397,6 +7722,7 @@ var init_subscriptionCron = __esm({
     init_serverDb();
     init_worldpaySubscription();
     init_subscriptionBox();
+    init_subscriptionPricingService();
     PRISMA_SUBSCRIPTION_FIELDS = /* @__PURE__ */ new Set([
       "customerId",
       "customerEmail",
@@ -7444,7 +7770,7 @@ import fs4 from "fs";
 init_serverDb();
 init_requireAdmin();
 import { Router } from "express";
-function createCrudRouter(resourceName) {
+function createCrudRouter(resourceName, options = {}) {
   const router19 = Router();
   router19.get("/", async (req, res) => {
     try {
@@ -7477,7 +7803,15 @@ function createCrudRouter(resourceName) {
         res.setHeader("X-Database-Offline", "false");
       }
       if (Array.isArray(payload)) {
+        const before = options.onAfterReplace ? await fetchResource(resourceName) || [] : [];
         const updated = await saveResource(resourceName, payload);
+        if (options.onAfterReplace) {
+          try {
+            await options.onAfterReplace(before, payload);
+          } catch (hookErr) {
+            console.error(`[${resourceName} Router] after-save hook failed:`, hookErr?.message || hookErr);
+          }
+        }
         return res.json(updated);
       } else if (payload && typeof payload === "object") {
         const updatedItem = await saveSingleItem(resourceName, payload);
@@ -8745,7 +9079,47 @@ router7.post("/", requireAdmin, async (req, res) => {
 var discounts_default = router7;
 
 // backend/routes/customPages.ts
-var router8 = createCrudRouter("customPages");
+init_planCatalogue();
+init_subscriptionPricingService();
+init_emailService();
+var router8 = createCrudRouter("customPages", {
+  onAfterReplace: async (before, after) => {
+    const previousPlans = await getPlanCatalogue(before);
+    const currentPlans = await getPlanCatalogue(after);
+    const changes = diffPlanPrices(previousPlans, currentPlans);
+    if (changes.length === 0) return;
+    console.log(
+      `[Plan Pricing] Price change detected: ${changes.map((c) => `${c.slug} \xA3${c.from.toFixed(2)} -> \xA3${c.to.toFixed(2)}`).join(", ")}`
+    );
+    const scheduled = await schedulePlanPriceChange(
+      changes.map((c) => c.slug),
+      after
+    );
+    if (scheduled.length === 0) {
+      console.log("[Plan Pricing] No active subscribers affected.");
+      return;
+    }
+    let sent = 0;
+    for (const change of scheduled) {
+      if (!change.customerEmail) {
+        console.error(`[Plan Pricing] Subscription ${change.subscriptionId} has no email; cannot send notice.`);
+        continue;
+      }
+      try {
+        await sendSubscriptionPriceChangeEmail(change);
+        sent++;
+      } catch (err) {
+        console.error(
+          `[Plan Pricing] NOTICE NOT SENT for ${change.customerEmail} (sub ${change.subscriptionId}):`,
+          err?.message || err
+        );
+      }
+    }
+    console.log(
+      `[Plan Pricing] Scheduled ${scheduled.length} price change(s); ${sent} notice(s) sent. New prices take effect ${scheduled[0]?.effectiveFrom}.`
+    );
+  }
+});
 var customPages_default = router8;
 
 // backend/routes/blogs.ts
@@ -8797,7 +9171,7 @@ import crypto5 from "crypto";
 var MYSTERY_BOX_IMAGE = "/reward-assets/mystery-box.svg";
 var MERCH_GIFT_IMAGE = "/reward-assets/merch-gift.svg";
 var STANDARD_DELIVERY_COST = 2.99;
-var FREE_SHIPPING_THRESHOLD = 40;
+var FREE_SHIPPING_THRESHOLD2 = 40;
 var MYSTERY_GIFT = {
   id: "gift-mystery-box",
   label: "Mystery Reward \u{1F381}",
@@ -9048,7 +9422,7 @@ function isFreeShippingReward(discount) {
 }
 function resolveDeliveryCost(subtotalAfterDiscount, discount, baseCost = STANDARD_DELIVERY_COST) {
   if (isFreeShippingReward(discount)) return 0;
-  if (subtotalAfterDiscount >= FREE_SHIPPING_THRESHOLD) return 0;
+  if (subtotalAfterDiscount >= FREE_SHIPPING_THRESHOLD2) return 0;
   return baseCost;
 }
 
@@ -10889,6 +11263,8 @@ var worldpay_default = router10;
 init_prisma();
 init_subscriptionRow();
 init_requireAdmin();
+init_planCatalogue();
+init_subscriptionPricingService();
 init_klaviyoService();
 init_serverDb();
 init_worldpaySubscription();
@@ -10968,6 +11344,23 @@ async function loadCustomerSubscriptions(email) {
   } catch (_e) {
   }
   return Array.from(byId.values());
+}
+async function loadSubscriptionById(id) {
+  const clean = String(id || "").trim();
+  if (!clean) return null;
+  let prismaRow = null;
+  try {
+    prismaRow = await prisma.subscription.findUnique({ where: { id: clean } });
+  } catch (_e) {
+  }
+  let storedRow = null;
+  try {
+    const stored = await fetchResource("subscriptions") || [];
+    storedRow = stored.find((s) => String(s?.id) === clean) || null;
+  } catch (_e) {
+  }
+  if (!prismaRow && !storedRow) return null;
+  return { ...storedRow || {}, ...prismaRow || {} };
 }
 async function customerHasOtherLiveSubscription(email, excludeId) {
   const subs = await loadCustomerSubscriptions(email);
@@ -11063,11 +11456,19 @@ router11.get("/status", requireAdmin, async (_req, res) => {
     });
   }
 });
-router11.post("/update-schedule", async (req, res) => {
+router11.post("/update-schedule", requireCustomer, async (req, res) => {
   try {
     const { subscriptionId, customerEmail, billingInterval, nextBillingDate, chargeImmediately } = req.body;
     if (!subscriptionId && !customerEmail) {
       return res.status(400).json({ success: false, message: "subscriptionId or customerEmail is required" });
+    }
+    if (subscriptionId) {
+      const owner = await loadSubscriptionById(String(subscriptionId));
+      if (!owner || !mayActOnCustomer(req, owner.customerEmail)) {
+        return res.status(404).json({ success: false, message: "Subscription not found" });
+      }
+    } else if (!mayActOnCustomer(req, customerEmail)) {
+      return res.status(404).json({ success: false, message: "Subscription not found" });
     }
     const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
     let targetNextDate = null;
@@ -11112,7 +11513,7 @@ router11.post("/update-schedule", async (req, res) => {
     });
   }
 });
-router11.post("/update-plan", async (req, res) => {
+router11.post("/update-plan", requireCustomer, async (req, res) => {
   try {
     const {
       subscriptionId,
@@ -11153,17 +11554,38 @@ router11.post("/update-plan", async (req, res) => {
     const itemsIn = Array.isArray(subItems) ? subItems : Array.isArray(items) ? items : void 0;
     const amountIn = given(subPrice) ? Number(subPrice) : given(amount) ? Number(amount) : void 0;
     const cansIn = given(subCansCount) ? Number(subCansCount) : given(cansCount) ? Number(cansCount) : itemsIn ? itemsIn.reduce((sum, it) => sum + (Number(it?.quantity) || 1), 0) : void 0;
+    const existing = ownPlans.find((s) => String(s.id) === String(targetId)) || await loadSubscriptionById(String(targetId));
+    if (!existing || !mayActOnCustomer(req, existing.customerEmail)) {
+      return res.status(404).json({ success: false, message: "Subscription not found" });
+    }
     const patch = {};
     if (given(planName)) patch.planName = String(planName);
     else if (given(subPlan)) patch.planName = String(subPlan);
     if (given(planId)) patch.planId = String(planId);
     else if (given(subPlan)) patch.planId = String(subPlan).toLowerCase().split(" ")[0];
-    if (amountIn !== void 0 && Number.isFinite(amountIn) && amountIn > 0) patch.amount = amountIn;
     if (given(subFrequency) || given(billingInterval)) {
       patch.billingInterval = normalizeBillingInterval(subFrequency || billingInterval);
     }
     if (itemsIn) patch.items = itemsIn;
     if (cansIn !== void 0 && Number.isFinite(cansIn)) patch.cansCount = cansIn;
+    const targetPlanRef = given(planId) ? String(planId) : given(subPlan) ? String(subPlan) : given(planName) ? String(planName) : "";
+    let resolvedPlan = null;
+    if (targetPlanRef && existing) {
+      resolvedPlan = findPlan(await getPlanCatalogue(), targetPlanRef);
+    }
+    if (resolvedPlan && existing) {
+      const projected = {
+        ...existing,
+        cansCount: patch.cansCount !== void 0 ? patch.cansCount : existing.cansCount,
+        billingInterval: patch.billingInterval || existing.billingInterval
+      };
+      patch.amount = repriceForPlan(projected, resolvedPlan);
+      patch.planName = resolvedPlan.name;
+      patch.planId = resolvedPlan.slug;
+      Object.assign(patch, clearedPendingFields());
+    } else if (amountIn !== void 0 && Number.isFinite(amountIn) && amountIn > 0) {
+      patch.amount = amountIn;
+    }
     if (given(subStatus) || given(status)) patch.status = String(subStatus || status).toLowerCase();
     if (given(nextBillingDate)) patch.nextBillingDate = new Date(nextBillingDate);
     if (Object.keys(patch).length === 0) {
@@ -11187,8 +11609,8 @@ router11.post("/update-plan", async (req, res) => {
     } catch (_e) {
     }
     try {
-      const existing = await prisma.subscription.findUnique({ where: { id: targetId } });
-      if (existing && (!emailClean || String(existing.customerEmail || "").toLowerCase().trim() === emailClean)) {
+      const existing2 = await prisma.subscription.findUnique({ where: { id: targetId } });
+      if (existing2 && (!emailClean || String(existing2.customerEmail || "").toLowerCase().trim() === emailClean)) {
         const row = await prisma.subscription.update({ where: { id: targetId }, data: patch });
         updatedPlan = updatedPlan || row;
       }
@@ -11429,7 +11851,7 @@ router11.post(
       }
       const newOrderId = `PS${Math.floor(1e4 + Math.random() * 9e4)}`;
       const transactionReference = renewalTransactionReference(newOrderId);
-      const chargeAmount = Number(subscription.amount);
+      const { amount: chargeAmount } = resolveEffectiveAmount(subscription, /* @__PURE__ */ new Date());
       const result = await chargeRecurringSubscription({
         tokenHref: subscription.worldpayTokenHref,
         recurringHref: subscription.worldpayRecurringHref,

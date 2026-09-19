@@ -8,6 +8,7 @@ import {
   renderOrderShippedTemplate,
   renderOutForDeliveryTemplate,
   renderDeliveredTemplate,
+  renderSubscriptionPriceChangeTemplate,
   renderOrderCancelledTemplate,
   renderOrderRefundedTemplate,
   renderOrderExchangedTemplate,
@@ -29,7 +30,8 @@ export type EmailTemplateType =
   | 'password_reset'
   | 'email_verification'
   | 'welcome_email'
-  | 'admin_new_order';
+  | 'admin_new_order'
+  | 'subscription_price_change';
 
 export type EmailProvider = 'gmail' | 'smtp' | 'resend' | 'auto';
 
@@ -136,6 +138,7 @@ const DEFAULT_SETTINGS: EmailSettings = {
     order_cancelled: { enabled: true, subject: 'Order Cancellation Notice - Pouch Supply Co.' },
     order_refunded: { enabled: true, subject: 'Refund Confirmation - Pouch Supply Co.' },
     order_exchanged: { enabled: true, subject: 'Product Exchange Confirmation - Pouch Supply Co.' },
+    subscription_price_change: { enabled: true, subject: 'Your subscription price is changing - Pouch Supply Co.' },
     password_reset: { enabled: true, subject: 'Reset Your Password - Pouch Supply Co.' },
     email_verification: { enabled: true, subject: 'Verify Your Email Address - Pouch Supply Co.' },
     welcome_email: { enabled: true, subject: 'Welcome to Pouch Supply Co. - 10% Off Inside!' },
@@ -393,6 +396,9 @@ export async function sendEmail(
       break;
     case 'order_delivered':
       html = renderDeliveredTemplate(data);
+      break;
+    case 'subscription_price_change':
+      html = renderSubscriptionPriceChangeTemplate(data);
       break;
     case 'order_cancelled':
       html = renderOrderCancelledTemplate(data);
@@ -769,6 +775,37 @@ export async function sendDeliveredEmail(orderData: any) {
     destination: orderData.destination || orderData.address
   };
   return sendEmail('order_delivered', recipient, data);
+}
+
+/**
+ * Tells a subscriber their recurring price is changing, and from when.
+ *
+ * Sent for decreases as well as increases: a changed charge that arrives
+ * unannounced is what generates support tickets and chargebacks, whichever
+ * direction it moved in.
+ */
+export async function sendSubscriptionPriceChangeEmail(change: {
+  customerEmail: string;
+  customerName?: string;
+  planName: string;
+  previousAmount: number;
+  newAmount: number;
+  effectiveFrom: string;
+  billingInterval?: string;
+}) {
+  const recipient = String(change.customerEmail || '').trim();
+  if (!recipient) throw new Error('A price-change notice needs a recipient.');
+
+  const data: EmailTemplateData = {
+    customerName: change.customerName,
+    customerEmail: recipient,
+    planName: change.planName,
+    previousAmount: change.previousAmount,
+    newAmount: change.newAmount,
+    effectiveFrom: change.effectiveFrom,
+    billingInterval: change.billingInterval
+  };
+  return sendEmail('subscription_price_change', recipient, data);
 }
 
 export async function sendOrderCancelledEmail(orderData: any, reason?: string) {

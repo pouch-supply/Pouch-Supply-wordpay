@@ -3,7 +3,9 @@ import crypto from "crypto";
 
 import { prisma } from "../../src/lib/prisma";
 import { upsertSubscriptionRow } from "../../src/lib/subscriptionRow";
-import { requireAdmin, requireCronOrAdmin } from "../middleware/requireAdmin";
+import { requireAdmin, requireCronOrAdmin, requireCustomer, mayActOnCustomer, AdminRequest } from "../middleware/requireAdmin";
+import { getPlanCatalogue, findPlan } from "../services/planCatalogue";
+import { repriceForPlan, clearedPendingFields, resolveEffectiveAmount } from "../services/subscriptionPricingService";
 import { trackSubscriptionStarted } from "../services/klaviyoService";
 import { fetchResource, saveResource } from "../../serverDb";
 import {
@@ -161,6 +163,32 @@ async function loadCustomerSubscriptions(email: string): Promise<any[]> {
 }
 
 /**
+ * One subscription by id, from both stores.
+ *
+ * The JSON row is spread first so Prisma's columns win, while keys that live
+ * only in the JSON store — the pending-price fields — survive. Same precedence
+ * as the renewal worker's loader, so both see the same record.
+ */
+async function loadSubscriptionById(id: string): Promise<any | null> {
+  const clean = String(id || "").trim();
+  if (!clean) return null;
+
+  let prismaRow: any = null;
+  try {
+    prismaRow = await prisma.subscription.findUnique({ where: { id: clean } });
+  } catch (_e) {}
+
+  let storedRow: any = null;
+  try {
+    const stored: any[] = (await fetchResource("subscriptions")) || [];
+    storedRow = stored.find((s: any) => String(s?.id) === clean) || null;
+  } catch (_e) {}
+
+  if (!prismaRow && !storedRow) return null;
+  return { ...(storedRow || {}), ...(prismaRow || {}) };
+}
+
+/**
  * Does the customer still have a plan that bills, ignoring the one being changed?
  *
  * The account-level "Cancelled" flag drives the storefront banner and the admin
@@ -277,12 +305,24 @@ router.get("/status", requireAdmin, async (_req: Request, res: Response) => {
 /**
  * Update billing interval or next billing date for a subscription.
  */
-router.post("/update-schedule", async (req: Request, res: Response) => {
+// `chargeImmediately` backdates the next billing date so the worker charges on
+// its next pass, so this endpoint can take money. It was unauthenticated.
+router.post("/update-schedule", requireCustomer, async (req: AdminRequest, res: Response) => {
   try {
     const { subscriptionId, customerEmail, billingInterval, nextBillingDate, chargeImmediately } = req.body;
-    
+
     if (!subscriptionId && !customerEmail) {
       return res.status(400).json({ success: false, message: "subscriptionId or customerEmail is required" });
+    }
+
+    // Checked against the subscription's own owner, not the email in the body.
+    if (subscriptionId) {
+      const owner = await loadSubscriptionById(String(subscriptionId));
+      if (!owner || !mayActOnCustomer(req, owner.customerEmail)) {
+        return res.status(404).json({ success: false, message: "Subscription not found" });
+      }
+    } else if (!mayActOnCustomer(req, customerEmail)) {
+      return res.status(404).json({ success: false, message: "Subscription not found" });
     }
 
     const emailClean = customerEmail ? String(customerEmail).toLowerCase().trim() : null;
@@ -352,7 +392,10 @@ router.post("/update-schedule", async (req: Request, res: Response) => {
  * - It never creates a plan. An id that matches nothing used to be inserted as
  *   a brand-new subscription, which is how stray plans appeared on accounts.
  */
-router.post("/update-plan", async (req: Request, res: Response) => {
+// Changes a plan and, with it, what the customer's card is charged from their
+// next renewal. It was reachable by anyone: a subscription id was enough to move
+// somebody else onto a different plan and price.
+router.post("/update-plan", requireCustomer, async (req: AdminRequest, res: Response) => {
   try {
     const {
       subscriptionId,
@@ -415,20 +458,74 @@ router.post("/update-plan", async (req: Request, res: Response) => {
           ? itemsIn.reduce((sum: number, it: any) => sum + (Number(it?.quantity) || 1), 0)
           : undefined;
 
+    // The record as it stands, needed to reprice against the customer's own
+    // extras, rhythm and agreed shipping rather than a bare plan price.
+    const existing: any =
+      ownPlans.find((s: any) => String(s.id) === String(targetId)) ||
+      (await loadSubscriptionById(String(targetId)));
+
+    // Ownership is judged on the record, never on the email in the body.
+    if (!existing || !mayActOnCustomer(req, existing.customerEmail)) {
+      return res.status(404).json({ success: false, message: "Subscription not found" });
+    }
+
     const patch: Record<string, any> = {};
     if (given(planName)) patch.planName = String(planName);
     else if (given(subPlan)) patch.planName = String(subPlan);
     if (given(planId)) patch.planId = String(planId);
     else if (given(subPlan)) patch.planId = String(subPlan).toLowerCase().split(" ")[0];
-    // A price of zero is never a real plan price; it is what a missing field
-    // used to turn into, and writing it would make the next renewal free.
-    if (amountIn !== undefined && Number.isFinite(amountIn) && amountIn > 0) patch.amount = amountIn;
+
     // Stored in canonical form so the renewal worker schedules what was picked.
+    // Resolved BEFORE the amount, because the rhythm sets the discount.
     if (given(subFrequency) || given(billingInterval)) {
       patch.billingInterval = normalizeBillingInterval(subFrequency || billingInterval);
     }
     if (itemsIn) patch.items = itemsIn;
     if (cansIn !== undefined && Number.isFinite(cansIn)) patch.cansCount = cansIn;
+
+    // The recurring amount is computed HERE, from the admin plan catalogue —
+    // never taken from the request.
+    //
+    // The account portal sends a price out of a hard-coded table, with no
+    // frequency discount and no shipping, so a customer who switched plans was
+    // put on an amount the shop never quoted and which ignored whatever the
+    // admin had set in Pages. The client's `amount`/`subPrice` is now only a
+    // fallback for a subscription whose plan cannot be resolved at all.
+    const targetPlanRef = given(planId)
+      ? String(planId)
+      : given(subPlan)
+        ? String(subPlan)
+        : given(planName)
+          ? String(planName)
+          : "";
+
+    let resolvedPlan: ReturnType<typeof findPlan> = null;
+    if (targetPlanRef && existing) {
+      resolvedPlan = findPlan(await getPlanCatalogue(), targetPlanRef);
+    }
+
+    if (resolvedPlan && existing) {
+      // Priced against the subscription as it will be AFTER this change: a new
+      // can count or rhythm in the same request has to count, or the amount
+      // would describe the plan they just left.
+      const projected = {
+        ...existing,
+        cansCount: patch.cansCount !== undefined ? patch.cansCount : existing.cansCount,
+        billingInterval: patch.billingInterval || existing.billingInterval
+      };
+      patch.amount = repriceForPlan(projected, resolvedPlan);
+      patch.planName = resolvedPlan.name;
+      patch.planId = resolvedPlan.slug;
+
+      // The customer chose this, so it applies from their next renewal with no
+      // notice period, and any price change an admin had scheduled for their
+      // old plan is now moot.
+      Object.assign(patch, clearedPendingFields());
+    } else if (amountIn !== undefined && Number.isFinite(amountIn) && amountIn > 0) {
+      // A price of zero is never a real plan price; it is what a missing field
+      // used to turn into, and writing it would make the next renewal free.
+      patch.amount = amountIn;
+    }
     if (given(subStatus) || given(status)) patch.status = String(subStatus || status).toLowerCase();
     if (given(nextBillingDate)) patch.nextBillingDate = new Date(nextBillingDate);
 
@@ -773,7 +870,10 @@ router.post(
       const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
       const transactionReference = renewalTransactionReference(newOrderId);
 
-      const chargeAmount = Number(subscription.amount);
+      // Same rule as the renewal worker: a scheduled price is charged only once
+      // its notice period has elapsed, so a manual charge cannot be used to
+      // apply a price rise early.
+      const { amount: chargeAmount } = resolveEffectiveAmount(subscription, new Date());
       const result = await chargeRecurringSubscription({
         tokenHref: subscription.worldpayTokenHref,
         recurringHref: subscription.worldpayRecurringHref,

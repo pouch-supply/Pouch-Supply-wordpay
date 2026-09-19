@@ -33,6 +33,13 @@ export interface EmailTemplateData {
   discountCode?: string;
   supportEmail?: string;
   siteUrl?: string;
+  /** Subscription price-change notice. */
+  planName?: string;
+  previousAmount?: number;
+  newAmount?: number;
+  /** ISO or display date from which newAmount is charged. */
+  effectiveFrom?: string;
+  billingInterval?: string;
 }
 
 const BRAND_NAME = "Pouch Supply Co.";
@@ -349,6 +356,78 @@ export function renderDeliveredTemplate(data: EmailTemplateData): string {
 
     <div style="text-align: center; margin-top: 20px;">
       <a href="${data.siteUrl || '#'}" class="btn">Shop Again</a>
+    </div>
+  ` + renderBaseFooter();
+}
+
+/**
+ * Subscription price change notice.
+ *
+ * Sent when the price of a plan someone is already subscribed to changes. It has
+ * to state the old price, the new price and the date the new one first applies,
+ * because that is what makes it a notice rather than a surprise on a statement —
+ * and it must read correctly for a decrease as well as an increase.
+ */
+export function renderSubscriptionPriceChangeTemplate(data: EmailTemplateData): string {
+  const name = data.customerName || 'Valued Customer';
+  const plan = data.planName || 'your plan';
+  const previous = Number(data.previousAmount) || 0;
+  const next = Number(data.newAmount) || 0;
+  const isIncrease = next > previous;
+  const every = data.billingInterval ? ` (${data.billingInterval})` : '';
+
+  const effective = (() => {
+    const d = data.effectiveFrom ? new Date(data.effectiveFrom) : null;
+    if (!d || isNaN(d.getTime())) return 'your next renewal';
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  })();
+
+  const headline = isIncrease
+    ? `The price of ${plan} is going up`
+    : `Good news — ${plan} is getting cheaper`;
+
+  return renderBaseHeader('Your subscription price is changing', headline, data) + `
+    <div class="card">
+      <p style="font-size: 14px; color: #0f172a; font-weight: 700; margin: 0 0 12px 0;">
+        Hi ${name},
+      </p>
+      <p style="font-size: 13px; color: #475569; margin: 0 0 16px 0;">
+        We're letting you know that the price of your subscription is changing.
+        You don't need to do anything — your deliveries continue as normal.
+      </p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin: 0 0 16px 0;">
+        <tr>
+          <td style="padding: 8px 0; font-size: 13px; color: #64748b;">Your plan</td>
+          <td style="padding: 8px 0; font-size: 13px; color: #0f172a; font-weight: 800; text-align: right;">${plan}${every}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0;">Current price</td>
+          <td style="padding: 8px 0; font-size: 13px; color: #64748b; font-weight: 700; text-align: right; border-top: 1px solid #e2e8f0; text-decoration: line-through;">£${previous.toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-size: 13px; color: #0f172a; font-weight: 800; border-top: 1px solid #e2e8f0;">New price</td>
+          <td style="padding: 8px 0; font-size: 16px; color: ${isIncrease ? '#b91c1c' : '#15803d'}; font-weight: 900; text-align: right; border-top: 1px solid #e2e8f0;">£${next.toFixed(2)}</td>
+        </tr>
+      </table>
+
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+        <p style="font-size: 13px; color: #0f172a; margin: 0; font-weight: 700;">
+          From ${effective}, your next recurring payment will be £${next.toFixed(2)}.
+        </p>
+        <p style="font-size: 12px; color: #64748b; margin: 6px 0 0 0;">
+          Any delivery before that date is charged at your current price of £${previous.toFixed(2)}.
+        </p>
+      </div>
+    </div>
+
+    <p style="font-size: 13px; color: #475569; text-align: center;">
+      Happy with the change? There's nothing to do. If you'd rather adjust or cancel your plan,
+      you can do that any time from your account before ${effective}.
+    </p>
+
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="${data.siteUrl || '#'}/pages/account/subscriptions" class="btn">Manage My Subscription</a>
     </div>
   ` + renderBaseFooter();
 }
