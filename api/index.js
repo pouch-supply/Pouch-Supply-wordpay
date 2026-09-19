@@ -5331,6 +5331,16 @@ function clearedPendingFields() {
     pendingAmountScheduledAt: null
   };
 }
+function applyPlanPriceDelta(sub, previousPlanPrice, newPlanPrice) {
+  const current = Number(sub?.amount);
+  if (!Number.isFinite(current) || current <= 0) return 0;
+  const rawDelta = Number(newPlanPrice) - Number(previousPlanPrice);
+  if (!Number.isFinite(rawDelta) || rawDelta === 0) return current;
+  const multiplier = (100 - frequencyDiscountPercent(sub?.billingInterval)) / 100;
+  const next = current + rawDelta * multiplier;
+  if (next <= 0) return current;
+  return Number((Math.round(next * 100) / 100).toFixed(2));
+}
 function repriceForPlan(sub, plan) {
   const included = Number(plan.limit) || 0;
   const cans = Number(sub?.cansCount) || 0;
@@ -5371,19 +5381,21 @@ async function persistPendingFields(updates) {
   });
   await saveResource("subscriptions", next);
 }
-async function schedulePlanPriceChange(changedSlugs, pages, now = /* @__PURE__ */ new Date()) {
-  if (!changedSlugs.length) return [];
+async function schedulePlanPriceChange(changes, pages, now = /* @__PURE__ */ new Date()) {
+  if (!changes.length) return [];
   const catalogue = await getPlanCatalogue(pages);
-  const wanted = new Set(changedSlugs.map((s) => s.toLowerCase()));
+  const wanted = new Map(changes.map((c) => [c.slug.toLowerCase(), c]));
   const subs = await loadBillableSubscriptions();
   const effectiveFrom = noticeDateFrom(now).toISOString();
   const updates = /* @__PURE__ */ new Map();
   const scheduled = [];
   for (const sub of subs) {
     const plan = planForSubscription(catalogue, sub);
-    if (!plan || !wanted.has(plan.slug)) continue;
+    if (!plan) continue;
+    const change = wanted.get(plan.slug);
+    if (!change) continue;
     const currentAmount = Number(sub.amount) || 0;
-    const newAmount = repriceForPlan(sub, plan);
+    const newAmount = applyPlanPriceDelta(sub, change.from, change.to);
     if (!Number.isFinite(newAmount) || newAmount <= 0) continue;
     if (Math.abs(newAmount - currentAmount) < 0.01) continue;
     const pending = {
@@ -9091,10 +9103,7 @@ var router8 = createCrudRouter("customPages", {
     console.log(
       `[Plan Pricing] Price change detected: ${changes.map((c) => `${c.slug} \xA3${c.from.toFixed(2)} -> \xA3${c.to.toFixed(2)}`).join(", ")}`
     );
-    const scheduled = await schedulePlanPriceChange(
-      changes.map((c) => c.slug),
-      after
-    );
+    const scheduled = await schedulePlanPriceChange(changes, after);
     if (scheduled.length === 0) {
       console.log("[Plan Pricing] No active subscribers affected.");
       return;

@@ -6130,10 +6130,11 @@
       "data": {
         "subtotal": 25.19,
         "cardLast4": "1942",
+        "isRenewal": false,
         "royalMail": {
           "carrier": "Royal Mail Tracked 24®",
           "labelUrl": "/api/royalmail/label/1026/pdf",
-          "syncedAt": "2026-09-18T11:30:40.957Z",
+          "syncedAt": "2026-09-19T11:30:40.979Z",
           "createdAt": "2026-09-11T07:15:19.569Z",
           "printedOn": null,
           "shippedAt": null,
@@ -6146,6 +6147,8 @@
           "royalMailOrderId": "1026"
         },
         "isTestMode": false,
+        "deliveredAt": "2026-09-19T11:16:05.796Z",
+        "deliveredBy": "admin",
         "deliveryCost": 2.99,
         "shippingCost": 2.99,
         "subscriptionId": "sub_1789215311077_c87el3",
@@ -6160,6 +6163,7 @@
           "addressLine1": "39 Tonks Drive, telford, tf4 2tq, United Kingdom"
         },
         "notificationsSent": {
+          "order_delivered": "2026-09-19T11:16:05.902Z",
           "order_confirmation": "2026-09-12T12:15:11.355Z"
         }
       },
@@ -6264,7 +6268,7 @@
       },
       "trackingHistory": null,
       "worldpayAuthCode": "675778",
-      "fulfillmentStatus": "Unfulfilled",
+      "fulfillmentStatus": "Delivered",
       "storeCreditApplied": 0,
       "subscriptionDetails": {
         "items": [
@@ -6425,7 +6429,29 @@
       "data": {
         "subtotal": 2.71,
         "cardLast4": "1942",
+        "isRenewal": false,
+        "royalMail": {
+          "carrier": "Royal Mail Tracked 24®",
+          "labelUrl": "/api/royalmail/label/1032/pdf",
+          "syncedAt": "2026-09-19T11:30:41.642Z",
+          "createdAt": "2026-09-19T10:50:15.866Z",
+          "printedOn": null,
+          "shippedAt": null,
+          "labelStatus": "awaiting_label",
+          "serviceCode": "TOLP24",
+          "serviceName": "Royal Mail Tracked 24®",
+          "despatchedOn": null,
+          "labelGenerated": false,
+          "trackingNumber": null,
+          "royalMailOrderId": "1032",
+          "addressValidation": {
+            "valid": true,
+            "errors": []
+          }
+        },
         "isTestMode": false,
+        "deliveredAt": "2026-09-19T10:23:41.913Z",
+        "deliveredBy": "admin",
         "deliveryCost": 2.99,
         "shippingCost": 2.99,
         "subscriptionId": "sub_1789215312180_au8mef",
@@ -6440,6 +6466,7 @@
           "addressLine1": "39 Tonks Drive, telford, tf4 2tq, United Kingdom"
         },
         "notificationsSent": {
+          "order_delivered": "2026-09-19T10:23:42.036Z",
           "order_confirmation": "2026-09-12T12:15:13.339Z"
         }
       },
@@ -6482,10 +6509,11 @@
         }
       ],
       "total": 5.7,
-      "carrier": "Royal Mail",
+      "carrier": "Royal Mail Tracked 24®",
       "subtotal": 2.71,
       "cardBrand": "mastercard",
       "createdAt": "2026-09-12T11:50:32.994Z",
+      "isRenewal": false,
       "trackingId": null,
       "destination": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
       "gatewayTxId": "pay8MnrYmF2nfAGdVZHo0TZK0",
@@ -6494,6 +6522,7 @@
       "shippingCost": 2.99,
       "worldpayTxId": "pay8MnrYmF2nfAGdVZHo0TZK0",
       "customerEmail": "scott@pouch-supply.com",
+      "parentOrderId": null,
       "paymentStatus": "Paid",
       "deliveryMethod": "Royal Mail Tracked 24/48",
       "isSubscription": true,
@@ -6624,7 +6653,7 @@
       "cardBrand": "mastercard",
       "createdAt": "2026-09-14T08:57:00.718Z",
       "isRenewal": false,
-      "trackingId": "hghjh",
+      "trackingId": "",
       "destination": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
       "gatewayTxId": "payOvJ7V9s9wxV9rOtMbD3-80",
       "customerName": "Scott Kivlin",
@@ -6652,7 +6681,7 @@
       },
       "trackingHistory": null,
       "worldpayAuthCode": "050934",
-      "fulfillmentStatus": "Unfulfilled",
+      "fulfillmentStatus": "Fulfilled",
       "storeCreditApplied": 0,
       "subscriptionDetails": {
         "items": [
@@ -6704,14 +6733,14 @@
         "royalMail": {
           "carrier": "Royal Mail Tracked 48®",
           "labelUrl": "/api/royalmail/label/1029/pdf",
-          "syncedAt": "2026-09-18T11:30:56.164Z",
+          "syncedAt": "2026-09-19T10:38:00.482Z",
           "createdAt": "2026-09-15T10:30:52.271Z",
           "printedOn": "2026-09-18T10:54:46.6751174",
           "shippedAt": "2026-09-18T11:23:25.635Z",
-          "labelStatus": "generated",
+          "labelStatus": "despatched",
           "serviceCode": "TOLP48",
           "serviceName": "Royal Mail Tracked 48®",
-          "despatchedOn": null,
+          "despatchedOn": "2026-09-18T23:31:28.45",
           "labelGenerated": true,
           "trackingNumber": "VU623867135GB",
           "royalMailOrderId": "1029"
@@ -6990,10 +7019,11 @@
       "id": "PS46323",
       "data": {
         "subtotal": 2.71,
+        "isRenewal": false,
         "royalMail": {
           "carrier": "Royal Mail Tracked 24®",
           "labelUrl": "/api/royalmail/label/1031/pdf",
-          "syncedAt": "2026-09-18T11:30:41.670Z",
+          "syncedAt": "2026-09-19T11:30:42.216Z",
           "createdAt": "2026-09-16T10:17:21.042Z",
           "printedOn": null,
           "shippedAt": null,
@@ -7964,6 +7994,286 @@
         ],
         "frequencyDiscount": "10%"
       }
+    },
+    {
+      "id": "PS46323-R20260919",
+      "data": {
+        "subtotal": 2.71,
+        "isRenewal": true,
+        "deliveryCost": 2.99,
+        "shippingCost": 2.99,
+        "parentOrderId": "PS46323",
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1789552227539_3tjqp9",
+        "schemeReference": "MRLGLFFFY0919",
+        "recurringRenewal": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-19T10:00:12.817Z"
+        },
+        "billingPeriodStart": "2026-09-19T09:50:27.144Z",
+        "transactionReference": "SUB-ORD-PS46323-R20260919"
+      },
+      "date": "Sep 19, 2026 at 10:00 AM",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "sku": "sub-pack-1789551933075",
+          "image": "/assets/plan_lite_box_1788334553835-mnRl-qrp.jpg",
+          "price": 2.71,
+          "vendor": "Subscription Pack",
+          "variant": "Standard",
+          "quantity": 1,
+          "productId": "sub-pack-1789551933075",
+          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (77 5.2 mg — Watermelon ice (Qty:6))",
+          "isSubscription": true,
+          "selectedProducts": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionPlan": "LITE Plan",
+          "frequencyDiscount": "10%",
+          "subscriptionItems": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionFrequency": "Next Day (Test)"
+        }
+      ],
+      "total": 5.7,
+      "carrier": "Royal Mail",
+      "subtotal": 2.71,
+      "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-19T10:00:12.896Z",
+      "isRenewal": true,
+      "trackingId": null,
+      "destination": "39 tonks drive, Telford, Tf4 2tq, United Kingdom",
+      "gatewayTxId": "SUB-ORD-PS46323-R20260919",
+      "customerName": "Scott kivlin",
+      "deliveryCost": 2.99,
+      "shippingCost": 2.99,
+      "worldpayTxId": "SUB-ORD-PS46323-R20260919",
+      "customerEmail": "scott.kivlin@yahoo.co.uk",
+      "parentOrderId": "PS46323",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "isSubscription": true,
+      "subscriptionId": "sub_1789552227539_3tjqp9",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": null,
+      "shippingAddress": null,
+      "trackingHistory": null,
+      "worldpayAuthCode": null,
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "planName": "LITE Plan",
+        "frequency": "Next Day (Test)",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "19 Sept 2026",
+        "nextPaymentDate": "20 Sept 2026",
+        "selectedProducts": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "frequencyDiscount": "10%"
+      }
+    },
+    {
+      "id": "PS65700-R20260919",
+      "data": {
+        "subtotal": 2.71,
+        "isRenewal": true,
+        "deliveryCost": 2.99,
+        "shippingCost": 2.99,
+        "parentOrderId": "PS65700",
+        "paymentMethod": "Worldpay Recurring Subscription",
+        "subscriptionId": "sub_1789468210722_pllj3n",
+        "schemeReference": "MRLW73OFT0919",
+        "recurringRenewal": true,
+        "notificationsSent": {
+          "order_confirmation": "2026-09-19T10:38:02.397Z"
+        },
+        "billingPeriodStart": "2026-09-19T10:30:10.716Z",
+        "transactionReference": "SUB-ORD-PS65700-R20260919"
+      },
+      "date": "Sep 19, 2026 at 10:38 AM",
+      "tags": [
+        "Storefront",
+        "Subscription Order",
+        "Worldpay Recurring"
+      ],
+      "items": [
+        {
+          "sku": "sub-pack-1789467933399",
+          "image": "/assets/plan_lite_box_1788334553835-mnRl-qrp.jpg",
+          "price": 2.71,
+          "vendor": "Subscription Pack",
+          "variant": "Standard",
+          "quantity": 1,
+          "productId": "sub-pack-1789467933399",
+          "productTitle": "LITE Plan [Next Day (Test) - 10% OFF] - (77 5.2 mg — Watermelon ice (Qty:6))",
+          "isSubscription": true,
+          "selectedProducts": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionPlan": "LITE Plan",
+          "frequencyDiscount": "10%",
+          "subscriptionItems": [
+            {
+              "name": "77 5.2 mg",
+              "brand": "77",
+              "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+              "price": 4.99,
+              "vendor": "77",
+              "variant": "Watermelon ice",
+              "quantity": 6,
+              "productId": "77-52-mg",
+              "variantId": "PCH-563404-WATERMELON-ICE",
+              "variantName": "Watermelon ice",
+              "productTitle": "77 5.2 mg",
+              "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+            }
+          ],
+          "subscriptionFrequency": "Next Day (Test)"
+        }
+      ],
+      "total": 5.7,
+      "carrier": "Royal Mail",
+      "subtotal": 2.71,
+      "cardBrand": "Worldpay Stored Card",
+      "createdAt": "2026-09-19T10:38:02.406Z",
+      "isRenewal": true,
+      "trackingId": null,
+      "destination": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
+      "gatewayTxId": "SUB-ORD-PS65700-R20260919",
+      "customerName": "Scott Kivlin",
+      "deliveryCost": 2.99,
+      "shippingCost": 2.99,
+      "worldpayTxId": "SUB-ORD-PS65700-R20260919",
+      "customerEmail": "scott@pouch-supply.com",
+      "parentOrderId": "PS65700",
+      "paymentStatus": "Paid",
+      "deliveryMethod": "Royal Mail Tracked 24/48",
+      "isSubscription": true,
+      "subscriptionId": "sub_1789468210722_pllj3n",
+      "trackingNumber": null,
+      "discountApplied": null,
+      "gatewayAuthCode": null,
+      "shippingAddress": null,
+      "trackingHistory": null,
+      "worldpayAuthCode": null,
+      "fulfillmentStatus": "Unfulfilled",
+      "storeCreditApplied": 0,
+      "subscriptionDetails": {
+        "items": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "planName": "LITE Plan",
+        "frequency": "Next Day (Test)",
+        "paymentStatus": "Paid",
+        "lastPaymentDate": "19 Sept 2026",
+        "nextPaymentDate": "20 Sept 2026",
+        "selectedProducts": [
+          {
+            "name": "77 5.2 mg",
+            "brand": "77",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788428388/storefront_media/file_s02wja.webp",
+            "price": 4.99,
+            "vendor": "77",
+            "variant": "Watermelon ice",
+            "quantity": 6,
+            "productId": "77-52-mg",
+            "variantId": "PCH-563404-WATERMELON-ICE",
+            "variantName": "Watermelon ice",
+            "productTitle": "77 5.2 mg",
+            "formattedLabel": "77 5.2 mg — Watermelon ice (Qty:6)"
+          }
+        ],
+        "frequencyDiscount": "10%"
+      }
     }
   ],
   "files": [
@@ -8205,9 +8515,9 @@
       "ageChecked": true,
       "savedCards": [],
       "ageVerified": true,
-      "amountSpent": 68.08000000000001,
-      "nextPayment": "2026-09-19",
-      "ordersCount": 8,
+      "amountSpent": 73.78000000000002,
+      "nextPayment": "2026-09-20",
+      "ordersCount": 9,
       "storeCredit": 0,
       "nextDelivery": "28 Aug 2026",
       "referralCode": "REF-PS-SCOTT-6AVK",
@@ -8262,9 +8572,9 @@
         "39 tonks drive, Telford, Tf4 2tq, United Kingdom"
       ],
       "subStatus": "active",
-      "amountSpent": 22.8,
-      "nextPayment": "2026-09-19",
-      "ordersCount": 4,
+      "amountSpent": 28.5,
+      "nextPayment": "2026-09-20",
+      "ordersCount": 5,
       "storeCredit": 0,
       "referralCode": "REF-PS-SCOTT-ABSX",
       "emailVerified": true,
@@ -8332,22 +8642,6 @@
       "title": "About Us",
       "sections": [
         {
-          "id": "sec-1786341240876-xx4we",
-          "type": "Image banner",
-          "settings": {
-            "title": "",
-            "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421371/storefront_media/file_theo8u.webp",
-            "fullWidth": true,
-            "textColor": "#64748B",
-            "buttonLink": "",
-            "buttonText": "",
-            "description": "",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
           "id": "about-sec-1",
           "type": "Rich text",
           "settings": {
@@ -8356,21 +8650,6 @@
             "textColor": "#475569",
             "description": "Pouch Supply is Europe’s premier directory and depot for tobacco-free nicotine slim white canisters. We source directly from certified manufacturing laboratories across Sweden, Poland, Germany, and Europe, ensuring 100% genuine products, freshness guarantees, and rapid worldwide dispatch.",
             "headingColor": "#0F172A",
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1786341376195-beju7",
-          "type": "Rich text",
-          "settings": {
-            "title": "What Are Nicotine Pouches?",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "buttonLink": "frontend-shop",
-            "buttonText": "Purchase Packs",
-            "description": "Nicotine pouches are small, soft pouches designed to deliver nicotine without smoke, vapor, or tobacco leaf. They are placed between the gum and upper lip where nicotine is gradually absorbed through the oral tissue.\n\nUnlike cigarettes or traditional smokeless tobacco, nicotine pouches are clean, discreet, and easy to use. They don’t produce smoke or require spitting, making them a convenient option for adult nicotine users.\n\nEach pouch typically contains nicotine, plant-based fibres, flavourings, and stabilizers that provide a smooth release of flavour and nicotine.\n\nUsers can enjoy a pouch for around 20–60 minutes, depending on the brand and strength.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
             "backgroundColor": "#FFFFFF"
           }
         },
@@ -8386,8 +8665,8 @@
         }
       ],
       "updatedAt": "Jul 20, 2026",
-      "isHomepage": false,
-      "visibility": "Visible"
+      "visibility": "Visible",
+      "isHomepage": false
     },
     {
       "id": "homepage",
@@ -8395,289 +8674,18 @@
       "title": "Home Page",
       "sections": [
         {
-          "id": "sec-1785239010171",
-          "type": "Video banner",
+          "id": "h-s1",
+          "type": "Image banner",
           "settings": {
-            "title": "Watch Our Laboratory Showcase",
-            "videoUrl": "",
+            "title": "Pouch Supply Storefront",
+            "imageUrl": "",
             "fullWidth": true,
-            "textColor": "#ffffff",
-            "buttonLink": "/pages/subscribe",
-            "buttonText": "Purchase Packs",
-            "buttonLink2": "/collections/all",
-            "buttonText2": "BROWSE ALL PRODUCTS",
-            "description": "Witness the clinical sterile compounding process behind our sub-zero cooling pouches.",
-            "videoMp4Url": "https://res.cloudinary.com/qfoxl8ia/video/upload/v1785238997/storefront_media/file_kfrbzd.mp4",
-            "headingColor": "#ffffff",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785239091454",
-          "type": "Brands we offer",
-          "settings": {
-            "title": "Brands we offer",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "brandItems": [
-              {
-                "title": "77",
-                "linkUrl": "/collections/77",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421015/storefront_media/file_qsmneq.webp"
-              },
-              {
-                "title": "Clew",
-                "linkUrl": "/collections/clew",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421042/storefront_media/file_mgapxi.webp"
-              },
-              {
-                "title": "Cuba",
-                "linkUrl": "/collections/cuba",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421057/storefront_media/file_gpar8p.webp"
-              },
-              {
-                "title": "Maggie",
-                "linkUrl": "/collections/maggie",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421067/storefront_media/file_xjl8gc.webp"
-              },
-              {
-                "title": "Nordic Spirit",
-                "linkUrl": "/collections/nordic-spirit",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421077/storefront_media/file_zdpk08.webp"
-              },
-              {
-                "title": "XQS",
-                "linkUrl": "/collections/xqs",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421087/storefront_media/file_s3j997.webp"
-              },
-              {
-                "title": "ZYN",
-                "linkUrl": "/collections/zyn",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421099/storefront_media/file_ioxz7k.webp"
-              },
-              {
-                "title": "Pablo",
-                "linkUrl": "/collections/pablo",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421108/storefront_media/file_vnoxfv.webp"
-              },
-              {
-                "title": "Killa",
-                "linkUrl": "/collections/killa",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421117/storefront_media/file_c8lpzn.webp"
-              },
-              {
-                "title": "Fumi",
-                "linkUrl": "/collections/fumi",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421134/storefront_media/file_hsad1r.webp"
-              },
-              {
-                "title": "Velo",
-                "linkUrl": "/collections/velo",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421146/storefront_media/file_iati0o.webp"
-              },
-              {
-                "title": "White Fox",
-                "linkUrl": "/collections/white-fox",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421160/storefront_media/file_q4whls.webp"
-              },
-              {
-                "title": "Snü",
-                "linkUrl": "/collections/snu",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421176/storefront_media/file_n89zlu.webp"
-              }
-            ],
-            "description": "Explore our curated roster of premium nicotine pouches and global compounding series.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785239267010",
-          "type": "Icon with text",
-          "settings": {
-            "title": "Why subscribe to Pouch Supply?",
-            "fullWidth": false,
-            "iconColor": "#4F46E5",
-            "iconItems": [
-              {
-                "title": "Delivered on your schedule",
-                "linkUrl": "frontend-shop",
-                "iconName": "Truck",
-                "description": "Flexible delivery, when you need it."
-              },
-              {
-                "title": "Save vs. shop prices",
-                "linkUrl": "frontend-shop",
-                "iconName": "Zap",
-                "description": "Better prices than retail stores."
-              },
-              {
-                "title": "Discreet delivery",
-                "linkUrl": "frontend-shop",
-                "iconName": "Shield",
-                "description": "Plain, private, and secure packaging."
-              },
-              {
-                "title": "Cancel anytime",
-                "linkUrl": "frontend-shop",
-                "iconName": "Clock",
-                "description": "No commitments, full control."
-              },
-              {
-                "title": "Loyalty scheme",
-                "linkUrl": "frontend-shop",
-                "iconName": "Award",
-                "description": "Earn rewards on every order."
-              },
-              {
-                "title": "Never run out",
-                "linkUrl": "frontend-shop",
-                "iconName": "Package",
-                "description": "Auto-refill and easy reordering."
-              }
-            ],
-            "textColor": "#64748B",
-            "description": "Explore exclusive rewards and reliable logistics built directly into our ecosystem.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785239276374",
-          "type": "How it works",
-          "settings": {
-            "title": "Custom How it works",
-            "fullWidth": false,
-            "stepItems": [
-              {
-                "title": "Choose your plan",
-                "number": "1",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421195/storefront_media/file_mybcaw.webp",
-                "description": "Select one of our flexible subscription plans"
-              },
-              {
-                "title": "Choose your pouches",
-                "number": "2",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421208/storefront_media/file_fpxklv.webp",
-                "description": "Mix and match your favourite brands, flavours and strengths. (these can be changed at anytime)"
-              },
-              {
-                "title": "We handle the rest",
-                "number": "3",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421286/storefront_media/file_uoo4ad.webp",
-                "description": "Delivered automatically to your door hassle free weekly, Bi-weekly or monthly"
-              }
-            ],
-            "textColor": "#64748B",
-            "description": "Edit option elements inside options sidebar",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785239282614",
-          "type": "Plans",
-          "settings": {
-            "title": "Custom Plans",
-            "fullWidth": false,
-            "planItems": [
-              {
-                "name": "LITE",
-                "slug": "lite",
-                "limit": 6,
-                "price": 27.99,
-                "features": [
-                  "6 premium cans",
-                  "Flexible delivery",
-                  "Change flavours anytime",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421306/storefront_media/file_nkhweb.webp",
-                "subtitle": "Best for getting started",
-                "isPopular": false,
-                "buttonLink": "/pages/subscribe/lite",
-                "saveAmountText": "Save £5.00/month"
-              },
-              {
-                "name": "CORE",
-                "slug": "core",
-                "limit": 8,
-                "price": 35.99,
-                "features": [
-                  "8 premium cans",
-                  "Lower price per can",
-                  "Change or swap brands",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421320/storefront_media/file_bhtozi.webp",
-                "subtitle": "Most flexible",
-                "isPopular": false,
-                "buttonLink": "/pages/subscribe/core",
-                "saveAmountText": "Save £10.00/month"
-              },
-              {
-                "name": "PRO",
-                "slug": "pro",
-                "limit": 10,
-                "price": 40.99,
-                "features": [
-                  "10 premium cans",
-                  "FREE delivery 📦",
-                  "Best price per can",
-                  "Loyalty rewards boost",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421331/storefront_media/file_gwwryc.webp",
-                "subtitle": "Best value",
-                "isPopular": true,
-                "buttonLink": "/pages/subscribe/pro",
-                "saveAmountText": "Save £14.00/month"
-              },
-              {
-                "name": "ULTIMATE",
-                "slug": "ultimate",
-                "limit": 12,
-                "price": 46.99,
-                "features": [
-                  "12 premium cans",
-                  "FREE delivery 📦",
-                  "Lowest price per can",
-                  "£3.80 for any extra can",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421341/storefront_media/file_qh0x0p.webp",
-                "subtitle": "Maximum savings",
-                "extraText": "£3.80 FOR ANY ADDITIONAL CAN",
-                "isPopular": false,
-                "buttonLink": "/pages/subscribe/ultimate",
-                "saveAmountText": "Save £19.00/month"
-              }
-            ],
-            "textColor": "#64748B",
-            "description": "Edit option elements inside options sidebar",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "alertBadgeText": "Most customers save up to £55/month",
-            "backgroundColor": "#FFFFFF",
-            "promoBannerText": "★ FIRST 50 SUBSCRIBERS - Get 10% OFF FOR LIFE >"
-          }
-        },
-        {
-          "id": "sec-1785314424267",
-          "type": "Featured collection",
-          "settings": {
-            "title": "Featured Collection Highlights",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "itemsCount": 4,
-            "description": "Sourced cleanly from European chemical compounding centers with direct-to-door courier dispatch.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
+            "textColor": "#E5E7EB",
+            "buttonLink": "frontend-shop",
+            "buttonText": "View Store Catalog",
+            "description": "Start managing your products, collections, and page sections inside the Admin Dashboard.",
+            "headingColor": "#FFFFFF",
+            "backgroundColor": "#111827"
           }
         }
       ],
@@ -8691,90 +8699,95 @@
       "title": "Brands Directory",
       "sections": [
         {
+          "id": "s2",
+          "type": "Rich text",
+          "settings": {
+            "title": "Official Brands Matrix",
+            "fullWidth": false,
+            "textColor": "#64748B",
+            "description": "Explore our catalog of certified compounding premium brands retrieved directly from our synchronized database.",
+            "headingColor": "#1E293B",
+            "backgroundColor": "#FFFFFF"
+          }
+        },
+        {
           "id": "s3",
           "type": "Brand list",
           "settings": {
             "title": "Official Brands Directory",
             "fullWidth": false,
-            "textColor": "#ffffff",
+            "textColor": "#64748B",
             "brandItems": [
               {
                 "title": "77",
                 "linkUrl": "/collections/77",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421423/storefront_media/file_ioe0gf.webp"
-              },
-              {
-                "title": "Clew",
-                "linkUrl": "/collections/clew",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421433/storefront_media/file_sk1n6r.webp"
+                "imageUrl": ""
               },
               {
                 "title": "Cuba",
                 "linkUrl": "/collections/cuba",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421442/storefront_media/file_qv1eka.webp"
-              },
-              {
-                "title": "Maggie",
-                "linkUrl": "front/collections/maggie",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421452/storefront_media/file_rr0mij.webp"
-              },
-              {
-                "title": "Nordic Spirit",
-                "linkUrl": "/collections/nordic-spirit",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421472/storefront_media/file_ycahpf.webp"
-              },
-              {
-                "title": "XQS",
-                "linkUrl": "/collections/xqs",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788422282/storefront_media/file_teisad.webp"
-              },
-              {
-                "title": "Zyn",
-                "linkUrl": "/collections/zyn",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421499/storefront_media/file_kx5yrb.webp"
-              },
-              {
-                "title": "Pablo",
-                "linkUrl": "/collections/pablo",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788423866/storefront_media/file_vddxqa.webp"
+                "imageUrl": ""
               },
               {
                 "title": "Killa",
                 "linkUrl": "/collections/killa",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788423898/storefront_media/file_xv8ggo.webp"
+                "imageUrl": ""
               },
               {
-                "title": "Fumi",
-                "linkUrl": "/collections/fumi",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421528/storefront_media/file_nlrqcu.webp"
+                "title": "Pablo",
+                "linkUrl": "/collections/pablo",
+                "imageUrl": ""
               },
               {
                 "title": "Velo",
                 "linkUrl": "/collections/velo",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421783/storefront_media/file_lz4qcg.webp"
+                "imageUrl": ""
               },
               {
                 "title": "White Fox",
                 "linkUrl": "/collections/white-fox",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788423912/storefront_media/file_ref7lu.webp"
+                "imageUrl": ""
+              },
+              {
+                "title": "Zyn",
+                "linkUrl": "/collections/zyn",
+                "imageUrl": ""
+              },
+              {
+                "title": "XQS",
+                "linkUrl": "/collections/xqs",
+                "imageUrl": ""
+              },
+              {
+                "title": "Nordic Spirit",
+                "linkUrl": "/collections/nordic-spirit",
+                "imageUrl": ""
+              },
+              {
+                "title": "Clew",
+                "linkUrl": "/collections/clew",
+                "imageUrl": ""
+              },
+              {
+                "title": "Fumi",
+                "linkUrl": "/collections/fumi",
+                "imageUrl": ""
               },
               {
                 "title": "Snu",
                 "linkUrl": "/collections/snu",
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421575/storefront_media/file_n3tcom.webp"
+                "imageUrl": ""
               }
             ],
             "description": "Explore our catalog of certified compounding premium brands.",
             "headingColor": "#0C1017",
-            "buttonBgColor": "#bcbcbd",
-            "cardTextColor": "#ffffff",
             "backgroundColor": "#FFFFFF"
           }
         }
       ],
       "updatedAt": "Jun 23, 2026",
-      "isHomepage": false,
-      "visibility": "Visible"
+      "visibility": "Visible",
+      "isHomepage": false
     },
     {
       "id": "subscribe",
@@ -8792,14 +8805,14 @@
                 "name": "LITE",
                 "slug": "lite",
                 "limit": 6,
-                "price": 5.01,
+                "price": 27.99,
                 "features": [
                   "6 premium cans",
                   "Flexible delivery",
                   "Change flavours anytime",
                   "Skip or pause anytime"
                 ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421306/storefront_media/file_nkhweb.webp",
+                "imageUrl": "",
                 "subtitle": "Best for getting started",
                 "isPopular": false,
                 "saveAmountText": "Save £5.00/month"
@@ -8815,7 +8828,7 @@
                   "Change or swap brands",
                   "Skip or pause anytime"
                 ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421320/storefront_media/file_bhtozi.webp",
+                "imageUrl": "",
                 "subtitle": "Most flexible",
                 "isPopular": false,
                 "saveAmountText": "Save £10.00/month"
@@ -8832,7 +8845,7 @@
                   "Loyalty rewards boost",
                   "Skip or pause anytime"
                 ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421331/storefront_media/file_gwwryc.webp",
+                "imageUrl": "",
                 "subtitle": "Best value",
                 "isPopular": true,
                 "saveAmountText": "Save £14.00/month"
@@ -8849,7 +8862,7 @@
                   "£3.80 for any extra can",
                   "Skip or pause anytime"
                 ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421341/storefront_media/file_qh0x0p.webp",
+                "imageUrl": "",
                 "subtitle": "Maximum savings",
                 "extraText": "£3.80 FOR ANY ADDITIONAL CAN",
                 "isPopular": false,
@@ -8866,697 +8879,40 @@
         }
       ],
       "updatedAt": "Jul 10, 2026",
-      "isHomepage": false,
-      "visibility": "Visible"
+      "visibility": "Visible",
+      "isHomepage": false
     },
     {
-      "id": "page-1785313829370",
-      "slug": "subscription-faqs",
-      "title": "SUBSCRIPTION FAQS",
-      "sections": [
-        {
-          "id": "sec-1785313836097",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "You choose your preferred nicotine strength, flavours, and delivery frequency. We’ll automatically deliver your pouches on schedule so you never run out — and you’ll save on every order compared to one-time purchases.",
-                "question": "How does the subscription work?"
-              },
-              {
-                "answer": "Yes—you’re in full control. You can change flavours, strengths, or delivery frequency at any time through your account.",
-                "question": "Can I change my subscription anytime?"
-              },
-              {
-                "answer": "Absolutely. Going away or stocked up? You can skip or pause deliveries in seconds — no fees, no hassle.",
-                "question": "Can I pause or skip a delivery?"
-              },
-              {
-                "answer": "No. There’s no long-term contract. You can cancel your subscription whenever you like.",
-                "question": " Is there a minimum commitment?"
-              },
-              {
-                "answer": "Yes — subscribers get exclusive discounts on every order, plus perks like priority stock access and occasional member-only offers.",
-                "question": "Do I save money with a subscription?"
-              },
-              {
-                "answer": "Yes. Your chosen payment method will be charged automatically before each shipment, so your delivery is always on time.",
-                "question": "Will I be charged automatically?"
-              },
-              {
-                "answer": "No — what you see is what you pay. No hidden charges or cancellation fees.",
-                "question": "Are there any hidden fees?"
-              },
-              {
-                "answer": "You can choose a schedule that suits you — typically every 1, 2, or 4 weeks.",
-                "question": " How often can I get deliveries?"
-              },
-              {
-                "answer": "Yes — mix and match flavours or update them anytime. Your subscription is fully customisable.",
-                "question": " Can I choose different flavours each delivery?"
-              },
-              {
-                "answer": "Yes — subscribers often get early or exclusive access to new flavours and limited releases.",
-                "question": "Can I try new flavours?"
-              },
-              {
-                "answer": "Simply log into your account dashboard to: . Change products .Adjust delivery dates . Skip shipments . Pause or cancel",
-                "question": "How do I manage my subscription?"
-              },
-              {
-                "answer": "You can make changes anytime up until your next billing date (48hrs prior to delivery). After that, your order may already be processed.",
-                "question": "When can I make changes before my next order?"
-              },
-              {
-                "answer": "Not at all. We make it simple and transparent — no hoops to jump through.",
-                "question": "Is cancelling difficult?"
-              }
-            ],
-            "title": "SUBSCRIPTION FAQS",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Instant validation regarding formulation standards, tracking, and deliveries.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785314195226",
-          "type": "Plans",
-          "settings": {
-            "title": "Custom Plans",
-            "fullWidth": false,
-            "planItems": [
-              {
-                "name": "LITE",
-                "slug": "lite",
-                "limit": 6,
-                "price": 27.99,
-                "features": [
-                  "6 premium cans",
-                  "Flexible delivery",
-                  "Change flavours anytime",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421306/storefront_media/file_nkhweb.webp",
-                "subtitle": "Best for getting started",
-                "isPopular": false,
-                "buttonLink": "/pages/subscribe/lite",
-                "saveAmountText": "Save £5.00/month"
-              },
-              {
-                "name": "CORE",
-                "slug": "core",
-                "limit": 8,
-                "price": 35.99,
-                "features": [
-                  "8 premium cans",
-                  "Lower price per can",
-                  "Change or swap brands",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421320/storefront_media/file_bhtozi.webp",
-                "subtitle": "Most flexible",
-                "isPopular": false,
-                "buttonLink": "/pages/subscribe/core",
-                "saveAmountText": "Save £10.00/month"
-              },
-              {
-                "name": "PRO",
-                "slug": "pro",
-                "limit": 10,
-                "price": 40.99,
-                "features": [
-                  "10 premium cans",
-                  "FREE delivery 📦",
-                  "Best price per can",
-                  "Loyalty rewards boost",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421331/storefront_media/file_gwwryc.webp",
-                "subtitle": "Best value",
-                "isPopular": true,
-                "buttonLink": "/pages/subscribe/pro",
-                "saveAmountText": "Save £14.00/month"
-              },
-              {
-                "name": "ULTIMATE",
-                "slug": "ultimate",
-                "limit": 12,
-                "price": 46.99,
-                "features": [
-                  "12 premium cans",
-                  "FREE delivery 📦",
-                  "Lowest price per can",
-                  "£3.80 for any extra can",
-                  "Skip or pause anytime"
-                ],
-                "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421341/storefront_media/file_qh0x0p.webp",
-                "subtitle": "Maximum savings",
-                "extraText": "£3.80 FOR ANY ADDITIONAL CAN",
-                "isPopular": false,
-                "buttonLink": "/pages/subscribe/ultimate",
-                "saveAmountText": "Save £19.00/month"
-              }
-            ],
-            "textColor": "#64748B",
-            "description": "Edit option elements inside options sidebar",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "alertBadgeText": "Most customers save up to £55/month",
-            "backgroundColor": "#FFFFFF",
-            "promoBannerText": "★ FIRST 50 SUBSCRIBERS - Get 10% OFF FOR LIFE >"
-          }
-        }
-      ],
-      "updatedAt": "Just now",
-      "isHomepage": false,
-      "visibility": "Visible"
-    },
-    {
-      "id": "page-1785314096347",
-      "slug": "strength-guide",
-      "title": "Strength Guide",
-      "sections": [
-        {
-          "id": "sec-1785314096347",
-          "type": "Rich text",
-          "settings": {
-            "title": "Strength Guide",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "",
-            "headingColor": "#1E293B",
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785314113178",
-          "type": "Image with text",
-          "settings": {
-            "title": "Find the Right Nicotine Strength",
-            "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788421923/storefront_media/file_io5lco.webp",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "buttonLink": "/pages/subscribe",
-            "buttonText": "Purchase Packs",
-            "description": "Choosing the right nicotine strength is essential for a comfortable and satisfying experience. Whether you're new to nicotine pouches, transitioning from smoking or vaping, or an experienced user, our strength guide helps you select the option that best matches your tolerance and preferences. If you're unsure, we recommend starting with a lower strength and adjusting gradually over time.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        }
-      ],
-      "updatedAt": "Just now",
-      "isHomepage": false,
-      "visibility": "Visible"
-    },
-    {
-      "id": "page-1785241844390",
+      "id": "contact",
       "slug": "contact",
       "title": "Contact Us",
       "sections": [
         {
-          "id": "sec-1785241848654",
-          "type": "Image banner",
-          "settings": {
-            "title": "Exclusive Pouch Launch",
-            "imageUrl": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1788424344/storefront_media/file_hnhbr3.webp",
-            "fullWidth": true,
-            "textColor": "#64748B",
-            "buttonLink": "frontend-shop",
-            "buttonText": "Purchase Packs",
-            "description": "Edit option elements inside options sidebar",
-            "headingColor": "#ffffff",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785241855998",
-          "type": "Rich text",
-          "settings": {
-            "title": "Contact Our Team",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "buttonLink": "/pages/subscribe",
-            "buttonText": "Purchase Packs",
-            "description": "Have a question? Our team is here to help. Reach out to us at\nsupport@pouch-supply.com.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785925760749-kp2t6",
+          "id": "contact-sec-1",
           "type": "Contact Form",
           "settings": {
-            "title": "Custom Contact Form",
+            "title": "Get in Touch with Our Team",
+            "fullWidth": false,
+            "textColor": "#475569",
+            "description": "Have questions about your order, shipping, or nicotine pouch brands? Fill out the form below or reach us directly. Our customer support team responds within 24 hours.",
+            "headingColor": "#0F172A",
+            "backgroundColor": "#FFFFFF"
+          }
+        },
+        {
+          "id": "contact-sec-2",
+          "type": "Trust badges",
+          "settings": {
             "fullWidth": false,
             "textColor": "#64748B",
-            "description": "Edit option elements inside options sidebar",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
+            "headingColor": "#0F172A",
+            "backgroundColor": "#F8FAFC"
           }
         }
       ],
-      "updatedAt": "Just now",
-      "isHomepage": false,
-      "visibility": "Visible"
-    },
-    {
-      "id": "page-1785239768436",
-      "slug": "faqs",
-      "title": "FAQ's",
-      "sections": [
-        {
-          "id": "sec-1785239780707",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "Orders are dispatched as quickly as possible. Delivery times depend on the shipping service selected at checkout. Most UK orders arrive within 1–3 working days after dispatch.",
-                "question": "How long does delivery take?"
-              },
-              {
-                "answer": "Delivery costs are shown at checkout before payment. Selected subscription plans include free delivery.",
-                "question": "How much does delivery cost?"
-              },
-              {
-                "answer": "You'll receive a confirmation email with tracking information as soon as your order leaves our warehouse.",
-                "question": "How will I know when my order has been dispatched?"
-              },
-              {
-                "answer": "Yes. Once your order has been dispatched, we'll send you a tracking link so you can follow your delivery.",
-                "question": "Can I track my order?"
-              },
-              {
-                "answer": "If your estimated delivery date has passed, please contact our customer support team and we'll investigate with the courier.",
-                "question": "What if my order hasn't arrived?"
-              },
-              {
-                "answer": "At launch we currently deliver within the United Kingdom only.",
-                "question": "Do you deliver outside the UK?"
-              }
-            ],
-            "title": "Frequently Answered Questions",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Find quick validations regarding shipping rules, subscriptions, and formulation safety standards.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785239985092",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch",
-                "question": "Is delivery fully tracked?"
-              },
-              {
-                "answer": "If your order hasn't been dispatched, we'll do our best to make changes. Please contact us as soon as possible.",
-                "question": "Can I change my order after it's been placed?"
-              },
-              {
-                "answer": "Orders can only be cancelled before they've been dispatched. Once shipped, you'll need to follow our returns procedure where applicable.",
-                "question": " Can I cancel my order?"
-              },
-              {
-                "answer": "Please contact us within 48 hours of receiving your order with your order number and photos if possible. We'll put things right as quickly as we can.",
-                "question": "I received the wrong products. What should I do?"
-              },
-              {
-                "answer": "We're sorry about that. Please contact us within 48 hours with photographs of the damage so we can arrange a replacement or appropriate resolution.",
-                "question": "My order arrived damaged."
-              },
-              {
-                "answer": "For hygiene and safety reasons, unopened products may only be returned in accordance with our Returns Policy. Opened nicotine pouches cannot be returned unless faulty.",
-                "question": "Can I return nicotine pouches?"
-              }
-            ],
-            "title": "Orders",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Find quick validations regarding shipping rules, subscriptions, and formulation safety standards.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785240139187",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "We accept all major debit and credit cards along with any payment methods shown at checkout.",
-                "question": "What payment methods do you accept?"
-              },
-              {
-                "answer": "Yes. All payments are processed securely using industry-standard encrypted payment technology. We never store your full card details.",
-                "question": "Is my payment secure?"
-              },
-              {
-                "answer": "For one-off purchases, payment is taken immediately. Subscription customers are charged automatically on their scheduled renewal date.",
-                "question": "When will I be charged?"
-              },
-              {
-                "answer": "Yes. Your order confirmation email acts as your receipt, and invoices are available upon request.",
-                "question": "Can I receive an invoice?"
-              }
-            ],
-            "title": "Payments",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Find quick validations regarding shipping rules, subscriptions, and formulation safety standards.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785240226020",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "If you're unhappy with any aspect of our service, please contact our support team. We'll investigate your complaint and work to resolve it as quickly as possible.",
-                "question": "How do I make a complaint?"
-              },
-              {
-                "answer": "We'll acknowledge your complaint promptly and aim to provide a full response within 5 working days.",
-                "question": " What happens after I submit a complaint?"
-              },
-              {
-                "answer": "Please contact us within 48 hours of delivery and we'll investigate immediately.",
-                "question": "I think my order is missing an item."
-              },
-              {
-                "answer": "You can contact us via email using the details on our Contact Us page. We aim to respond to all enquiries as quickly as possible.",
-                "question": "How do I contact customer support?"
-              }
-            ],
-            "title": "Claims & Complaints",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Find quick validations regarding shipping rules, subscriptions, and formulation safety standards.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785240296732",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "Nicotine pouches are tobacco-free pouches that contain nicotine along with plant-based fibres, flavourings and other food-grade ingredients. They are designed to be placed under the upper lip.",
-                "question": "What are nicotine pouches?"
-              },
-              {
-                "answer": "Not exactly. Many people use the word \"snus\" when referring to nicotine pouches, but traditional Swedish snus contains tobacco, whereas modern nicotine pouches are tobacco-free.",
-                "question": "Are nicotine pouches the same as snus?"
-              },
-              {
-                "answer": "Place one pouch under your upper lip and leave it in place for up to 30–60 minutes before disposing of it responsibly.",
-                "question": "How do I use a nicotine pouch?"
-              },
-              {
-                "answer": "If you're new to nicotine pouches, we recommend starting with a lower nicotine strength before trying stronger options.",
-                "question": "Which strength should I choose?"
-              },
-              {
-                "answer": "Most users keep a pouch in for between 20 and 45 minutes, although this varies depending on personal preference and the product used.",
-                "question": "How long does a pouch last?"
-              },
-              {
-                "answer": "Yes. Check the packaging for the best before date and store them in a cool, dry place away from direct sunlight.",
-                "question": "Do nicotine pouches expire?"
-              },
-              {
-                "answer": "Store them in a cool, dry environment and keep the lid tightly closed to help maintain freshness.",
-                "question": "How should I store nicotine pouches?"
-              },
-              {
-                "answer": "No. Nicotine pouches are not designed to be swallowed. Remove and dispose of the pouch after use.",
-                "question": "Can I swallow a nicotine pouch?"
-              },
-              {
-                "answer": "No. Nicotine pouches are intended for adults aged 18+ only. They should not be used by non-nicotine users, pregnant or breastfeeding women, or anyone advised not to consume nicotine.",
-                "question": "Are nicotine pouches suitable for everyone?"
-              },
-              {
-                "answer": "No. The nicotine pouches we sell are tobacco-free unless clearly stated otherwise on the product page.",
-                "question": "Do nicotine pouches contain tobacco?"
-              }
-            ],
-            "title": "General Nicotine Pouch Questions",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Find quick validations regarding shipping rules, subscriptions, and formulation safety standards.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785240489381",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "No, but creating an account allows you to view your order history, save your details and manage your subscription more easily.",
-                "question": "Do I need an account to place an order?"
-              },
-              {
-                "answer": "Click Forgot Password on the login page and follow the instructions to reset it.",
-                "question": "I've forgotten my password."
-              },
-              {
-                "answer": "Log into your account and visit the Account section where you can update your personal details, addresses and password.",
-                "question": "How do I update my account details?"
-              }
-            ],
-            "title": "Account",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Find quick validations regarding shipping rules, subscriptions, and formulation safety standards.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1785240534436",
-          "type": "FAQs",
-          "settings": {
-            "faqs": [
-              {
-                "answer": "UK law requires us to ensure nicotine products are only sold to adults aged 18 and over.",
-                "question": "Why do I need to verify my age?"
-              },
-              {
-                "answer": "If we cannot verify your age electronically, we may ask for additional identification before processing your order.",
-                "question": "What happens if I fail age verification?"
-              },
-              {
-                "answer": "Yes. We only use trusted verification providers and handle your information in accordance with our Privacy Policy.",
-                "question": "Is my personal information secure?"
-              }
-            ],
-            "title": "Age Verification",
-            "faqItems": [
-              {
-                "a": "Yes, all orders over shipping thresholds generate functional, real-time Royal Mail / European carrier tracking codes emailed instantly upon dispatch.",
-                "q": "Is delivery fully tracked?"
-              },
-              {
-                "a": "Formulated completely on plant fiber with medical pure crystalline extract.",
-                "q": "Are these pouches tobacco-free?"
-              },
-              {
-                "a": "Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.",
-                "q": "How long do subscriptions repeat?"
-              }
-            ],
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Find quick validations regarding shipping rules, subscriptions, and formulation safety standards.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        }
-      ],
-      "updatedAt": "Just now",
-      "isHomepage": false,
-      "visibility": "Visible"
-    },
-    {
-      "id": "page-1789213217716",
-      "slug": "test-page",
-      "title": "test page",
-      "sections": [
-        {
-          "id": "sec-1789213217716",
-          "type": "Rich text",
-          "settings": {
-            "title": "test page",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Custom sections will display below here. You can add and configure sections using the builder.",
-            "headingColor": "#1E293B",
-            "backgroundColor": "#FFFFFF"
-          }
-        }
-      ],
-      "updatedAt": "Just now",
-      "isHomepage": false,
-      "visibility": "Visible"
-    },
-    {
-      "id": "page-1784697403555",
-      "slug": "test",
-      "title": "test",
-      "sections": [
-        {
-          "id": "sec-1784697403555",
-          "type": "Rich text",
-          "settings": {
-            "title": "test",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Custom sections will display below here.",
-            "headingColor": "#1E293B",
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1784697407787",
-          "type": "Image with text",
-          "settings": {
-            "title": "Curate Your Premium Package2",
-            "imageUrl": "/uploads/img-1784698495279-48330.webp",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "buttonLink": "frontend-shop",
-            "buttonText": "Purchase Packs",
-            "description": "Our plant-fiber formulations are packed under sterile medical conditions for persistent, smooth boosts.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        }
-      ],
-      "createdAt": "2026-07-22T05:17:00.395Z",
-      "updatedAt": "2026-07-22T05:17:10.126Z",
-      "isHomepage": false,
-      "visibility": "Visible"
+      "updatedAt": "Aug 04, 2026",
+      "visibility": "Visible",
+      "isHomepage": false
     }
   ],
   "blogs": [
@@ -19155,7 +18511,7 @@
       "cansCount": 1,
       "createdAt": "2026-09-12T12:15:12.202Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-17T10:45:10.480Z",
+      "updatedAt": "2026-09-19T10:48:40.378Z",
       "customerId": "cust-1787363327079-edas9",
       "customerName": "Scott Kivlin",
       "shippingCost": 2.99,
@@ -19214,13 +18570,13 @@
       ],
       "amount": 5.7,
       "planId": "sub-pack-1789376138212",
-      "status": "active",
+      "status": "past_due",
       "currency": "GBP",
       "planName": "LITE Plan",
       "cansCount": 1,
       "createdAt": "2026-09-14T09:00:11.394Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-17T10:45:10.523Z",
+      "updatedAt": "2026-09-19T10:48:40.375Z",
       "customerId": "cust-1787363327079-edas9",
       "shippingFee": 2.99,
       "customerName": "Scott Kivlin",
@@ -19235,11 +18591,11 @@
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-18T09:30:09.634Z",
       "shippingAddress": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
-      "lastPaymentError": "The json body provided does not match the expected schema",
+      "lastPaymentError": "Worldpay issued the agreement but never delivered a card token",
       "lastPaymentStatus": "missing_card_token",
       "tokenLookupLastAt": "2026-09-15T12:20:37.789Z",
       "worldpayTokenHref": null,
-      "failedPaymentCount": 1,
+      "failedPaymentCount": 3,
       "tokenLookupAttempts": 5,
       "worldpayRecurringHref": null,
       "worldpayTransactionId": "payOvJ7V9s9wxV9rOtMbD3-80",
@@ -19288,17 +18644,17 @@
       "cansCount": 1,
       "createdAt": "2026-09-15T10:30:10.735Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-17T11:00:12.267Z",
+      "updatedAt": "2026-09-19T10:48:40.376Z",
       "customerId": "cust-1787363327079-edas9",
       "customerName": "Scott Kivlin",
       "shippingCost": 2.99,
       "customerEmail": "scott@pouch-supply.com",
-      "lastPaymentAt": "2026-09-17T11:00:12.266Z",
-      "lastPaymentId": "SUB-ORD-81585-0557",
+      "lastPaymentAt": "2026-09-19T10:48:39.792Z",
+      "lastPaymentId": "SUB-ORD-PS65700-R20260919",
       "sourceOrderId": "PS65700",
       "deliveryMethod": "Royal Mail Tracked 24/48",
       "billingInterval": "1day",
-      "nextBillingDate": "2026-09-18T10:30:10.716Z",
+      "nextBillingDate": "2026-09-20T10:30:10.716Z",
       "shippingAddress": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
       "lastPaymentStatus": "authorized",
       "tokenLookupLastAt": "2026-09-15T13:00:13.500Z",
@@ -19307,9 +18663,9 @@
       "tokenLookupAttempts": 5,
       "tokenAssignedByHandAt": "2026-09-16T06:03:08.120Z",
       "worldpayRecurringHref": null,
-      "worldpayTransactionId": "SUB-ORD-81585-0557",
+      "worldpayTransactionId": "SUB-ORD-PS65700-R20260919",
       "tokenLookupExhaustedAt": "2026-09-15T13:00:13.500Z",
-      "worldpaySchemeReference": "MRLGLSYOB0917"
+      "worldpaySchemeReference": "MRLW73OFT0919"
     },
     {
       "id": "sub_1789548311020_gsar5q",
@@ -19347,13 +18703,13 @@
       ],
       "amount": 5.7,
       "planId": "sub-pack-1789547946227",
-      "status": "active",
+      "status": "past_due",
       "currency": "GBP",
       "planName": "LITE Plan",
       "cansCount": 1,
       "createdAt": "2026-09-16T08:45:11.042Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-17T10:45:10.535Z",
+      "updatedAt": "2026-09-19T10:48:40.378Z",
       "customerId": "cust-1787363327079-edas9",
       "shippingFee": 2.99,
       "customerName": "Scott Kivlin",
@@ -19368,10 +18724,11 @@
       "billingInterval": "1day",
       "nextBillingDate": "2026-09-18T08:45:10.643Z",
       "shippingAddress": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
+      "lastPaymentError": "Worldpay issued the agreement but never delivered a card token",
       "lastPaymentStatus": "missing_card_token",
       "tokenLookupLastAt": "2026-09-16T09:45:10.695Z",
       "worldpayTokenHref": null,
-      "failedPaymentCount": 0,
+      "failedPaymentCount": 3,
       "tokenLookupAttempts": 5,
       "worldpayRecurringHref": null,
       "worldpayTransactionId": "payF3m6aPYg03XsrKd96_ZpW0",
@@ -19421,28 +18778,28 @@
       "cansCount": 1,
       "createdAt": "2026-09-16T09:50:27.551Z",
       "itemPrice": 2.71,
-      "updatedAt": "2026-09-17T12:34:15.087Z",
+      "updatedAt": "2026-09-19T10:48:40.378Z",
       "customerId": "cust-1789551589001",
       "shippingFee": 2.99,
       "customerName": "Scott kivlin",
       "deliveryCost": 2.99,
       "shippingCost": 2.99,
       "customerEmail": "scott.kivlin@yahoo.co.uk",
-      "lastPaymentAt": "2026-09-16T09:50:27.540Z",
-      "lastPaymentId": "5f4869f4-52da-47bd-b374-dd4675b1acaf",
+      "lastPaymentAt": "2026-09-19T10:00:40.312Z",
+      "lastPaymentId": "SUB-ORD-PS46323-R20260919",
       "sourceOrderId": "PS46323",
       "deliveryMethod": "Royal Mail Tracked 24/48",
       "shippingAmount": 2.99,
       "billingInterval": "1day",
-      "nextBillingDate": "2026-09-17T09:50:27.144Z",
+      "nextBillingDate": "2026-09-20T09:50:27.144Z",
       "shippingAddress": "39 tonks drive, Telford, Tf4 2tq, United Kingdom",
       "lastPaymentStatus": "authorized",
       "worldpayTokenHref": "https://access.worldpay.com/tokens/eyJrIjoxLCJkIjoiTVFNaEZzQkJRTzJ3NFRVQTZ0am1rOGMzcDlkclNnN0lnczd0Mk0wYTNVVnFBTFRUZjdPRWFheGFEZ1B0QU1ENUtXWnNleGlrZ2JOS296T3pSbVdzcWc9PSJ9",
       "failedPaymentCount": 0,
       "worldpayRecurringHref": null,
-      "worldpayTransactionId": "5f4869f4-52da-47bd-b374-dd4675b1acaf",
+      "worldpayTransactionId": "SUB-ORD-PS46323-R20260919",
       "tokenisationDowngraded": false,
-      "worldpaySchemeReference": "MRLSCPKSQ0916"
+      "worldpaySchemeReference": "MRLGLFFFY0919"
     },
     {
       "id": "sub_1789556411210_ixl6n9",
@@ -19514,7 +18871,7 @@
       "cansCount": 1,
       "createdAt": "2026-09-16T11:00:11.226Z",
       "itemPrice": 25.19,
-      "updatedAt": "2026-09-17T10:45:10.533Z",
+      "updatedAt": "2026-09-19T10:48:40.376Z",
       "customerId": "cust-1787363327079-edas9",
       "cancelledAt": "2026-09-16T11:33:48.888Z",
       "shippingFee": 2.99,

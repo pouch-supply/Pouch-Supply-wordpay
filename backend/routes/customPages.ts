@@ -27,10 +27,7 @@ const router = createCrudRouter("customPages", {
         .join(", ")}`
     );
 
-    const scheduled = await schedulePlanPriceChange(
-      changes.map(c => c.slug),
-      after
-    );
+    const scheduled = await schedulePlanPriceChange(changes, after);
 
     if (scheduled.length === 0) {
       console.log("[Plan Pricing] No active subscribers affected.");

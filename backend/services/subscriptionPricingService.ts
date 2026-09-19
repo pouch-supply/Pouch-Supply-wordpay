@@ -1,6 +1,10 @@
 import { fetchResource, saveResource } from "../../serverDb";
 import { prisma } from "../../src/lib/prisma";
-import { computeRecurringAmount, existingShippingFor } from "../../src/lib/subscriptionPricing";
+import {
+  computeRecurringAmount,
+  existingShippingFor,
+  frequencyDiscountPercent
+} from "../../src/lib/subscriptionPricing";
 import { getPlanCatalogue, planForSubscription, PlanDefinition } from "./planCatalogue";
 
 /**
@@ -86,8 +90,50 @@ export function clearedPendingFields(): Record<string, any> {
 }
 
 /**
+ * Moves an existing amount by a change in its plan's headline price.
+ *
+ * Used instead of recomputing from the plan, because a subscription does not
+ * reliably record which catalogue plan it is on: `planId` holds the cart SKU it
+ * was bought as (`sub-pack-1789467933399`), so the only link back to a plan is
+ * its name — and names are shared by things that are not that plan at all. Live
+ * data includes 1-can test packs called "LITE Plan" billing £5.70 daily;
+ * recomputing those from the Lite plan would have raised them to £28.18.
+ *
+ * Shifting by the delta keeps whatever the customer actually agreed — a custom
+ * pack, a legacy price, a test cadence — and applies only the change the admin
+ * made. For a subscription that WAS priced from the catalogue, this produces
+ * exactly the same figure as a full recompute.
+ *
+ * The delta is discounted at the subscription's own frequency, because the
+ * headline price is discounted before shipping is added.
+ */
+export function applyPlanPriceDelta(
+  sub: any,
+  previousPlanPrice: number,
+  newPlanPrice: number
+): number {
+  const current = Number(sub?.amount);
+  if (!Number.isFinite(current) || current <= 0) return 0;
+
+  const rawDelta = Number(newPlanPrice) - Number(previousPlanPrice);
+  if (!Number.isFinite(rawDelta) || rawDelta === 0) return current;
+
+  const multiplier = (100 - frequencyDiscountPercent(sub?.billingInterval)) / 100;
+  const next = current + rawDelta * multiplier;
+
+  // A change can reduce a price but must never make a subscription free or
+  // negative; that would be a broken charge, not a discount.
+  if (next <= 0) return current;
+
+  return Number((Math.round(next * 100) / 100).toFixed(2));
+}
+
+/**
  * What a subscription should cost under a given plan, keeping everything about
  * it except the plan price — its extras, its rhythm and its agreed shipping.
+ *
+ * Correct only for a subscription genuinely priced from the catalogue. Use
+ * `applyPlanPriceDelta` for an admin price change, where that cannot be assumed.
  */
 export function repriceForPlan(sub: any, plan: PlanDefinition): number {
   const included = Number(plan.limit) || 0;
@@ -162,14 +208,14 @@ export interface ScheduledChange {
  * shipping absorb it) produces no schedule and no email.
  */
 export async function schedulePlanPriceChange(
-  changedSlugs: string[],
+  changes: Array<{ slug: string; from: number; to: number }>,
   pages?: any[],
   now: Date = new Date()
 ): Promise<ScheduledChange[]> {
-  if (!changedSlugs.length) return [];
+  if (!changes.length) return [];
 
   const catalogue = await getPlanCatalogue(pages);
-  const wanted = new Set(changedSlugs.map(s => s.toLowerCase()));
+  const wanted = new Map(changes.map(c => [c.slug.toLowerCase(), c]));
   const subs = await loadBillableSubscriptions();
 
   const effectiveFrom = noticeDateFrom(now).toISOString();
@@ -178,10 +224,13 @@ export async function schedulePlanPriceChange(
 
   for (const sub of subs) {
     const plan = planForSubscription(catalogue, sub);
-    if (!plan || !wanted.has(plan.slug)) continue;
+    if (!plan) continue;
+    const change = wanted.get(plan.slug);
+    if (!change) continue;
 
     const currentAmount = Number(sub.amount) || 0;
-    const newAmount = repriceForPlan(sub, plan);
+    // Shifted by the plan's change, not recomputed — see applyPlanPriceDelta.
+    const newAmount = applyPlanPriceDelta(sub, change.from, change.to);
 
     if (!Number.isFinite(newAmount) || newAmount <= 0) continue;
     if (Math.abs(newAmount - currentAmount) < 0.01) continue;
