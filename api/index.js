@@ -4858,6 +4858,18 @@ var init_orders = __esm({
             };
           }
           runExchangeEmail = true;
+        } else if (action === "mark_delivered") {
+          if (order.fulfillmentStatus === "Cancelled") {
+            return res.status(409).json({
+              error: "This order is cancelled and cannot be marked delivered."
+            });
+          }
+          patch.fulfillmentStatus = "Delivered";
+          patch.data = {
+            ...order.data || {},
+            deliveredAt: (/* @__PURE__ */ new Date()).toISOString(),
+            deliveredBy: "admin"
+          };
         } else if (action === "decline_return") {
           if (order.returnRequest) {
             patch.returnRequest = {

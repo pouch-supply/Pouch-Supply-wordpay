@@ -901,6 +901,28 @@ router.post("/:id/admin-action", async (req: Request, res: Response) => {
       }
       runExchangeEmail = true;
 
+    } else if (action === "mark_delivered") {
+      // Recorded by hand because nothing else can record it: Click & Drop is a
+      // despatch system and reports no delivery, and Royal Mail's Tracking API
+      // is not integrated. Until it is, a human confirming delivery is the only
+      // source of this fact.
+      //
+      // Refused on a cancelled order — that is a contradiction, not a late
+      // update. Already-Delivered is left to fall through: saveSingleOrder only
+      // notifies on a real transition, so re-marking is a no-op rather than a
+      // duplicate "your order was delivered" email.
+      if (order.fulfillmentStatus === "Cancelled") {
+        return res.status(409).json({
+          error: "This order is cancelled and cannot be marked delivered."
+        });
+      }
+      patch.fulfillmentStatus = "Delivered";
+      patch.data = {
+        ...(order.data || {}),
+        deliveredAt: new Date().toISOString(),
+        deliveredBy: "admin"
+      };
+
     } else if (action === "decline_return") {
       if (order.returnRequest) {
         patch.returnRequest = {

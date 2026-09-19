@@ -84,6 +84,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [refundToastMessage, setRefundToastMessage] = useState<string | null>(null);
   /** Which row's Worldpay reference was just copied, for the tick confirmation. */
   const [copiedRefOrderId, setCopiedRefOrderId] = useState<string | null>(null);
+  const [isMarkingDelivered, setIsMarkingDelivered] = useState(false);
+  const [showDeliveredConfirm, setShowDeliveredConfirm] = useState(false);
 
   // Helper to detect if an order is a subscription order
   const isSubOrder = (order: Order) => {
@@ -127,6 +129,61 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   // product title and the variant the customer actually picked.
   const getSubscriptionDetails = (order: Order) => {
     return extractSubscriptionDetails(order, products as any);
+  };
+
+  /**
+   * Records delivery by hand.
+   *
+   * Nothing else can: Click & Drop reports despatch but never delivery, and
+   * Royal Mail's Tracking API is not integrated. The backend performs the write,
+   * and the 'order_delivered' email is emitted by the status transition inside
+   * saveSingleOrder — NOT fired from here. Sending it from the client as well
+   * would duplicate it, which is the mistake the refund flow's comment at the
+   * admin-action route warns about.
+   */
+  const handleMarkDelivered = async () => {
+    if (!selectedOrder) return;
+    setIsMarkingDelivered(true);
+    try {
+      const response = await fetch(`/api/orders/${selectedOrder.id}/admin-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_delivered' })
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        // Surface the backend's own words — it refuses a cancelled order.
+        alert(data?.error || 'Could not mark this order delivered. Please try again.');
+        return;
+      }
+
+      const updatedOrder: Order = { ...selectedOrder, fulfillmentStatus: 'Delivered' as const };
+      if (data?.order) Object.assign(updatedOrder, data.order);
+
+      parentOnUpdateOrders(
+        parentOrders.map(o => String(o.id) === String(selectedOrder.id) ? updatedOrder : o)
+      );
+      setSelectedOrder(updatedOrder);
+
+      setTimelineComments(prev => ({
+        ...prev,
+        [selectedOrder.id]: [
+          { text: 'Marked as delivered by administrator. Delivery confirmation email sent.', date: 'Just now' },
+          ...(prev[selectedOrder.id] || [])
+        ]
+      }));
+
+      setShowDeliveredConfirm(false);
+      setRefundToastMessage(`Order #${selectedOrder.id} marked as delivered.`);
+      setTimeout(() => setRefundToastMessage(null), 5000);
+    } catch (err: any) {
+      console.error('[Admin Mark Delivered Error]', err);
+      alert('An error occurred while marking the order delivered. Please check your connection.');
+    } finally {
+      setIsMarkingDelivered(false);
+    }
   };
 
   const handleExecuteRefund = async () => {
@@ -1351,6 +1408,43 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                     </button>
                   </div>
 
+                  {/* Manual delivery confirmation. Royal Mail Click & Drop reports
+                      despatch but never delivery, so without this an order stays on
+                      'Dispatched' indefinitely and the delivery email never sends. */}
+                  {selectedOrder.fulfillmentStatus !== 'Cancelled' && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div>
+                        <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Delivery Confirmation</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <CheckCircle2 className={`h-4 w-4 ${selectedOrder.fulfillmentStatus === 'Delivered' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                          <span className="text-xs font-extrabold text-slate-800">
+                            {selectedOrder.fulfillmentStatus === 'Delivered'
+                              ? 'Delivered — customer notified'
+                              : 'Not yet confirmed as delivered'}
+                          </span>
+                        </div>
+                        {selectedOrder.fulfillmentStatus !== 'Delivered' && (
+                          <span className="text-[10px] text-slate-500 block mt-1">
+                            Royal Mail does not report delivery to us. Confirm here once the parcel has arrived.
+                          </span>
+                        )}
+                      </div>
+
+                      {selectedOrder.fulfillmentStatus !== 'Delivered' && (
+                        <button
+                          onClick={() => setShowDeliveredConfirm(true)}
+                          disabled={isMarkingDelivered}
+                          className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg transition-all shadow-3xs cursor-pointer select-none flex items-center gap-1.5 shrink-0"
+                        >
+                          {isMarkingDelivered
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <CheckCircle2 className="h-3.5 w-3.5" />}
+                          Mark Delivered
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                 </div>
               </div>
 
@@ -1553,6 +1647,57 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   </button>
                 </div>
 
+              </div>
+            </div>
+          )}
+
+          {/* MARK DELIVERED CONFIRMATION MODAL */}
+          {showDeliveredConfirm && selectedOrder && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+                <div className="p-5 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                    <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">Confirm Delivery</h3>
+                  </div>
+                </div>
+
+                <div className="p-5 space-y-3">
+                  <p className="text-xs text-slate-700 leading-relaxed">
+                    Mark order <strong className="font-extrabold">#{selectedOrder.id}</strong> as delivered?
+                  </p>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    This sends the delivery confirmation email to{' '}
+                    <strong className="font-extrabold">{selectedOrder.customerEmail || 'the customer'}</strong> and
+                    cannot be undone from here.
+                  </p>
+                  {selectedOrder.fulfillmentStatus === 'Unfulfilled' && (
+                    <div className="flex gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        This order has not been dispatched yet. Check it has actually been sent before confirming.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowDeliveredConfirm(false)}
+                    disabled={isMarkingDelivered}
+                    className="py-2 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all shadow-3xs disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleMarkDelivered}
+                    disabled={isMarkingDelivered}
+                    className="py-2 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg cursor-pointer transition-all shadow-2xs uppercase tracking-widest flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isMarkingDelivered && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {isMarkingDelivered ? 'Marking…' : 'Confirm Delivered'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
