@@ -3,6 +3,7 @@ import { prisma } from "../../src/lib/prisma";
 import { deleteFromCloudinary } from "../services/cloudinary";
 import { checkMediaReferences } from "./media";
 import { fetchResource, saveResource, getDb } from "../../serverDb";
+import { requireAdmin } from "../middleware/requireAdmin";
 
 const router = Router();
 
@@ -41,7 +42,10 @@ router.post("/", async (req, res) => {
 });
 
 // DELETE single file by id or url
-router.delete("/:id", async (req, res) => {
+// POST "/" is deliberately NOT gated yet: the storefront's bulk-sync effect in
+// App.tsx posts to it on every visit, so locking it before that is refactored
+// would break the shop. Tracked as the next stage.
+router.delete("/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const force = req.query.force === 'true';

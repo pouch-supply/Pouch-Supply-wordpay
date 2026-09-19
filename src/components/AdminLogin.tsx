@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Lock, User, Eye, EyeOff, AlertCircle, ArrowLeft } from 'lucide-react';
+import { adminLogin } from '../lib/adminApi';
 
 interface AdminLoginProps {
   onLoginSuccess: () => void;
@@ -13,7 +14,7 @@ export default function AdminLogin({ onLoginSuccess, onCancel }: AdminLoginProps
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -24,16 +25,18 @@ export default function AdminLogin({ onLoginSuccess, onCancel }: AdminLoginProps
 
     setIsLoading(true);
 
-    // Simulate safe authentication verification check
-    setTimeout(() => {
-      if (username.trim().toLowerCase() === 'admin' && password === 'admin') {
-        setIsLoading(false);
-        onLoginSuccess();
-      } else {
-        setIsLoading(false);
-        setError('Invalid admin credentials. Please use the standard sandbox credentials listed below.');
-      }
-    }, 800);
+    // Verified by the server, which returns a signed token that every admin
+    // endpoint checks. This used to compare 'admin'/'admin' here in the browser
+    // and call it authentication — nothing on the server ever checked it, so
+    // the entire admin API was open to anyone who knew a URL.
+    const result = await adminLogin(username.trim(), password);
+    setIsLoading(false);
+
+    if (result.ok) {
+      onLoginSuccess();
+    } else {
+      setError(result.message || 'Invalid admin credentials.');
+    }
   };
 
   return (
@@ -65,13 +68,13 @@ export default function AdminLogin({ onLoginSuccess, onCancel }: AdminLoginProps
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
-                Admin Username
+                Admin Email
               </label>
               <div className="relative">
                 <input
-                  type="text"
+                  type="email"
                   required
-                  placeholder="e.g. admin"
+                  placeholder="you@pouch-supply.com"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={isLoading}

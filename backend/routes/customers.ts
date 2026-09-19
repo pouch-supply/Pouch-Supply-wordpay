@@ -6,6 +6,7 @@ import { prisma } from "../../src/lib/prisma";
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, sendLoginNotificationEmail } from "../services/emailService";
 import { trackCustomerSignup, trackEmailVerified } from "../services/klaviyoService";
 import { verifyRecaptchaToken } from "../services/recaptchaService";
+import { signAdminToken, verifyAdminCredentials, AdminAuthNotConfiguredError } from "../services/adminAuth";
 
 const router = Router();
 
@@ -564,29 +565,41 @@ router.post("/admin-login", async (req, res) => {
       return res.status(400).json({ error: "Admin email and password are required." });
     }
 
-    const adminEmail = process.env.ADMIN_EMAIL || "Support@pouch-supply.com";
-    const adminPassword = process.env.ADMIN_PASSWORD || "January14!2019";
-
-    if (
-      email.trim().toLowerCase() === adminEmail.toLowerCase() &&
-      password === adminPassword
-    ) {
-      console.log(`[Admin Auth] Secure admin login succeeded for email: ${email}`);
-      const adminToken = `admin-token-${crypto.randomBytes(16).toString("hex")}`;
-      res.json({
-        success: true,
-        message: "Admin access granted.",
-        token: adminToken,
-        adminUser: {
-          email: adminEmail,
-          name: "Pouch Supply Administrator"
-        }
-      });
-    } else {
+    // Credentials and the signing secret both come from the environment. This
+    // used to fall back to an email and password written into this file, which
+    // put the live admin credential into version control and made it
+    // unchangeable without a deploy.
+    if (!verifyAdminCredentials(email, password)) {
       console.warn(`[Admin Auth] Unauthorized admin login attempt with email: ${email}`);
-      res.status(401).json({ error: "Invalid admin login credentials." });
+      return res.status(401).json({ error: "Invalid admin login credentials." });
     }
+
+    // Signed, expiring, and verified on every admin request by requireAdmin.
+    // The previous random `admin-token-<hex>` string proved nothing: no endpoint
+    // ever checked it, so it granted exactly the access an empty string did.
+    const token = signAdminToken(String(email).trim().toLowerCase());
+
+    console.log(`[Admin Auth] Admin login succeeded for ${email}`);
+    res.json({
+      success: true,
+      message: "Admin access granted.",
+      token,
+      adminUser: {
+        email: String(email).trim().toLowerCase(),
+        name: "Pouch Supply Administrator"
+      }
+    });
   } catch (err: any) {
+    if (err instanceof AdminAuthNotConfiguredError) {
+      // Said distinctly: this is a server that cannot authenticate anyone, not a
+      // wrong password, and an administrator needs to know which it is.
+      console.error("[Admin Auth] Login refused —", err.message);
+      return res.status(503).json({
+        error:
+          "Admin authentication is not configured on this server. Set AUTH_SECRET, ADMIN_EMAIL and ADMIN_PASSWORD.",
+        code: "ADMIN_AUTH_NOT_CONFIGURED"
+      });
+    }
     console.error("[Admin Auth] Login Error:", err);
     res.status(500).json({ error: err.message || "Internal server error during admin validation" });
   }

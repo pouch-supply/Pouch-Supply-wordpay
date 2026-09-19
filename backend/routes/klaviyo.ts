@@ -16,10 +16,12 @@ import {
 } from '../services/klaviyoService';
 import { saveResource } from '../../serverDb';
 
+import { requireAdmin } from "../middleware/requireAdmin";
+
 const router = Router();
 
 // GET /api/klaviyo/lists - Fetch all email lists from Klaviyo account
-router.get('/lists', async (req: Request, res: Response) => {
+router.get('/lists', requireAdmin, async (req: Request, res: Response) => {
   try {
     const apiKey = req.query.apiKey as string | undefined;
     const lists = await getKlaviyoLists(apiKey);
@@ -30,7 +32,8 @@ router.get('/lists', async (req: Request, res: Response) => {
 });
 
 // GET /api/klaviyo/settings
-router.get('/settings', async (_req: Request, res: Response) => {
+// Returned the Klaviyo private API key to anonymous callers.
+router.get('/settings', requireAdmin, async (_req: Request, res: Response) => {
   try {
     const settings = await getKlaviyoSettings();
     res.json(settings);
@@ -40,7 +43,7 @@ router.get('/settings', async (_req: Request, res: Response) => {
 });
 
 // POST /api/klaviyo/settings
-router.post('/settings', async (req: Request, res: Response) => {
+router.post('/settings', requireAdmin, async (req: Request, res: Response) => {
   try {
     const updated = await saveKlaviyoSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -140,8 +143,8 @@ const handleVerify = async (req: Request, res: Response) => {
   }
 };
 
-router.get('/verify', handleVerify);
-router.post('/verify', handleVerify);
+router.get('/verify', requireAdmin, handleVerify);
+router.post('/verify', requireAdmin, handleVerify);
 
 /**
  * GET /api/klaviyo/health
@@ -155,7 +158,7 @@ router.post('/verify', handleVerify);
  * This reports the half of the pipeline that lives inside Klaviyo, so the
  * cause is visible in the dashboard instead of being guessed at.
  */
-router.get('/health', async (_req: Request, res: Response) => {
+router.get('/health', requireAdmin, async (_req: Request, res: Response) => {
   try {
     const settings = await getKlaviyoSettings();
     let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || '').trim();
@@ -251,7 +254,7 @@ router.get('/health', async (_req: Request, res: Response) => {
 });
 
 // GET /api/klaviyo/logs
-router.get('/logs', async (_req: Request, res: Response) => {
+router.get('/logs', requireAdmin, async (_req: Request, res: Response) => {
   try {
     const logs = await getKlaviyoLogs();
     res.json(logs);
@@ -266,7 +269,7 @@ router.get('/logs', async (_req: Request, res: Response) => {
 //   { before: <ISO date> } - drop only entries older than that instant
 // The two combine, so { status: 'failed', before: '...' } removes stale
 // failures while leaving the delivery history that still means something.
-router.post('/logs/clear', async (req: Request, res: Response) => {
+router.post('/logs/clear', requireAdmin, async (req: Request, res: Response) => {
   try {
     const status = typeof req.body?.status === 'string' ? req.body.status.trim() : '';
     const beforeRaw = req.body?.before;

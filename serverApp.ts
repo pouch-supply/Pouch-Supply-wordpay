@@ -30,6 +30,7 @@ import authRouter, { handleGoogleOAuthCallback } from "./backend/routes/auth";
 import mediaRouter from "./backend/routes/media";
 import { uploadToCloudinary, isCloudinaryConfigured } from "./backend/services/cloudinary";
 import { prisma } from "./src/lib/prisma";
+import { requireAdmin } from "./backend/middleware/requireAdmin";
 
 export async function createExpressApp() {
   const app = express();
@@ -161,7 +162,7 @@ export async function createExpressApp() {
   app.use("/uploads", express.static(uploadsPath));
   app.use("/api/uploads", express.static(uploadsPath));
 
-  app.post("/api/upload", async (req, res) => {
+  app.post("/api/upload", requireAdmin, async (req, res) => {
     try {
       const { data, filename, cloudName, apiKey, apiSecret, cloudinaryCloudName, cloudinaryApiKey, cloudinaryApiSecret } = req.body;
       if (!data) {
@@ -363,7 +364,7 @@ export async function createExpressApp() {
   });
 
   // Comprehensive DB diagnostic status endpoint
-  app.get("/api/status", async (req, res) => {
+  app.get("/api/status", requireAdmin, async (req, res) => {
     res.setHeader("Content-Type", "application/json");
     try {
       const status = await getConnectionStatus();
@@ -404,14 +405,14 @@ export async function createExpressApp() {
     }
   });
 
-  app.get("/api/db-status", async (req, res) => {
+  app.get("/api/db-status", requireAdmin, async (req, res) => {
     try {
       await getDb();
     } catch (e) {}
     res.json(await getConnectionStatus());
   });
 
-  app.get("/api/db-details", async (req, res) => {
+  app.get("/api/db-details", requireAdmin, async (req, res) => {
     try {
       const details = await getDatabaseDetails();
       res.json(details);
@@ -421,7 +422,7 @@ export async function createExpressApp() {
     }
   });
 
-  app.post("/api/update-db-uri", async (req, res) => {
+  app.post("/api/update-db-uri", requireAdmin, async (req, res) => {
     try {
       const { uri } = req.body;
       if (!uri) {
@@ -436,7 +437,7 @@ export async function createExpressApp() {
   });
 
   // Automated Neon PostgreSQL Backups
-  app.post("/api/backup", async (req, res) => {
+  app.post("/api/backup", requireAdmin, async (req, res) => {
     try {
       const name = req.body?.name || `Manual Backup ${new Date().toLocaleDateString()}`;
       const snapshot = await createDatabaseBackup(name);
@@ -446,7 +447,7 @@ export async function createExpressApp() {
     }
   });
 
-  app.get("/api/backup", async (req, res) => {
+  app.get("/api/backup", requireAdmin, async (req, res) => {
     try {
       const list = await listDatabaseBackups();
       res.json(list);
@@ -455,7 +456,7 @@ export async function createExpressApp() {
     }
   });
 
-  app.post("/api/backup/restore", async (req, res) => {
+  app.post("/api/backup/restore", requireAdmin, async (req, res) => {
     try {
       const { id } = req.body;
       if (!id) return res.status(400).json({ error: 'Backup ID is required' });
@@ -467,7 +468,7 @@ export async function createExpressApp() {
   });
 
   // Full Database Diagnostics across all tables
-  app.get("/api/db-diagnostics", async (req, res) => {
+  app.get("/api/db-diagnostics", requireAdmin, async (req, res) => {
     try {
       const isConnected = await getDb();
       if (!isConnected) {
@@ -564,8 +565,10 @@ export async function createExpressApp() {
     }
   };
 
-  app.get("/api/test-cloudinary", handleTestCloudinary);
-  app.post("/api/test-cloudinary", handleTestCloudinary);
+  // Accepts Cloudinary credentials in the body and writes them into process.env,
+  // so an anonymous caller could repoint the store's media account.
+  app.get("/api/test-cloudinary", requireAdmin, handleTestCloudinary);
+  app.post("/api/test-cloudinary", requireAdmin, handleTestCloudinary);
 
   app.get("/api/layoutsettings", async (req, res) => {
     try {
@@ -576,7 +579,7 @@ export async function createExpressApp() {
     }
   });
 
-  app.post("/api/layoutsettings", async (req, res) => {
+  app.post("/api/layoutsettings", requireAdmin, async (req, res) => {
     try {
       const saved = await saveLayoutSettings(req.body);
       res.json({ status: "success", data: saved });
@@ -594,7 +597,7 @@ export async function createExpressApp() {
     }
   });
 
-  app.post("/api/devsettings", async (req, res) => {
+  app.post("/api/devsettings", requireAdmin, async (req, res) => {
     try {
       const saved = await saveDevSettings(req.body);
       res.json({ status: "success", data: saved });
@@ -625,7 +628,7 @@ export async function createExpressApp() {
   });
 
   // Mount modular backend routers
-  app.use("/api/media", mediaRouter);
+  app.use("/api/media", requireAdmin, mediaRouter);
   app.use("/api/products", productsRouter);
   app.use("/api/collections", collectionsRouter);
   app.use("/api/orders", ordersRouter);
@@ -637,7 +640,7 @@ export async function createExpressApp() {
   app.use("/api/worldpay/subscriptions", subscriptionsRouter);
   app.use("/api/subscriptions", subscriptionsRouter);
   app.use("/api/worldpay", worldpayRouter);
-  app.use("/api/folder-structure", structureRouter);
+  app.use("/api/folder-structure", requireAdmin, structureRouter);
   app.use("/api/email", emailRouter);
   app.use("/api/klaviyo", klaviyoRouter);
   app.use("/api/royalmail", royalMailRouter);

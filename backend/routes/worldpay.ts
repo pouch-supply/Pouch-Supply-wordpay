@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../../src/lib/prisma';
 import { fetchResource, getDb, saveResource } from '../../serverDb';
+import { requireAdmin, requireCronOrAdmin } from '../middleware/requireAdmin';
 import {
   extractRecurringAuthorizationHref,
   extractSchemeReference,
@@ -1480,8 +1481,9 @@ export async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT
 }
 
 
-router.get('/reconcile-pending', handleReconcilePending);
-router.post('/reconcile-pending', handleReconcilePending);
+// Scheduled reconciliation (vercel.json cron). Was reachable by anyone over GET.
+router.get('/reconcile-pending', requireCronOrAdmin, handleReconcilePending);
+router.post('/reconcile-pending', requireCronOrAdmin, handleReconcilePending);
 
 const SUBSCRIPTION_REPAIR_LIMIT = 10;
 
@@ -1832,7 +1834,7 @@ const handleRepairSubscriptions = async (req: Request, res: Response) => {
 
 // POST only. This endpoint can create subscriptions, and a GET is the kind of
 // request a crawler, a link preview or a browser prefetch sends unprompted.
-router.post('/repair-subscriptions', handleRepairSubscriptions);
+router.post('/repair-subscriptions', requireAdmin, handleRepairSubscriptions);
 
 const handleRecoverTokens = async (_req: Request, res: Response) => {
   try {
@@ -1849,8 +1851,8 @@ const handleRecoverTokens = async (_req: Request, res: Response) => {
   }
 };
 
-router.get('/recover-tokens', handleRecoverTokens);
-router.post('/recover-tokens', handleRecoverTokens);
+router.get('/recover-tokens', requireAdmin, handleRecoverTokens);
+router.post('/recover-tokens', requireAdmin, handleRecoverTokens);
 
 router.get('/config', (_req: Request, res: Response) => {
   const cfg = getEnvironmentConfig();
@@ -2919,7 +2921,8 @@ router.get('/order/:id', async (req: Request, res: Response) => {
 });
 
 // POST /api/worldpay/refund - Process Worldpay Payment Provider Refund
-router.post('/refund', async (req: Request, res: Response) => {
+// Issues a real Worldpay refund from {orderId, amount}. Was unauthenticated.
+router.post('/refund', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { orderId, amount, reason, transactionId } = req.body;
 

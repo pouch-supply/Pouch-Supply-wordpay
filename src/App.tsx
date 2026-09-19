@@ -8,6 +8,7 @@ import {
 } from './initialData';
 import { DEFAULT_DEV_SETTINGS } from './data/initialDevSettings';
 import { applyDevSettingsToDOM } from './utils/devModeInjector';
+import { getAdminToken, clearAdminToken } from './lib/adminApi';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import ProductsGrid from './components/ProductsGrid';
@@ -656,7 +657,10 @@ export default function App() {
     }
   });
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('ps_admin_authenticated') === 'true';
+    // The signed token is the real credential; this flag only decides which view
+    // renders. Without a token the dashboard would render but every admin call
+    // would 401, so both must be present to count as signed in.
+    return sessionStorage.getItem('ps_admin_authenticated') === 'true' && Boolean(getAdminToken());
   });
   const [cartOpen, setCartOpen] = useState<boolean>(false);
   const [customerDrawerOpen, setCustomerDrawerOpen] = useState<boolean>(false);
@@ -2011,6 +2015,7 @@ export default function App() {
               onLogoutAdmin={() => {
                 setIsAdminAuthenticated(false);
                 sessionStorage.removeItem('ps_admin_authenticated');
+                clearAdminToken();
                 setIsAdminActive(false);
               }}
             />

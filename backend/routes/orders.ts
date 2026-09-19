@@ -10,6 +10,7 @@ import {
   sendOrderRefundedEmail
 } from "../services/emailService";
 import { trackPurchaseCompleted, trackOrderRefunded, trackOrderShipped } from "../services/klaviyoService";
+import { requireAdmin } from "../middleware/requireAdmin";
 import { UK_COUNTRY_NAME, validateUkDelivery } from "../../src/utils/ukValidation";
 
 const router = Router();
@@ -570,7 +571,7 @@ router.get("/:id", async (req: Request, res: Response) => {
 // operator saved was reported as "Failed to update tracking on server" and lost.
 // Writes go through saveSingleOrder like every other order write, so a change
 // that moves the order to Shipped still sends the dispatch email exactly once.
-router.put("/:id", async (req: Request, res: Response) => {
+router.put("/:id", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const orderData = req.body;
@@ -834,7 +835,7 @@ router.post("/:id/return-request", async (req: Request, res: Response) => {
 });
 
 // POST /:id/admin-action - Admin Approve / Decline / Process Return, Refund, or Exchange
-router.post("/:id/admin-action", async (req: Request, res: Response) => {
+router.post("/:id/admin-action", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { action, refundAmount, reason } = req.body;
@@ -950,7 +951,7 @@ router.post("/:id/admin-action", async (req: Request, res: Response) => {
 });
 
 // DELETE /:id - Permanently delete a single order
-router.delete("/:id", async (req: Request, res: Response) => {
+router.delete("/:id", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const deleted = await deleteSingleItem("orders", id);

@@ -41,6 +41,8 @@ import {
 } from '../services/emailTemplates';
 import { saveResource, fetchResource, fetchLayoutSettings } from '../../serverDb';
 
+import { requireAdmin } from "../middleware/requireAdmin";
+
 const router = Router();
 
 // Sample data generator for template previews and test emails
@@ -81,7 +83,8 @@ function getSampleTemplateData(type: EmailTemplateType, customData?: any): Email
 }
 
 // GET /api/email/settings
-router.get('/settings', async (_req: Request, res: Response) => {
+// Returned the SMTP and Gmail app passwords unredacted to anonymous callers.
+router.get('/settings', requireAdmin, async (_req: Request, res: Response) => {
   try {
     const settings = await getEmailSettings();
     res.json(settings);
@@ -91,7 +94,7 @@ router.get('/settings', async (_req: Request, res: Response) => {
 });
 
 // POST /api/email/settings
-router.post('/settings', async (req: Request, res: Response) => {
+router.post('/settings', requireAdmin, async (req: Request, res: Response) => {
   try {
     const updated = await saveEmailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -101,7 +104,7 @@ router.post('/settings', async (req: Request, res: Response) => {
 });
 
 // POST /api/email/verify-connection - Test Gmail or SMTP credentials
-router.post('/verify-connection', async (req: Request, res: Response) => {
+router.post('/verify-connection', requireAdmin, async (req: Request, res: Response) => {
   try {
     const result = await verifyEmailConnection(req.body);
     res.json(result);
@@ -126,7 +129,7 @@ router.get('/recaptcha-settings', async (_req: Request, res: Response) => {
 });
 
 // POST /api/email/recaptcha-settings
-router.post('/recaptcha-settings', async (req: Request, res: Response) => {
+router.post('/recaptcha-settings', requireAdmin, async (req: Request, res: Response) => {
   try {
     const updated = await saveRecaptchaSettings(req.body);
     res.json({
@@ -144,7 +147,7 @@ router.post('/recaptcha-settings', async (req: Request, res: Response) => {
 });
 
 // GET /api/email/logs
-router.get('/logs', async (_req: Request, res: Response) => {
+router.get('/logs', requireAdmin, async (_req: Request, res: Response) => {
   try {
     const logs = await getEmailLogs();
     res.json(logs);
@@ -159,7 +162,7 @@ router.get('/logs', async (_req: Request, res: Response) => {
 //   { before: <ISO date> } - drop only entries older than that instant
 // The two combine, so { status: 'failed', before: '...' } removes stale
 // failures while leaving the delivery history that still means something.
-router.post('/logs/clear', async (req: Request, res: Response) => {
+router.post('/logs/clear', requireAdmin, async (req: Request, res: Response) => {
   try {
     const status = typeof req.body?.status === 'string' ? req.body.status.trim() : '';
     const beforeRaw = req.body?.before;
@@ -205,7 +208,7 @@ router.post('/logs/clear', async (req: Request, res: Response) => {
 });
 
 // POST /api/email/preview - Render HTML for visual previewer
-router.post('/preview', async (req: Request, res: Response) => {
+router.post('/preview', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { type, customData } = req.body;
     const templateType = (type || 'order_confirmation') as EmailTemplateType;
@@ -269,7 +272,8 @@ router.post('/preview', async (req: Request, res: Response) => {
 });
 
 // POST /api/email/test - Send a test email
-router.post('/test', async (req: Request, res: Response) => {
+// An open mail relay until this gate: anyone could send mail from your domain.
+router.post('/test', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { recipient, type, customSubject, customData, apiKey, fromEmail } = req.body;
 

@@ -3,6 +3,7 @@ import crypto from "crypto";
 
 import { prisma } from "../../src/lib/prisma";
 import { upsertSubscriptionRow } from "../../src/lib/subscriptionRow";
+import { requireAdmin, requireCronOrAdmin } from "../middleware/requireAdmin";
 import { trackSubscriptionStarted } from "../services/klaviyoService";
 import { fetchResource, saveResource } from "../../serverDb";
 import {
@@ -47,10 +48,12 @@ const handleProcessRenewals = async (_req: Request, res: Response) => {
   }
 };
 
-router.get("/process-renewals", handleProcessRenewals);
-router.post("/process-renewals", handleProcessRenewals);
-router.get("/cron", handleProcessRenewals);
-router.post("/cron", handleProcessRenewals);
+// These charge customer cards. All four were open to the internet, and the two
+// /cron entries are what vercel.json calls hourly.
+router.get("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router.post("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router.get("/cron", requireCronOrAdmin, handleProcessRenewals);
+router.post("/cron", requireCronOrAdmin, handleProcessRenewals);
 
 /**
  * Diagnostic endpoint: Returns all subscriptions, due renewals count, and worker status.
@@ -212,7 +215,7 @@ function toCustomerSubscription(s: any, now: Date = new Date()) {
   };
 }
 
-router.get("/status", async (_req: Request, res: Response) => {
+router.get("/status", requireAdmin, async (_req: Request, res: Response) => {
   try {
     let subscriptions: any[] = [];
     try {
@@ -710,6 +713,8 @@ router.post(
  */
 router.post(
   "/charge",
+  // Charges the stored card for a subscription id. Was unauthenticated.
+  requireAdmin,
   async (req: Request, res: Response) => {
     try {
       const { subscriptionId } = req.body;

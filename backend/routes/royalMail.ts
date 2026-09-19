@@ -50,10 +50,12 @@ function sendRoyalMailError(res: Response, error: any, fallbackMessage: string) 
   });
 }
 
+import { requireAdmin, requireCronOrAdmin } from "../middleware/requireAdmin";
+
 const router = Router();
 
 // GET /api/royalmail/connection - Check live Click & Drop API Connection
-router.get("/connection", async (_req: Request, res: Response) => {
+router.get("/connection", requireAdmin, async (_req: Request, res: Response) => {
   try {
     const settings = await getRoyalMailSettings();
     const apiKey = (settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "").trim();
@@ -102,7 +104,7 @@ router.get("/connection", async (_req: Request, res: Response) => {
 });
 
 // POST /api/royalmail/create-order - Create order direct payload
-router.post("/create-order", async (req: Request, res: Response) => {
+router.post("/create-order", requireAdmin, async (req: Request, res: Response) => {
   try {
     const orderData = req.body as RoyalMailOrderPayload;
     const settings = await getRoyalMailSettings();
@@ -169,7 +171,7 @@ router.post("/create-order", async (req: Request, res: Response) => {
 });
 
 // GET /api/royalmail/orders - Fetch orders from Royal Mail
-router.get("/orders", async (req: Request, res: Response) => {
+router.get("/orders", requireAdmin, async (req: Request, res: Response) => {
   try {
     const apiKey = await requireApiKey();
     const params = req.query as Record<string, string>;
@@ -181,7 +183,7 @@ router.get("/orders", async (req: Request, res: Response) => {
 });
 
 // GET /api/royalmail/orders/:reference - Get specific order
-router.get("/orders/:reference", async (req: Request, res: Response) => {
+router.get("/orders/:reference", requireAdmin, async (req: Request, res: Response) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getOrderByReference(req.params.reference, apiKey);
@@ -192,7 +194,7 @@ router.get("/orders/:reference", async (req: Request, res: Response) => {
 });
 
 // DELETE /api/royalmail/orders/:reference - Delete specific order
-router.delete("/orders/:reference", async (req: Request, res: Response) => {
+router.delete("/orders/:reference", requireAdmin, async (req: Request, res: Response) => {
   try {
     const apiKey = await requireApiKey();
     const data = await cancelOrder(req.params.reference, apiKey);
@@ -203,7 +205,7 @@ router.delete("/orders/:reference", async (req: Request, res: Response) => {
 });
 
 // GET /api/royalmail/version - Get API version
-router.get("/version", async (_req: Request, res: Response) => {
+router.get("/version", requireAdmin, async (_req: Request, res: Response) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getApiVersion(apiKey);
@@ -214,7 +216,7 @@ router.get("/version", async (_req: Request, res: Response) => {
 });
 
 // GET /api/royalmail/settings - Get settings
-router.get("/settings", async (_req: Request, res: Response) => {
+router.get("/settings", requireAdmin, async (_req: Request, res: Response) => {
   try {
     const settings = await getRoyalMailSettings();
     res.json(settings);
@@ -224,7 +226,7 @@ router.get("/settings", async (_req: Request, res: Response) => {
 });
 
 // POST /api/royalmail/settings - Update settings
-router.post("/settings", async (req: Request, res: Response) => {
+router.post("/settings", requireAdmin, async (req: Request, res: Response) => {
   try {
     const updated = await saveRoyalMailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -234,7 +236,7 @@ router.post("/settings", async (req: Request, res: Response) => {
 });
 
 // POST /api/royalmail/create-shipment - Create shipment for an order
-router.post("/create-shipment", async (req: Request, res: Response) => {
+router.post("/create-shipment", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { orderId, serviceCode, packageType, weightGrams } = req.body;
     if (!orderId) {
@@ -254,7 +256,7 @@ router.post("/create-shipment", async (req: Request, res: Response) => {
 });
 
 // POST /api/royalmail/validate-address - Address Validation
-router.post("/validate-address", async (req: Request, res: Response) => {
+router.post("/validate-address", requireAdmin, async (req: Request, res: Response) => {
   try {
     const result = validateAddress(req.body);
     res.json(result);
@@ -268,7 +270,7 @@ router.post("/validate-address", async (req: Request, res: Response) => {
 // on this account. Which codes are valid depends on the OBA / Tracked contract and
 // no endpoint lists them, so the only real answer comes from offering an order.
 // The throwaway order is deleted again as soon as it is accepted.
-router.post("/test-service-code", async (req: Request, res: Response) => {
+router.post("/test-service-code", requireAdmin, async (req: Request, res: Response) => {
   try {
     const codes: string[] = Array.isArray(req.body?.serviceCodes)
       ? req.body.serviceCodes
@@ -289,7 +291,7 @@ router.post("/test-service-code", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/rates", async (req: Request, res: Response) => {
+router.post("/rates", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { weightGrams, countryCode } = req.body;
     const rates = getShippingRates(weightGrams || 70, countryCode || 'GB');
@@ -303,7 +305,7 @@ router.post("/rates", async (req: Request, res: Response) => {
 // The previous /label/:orderId/html endpoint rendered a hand-drawn HTML label
 // with a CSS "barcode". Royal Mail cannot scan that, so it has been removed in
 // favour of the genuine PDF issued by Click & Drop.
-router.get("/label/:orderId/order-pdf", async (req: Request, res: Response) => {
+router.get("/label/:orderId/order-pdf", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -324,7 +326,7 @@ router.get("/label/:orderId/order-pdf", async (req: Request, res: Response) => {
 });
 
 // PUT /api/royalmail/dispatch-order/:orderId - Mark a store order as despatched
-router.put("/dispatch-order/:orderId", async (req: Request, res: Response) => {
+router.put("/dispatch-order/:orderId", requireAdmin, async (req: Request, res: Response) => {
   try {
     const result = await dispatchRoyalMailShipment(String(req.params.orderId));
     return res.json(result);
@@ -373,11 +375,12 @@ const handleSyncPending = async (req: Request, res: Response) => {
   }
 };
 
-router.get("/sync-pending", handleSyncPending);
-router.post("/sync-pending", handleSyncPending);
+// vercel.json cron. Was reachable by anyone over GET.
+router.get("/sync-pending", requireCronOrAdmin, handleSyncPending);
+router.post("/sync-pending", requireCronOrAdmin, handleSyncPending);
 
 // POST /api/royalmail/cancel-shipment - Cancel shipment in Click & Drop
-router.post("/cancel-shipment", async (req: Request, res: Response) => {
+router.post("/cancel-shipment", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { orderId, royalMailOrderId } = req.body;
     if (!orderId) {
@@ -391,7 +394,7 @@ router.post("/cancel-shipment", async (req: Request, res: Response) => {
 });
 
 // POST /api/royalmail/create-return-label - Official Royal Mail pre-paid returns label (PDF)
-router.post("/create-return-label", async (req: Request, res: Response) => {
+router.post("/create-return-label", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {
@@ -412,7 +415,7 @@ router.post("/create-return-label", async (req: Request, res: Response) => {
 });
 
 // GET /api/royalmail/label/:identifier/pdf - Retrieve official Royal Mail PDF postage label
-router.get("/label/:identifier/pdf", async (req: Request, res: Response) => {
+router.get("/label/:identifier/pdf", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { identifier } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -450,7 +453,7 @@ router.get("/label/:identifier/pdf", async (req: Request, res: Response) => {
 });
 
 // PUT /api/royalmail/dispatch - Mark order as dispatched in Royal Mail
-router.put("/dispatch", async (req: Request, res: Response) => {
+router.put("/dispatch", requireAdmin, async (req: Request, res: Response) => {
   try {
     const { orderIdentifier, orderReference } = req.body;
     if (orderIdentifier === undefined && !orderReference) {

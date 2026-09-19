@@ -4026,6 +4026,138 @@ var init_klaviyoService = __esm({
   }
 });
 
+// backend/services/adminAuth.ts
+import crypto from "crypto";
+function getSigningSecret() {
+  const secret = process.env.AUTH_SECRET || process.env.ADMIN_TOKEN_SECRET || "";
+  if (!secret || secret.trim().length < 16) {
+    throw new AdminAuthNotConfiguredError(
+      "AUTH_SECRET is not set (or is shorter than 16 characters). Admin authentication is disabled until it is configured."
+    );
+  }
+  return secret;
+}
+function sign(data, secret) {
+  return b64url(crypto.createHmac("sha256", secret).update(data).digest());
+}
+function signAdminToken(subject, ttlSeconds = DEFAULT_TTL_SECONDS) {
+  const secret = getSigningSecret();
+  const now = Math.floor(Date.now() / 1e3);
+  const payload = { sub: subject, iat: now, exp: now + ttlSeconds };
+  const body = `${TOKEN_VERSION}.${b64url(JSON.stringify(payload))}`;
+  return `${body}.${sign(body, secret)}`;
+}
+function verifyAdminToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [version, payloadPart, signaturePart] = parts;
+  if (version !== TOKEN_VERSION) return null;
+  const secret = getSigningSecret();
+  const expected = sign(`${version}.${payloadPart}`, secret);
+  const givenBuf = Buffer.from(signaturePart);
+  const expectedBuf = Buffer.from(expected);
+  if (givenBuf.length !== expectedBuf.length) return null;
+  if (!crypto.timingSafeEqual(givenBuf, expectedBuf)) return null;
+  let payload;
+  try {
+    payload = JSON.parse(b64urlDecode(payloadPart).toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload.exp !== "number" || typeof payload.sub !== "string") return null;
+  if (Math.floor(Date.now() / 1e3) >= payload.exp) return null;
+  return payload;
+}
+function verifyAdminCredentials(email, password) {
+  const adminEmail = (process.env.ADMIN_EMAIL || "").trim();
+  const adminPassword = process.env.ADMIN_PASSWORD || "";
+  if (!adminEmail || !adminPassword) {
+    throw new AdminAuthNotConfiguredError(
+      "ADMIN_EMAIL and ADMIN_PASSWORD must be set for admin login to work."
+    );
+  }
+  const emailOk = String(email || "").trim().toLowerCase() === adminEmail.toLowerCase();
+  const given = crypto.createHash("sha256").update(String(password || "")).digest();
+  const expectedHash = crypto.createHash("sha256").update(adminPassword).digest();
+  const passwordOk = crypto.timingSafeEqual(given, expectedHash);
+  return emailOk && passwordOk;
+}
+var TOKEN_VERSION, DEFAULT_TTL_SECONDS, AdminAuthNotConfiguredError, b64url, b64urlDecode;
+var init_adminAuth = __esm({
+  "backend/services/adminAuth.ts"() {
+    TOKEN_VERSION = "v1";
+    DEFAULT_TTL_SECONDS = 8 * 60 * 60;
+    AdminAuthNotConfiguredError = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "AdminAuthNotConfiguredError";
+      }
+    };
+    b64url = (input) => Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    b64urlDecode = (input) => Buffer.from(input.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  }
+});
+
+// backend/middleware/requireAdmin.ts
+import crypto2 from "crypto";
+function requireAdmin(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  let payload;
+  try {
+    payload = verifyAdminToken(token);
+  } catch (err) {
+    if (err instanceof AdminAuthNotConfiguredError) {
+      console.error("[Admin Auth] Refusing admin request:", err.message);
+      return res.status(503).json({
+        error: "Admin authentication is not configured on this server.",
+        code: "ADMIN_AUTH_NOT_CONFIGURED"
+      });
+    }
+    throw err;
+  }
+  if (!payload) {
+    return res.status(401).json({
+      error: "Administrator authentication required.",
+      code: "ADMIN_AUTH_REQUIRED"
+    });
+  }
+  req.admin = { email: payload.sub };
+  next();
+}
+function requireCronOrAdmin(req, res, next) {
+  const header = req.headers.authorization || "";
+  const presented = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const cronSecret = process.env.CRON_SECRET || "";
+  if (cronSecret && presented) {
+    const a = Buffer.from(presented);
+    const b = Buffer.from(cronSecret);
+    if (a.length === b.length && crypto2.timingSafeEqual(a, b)) return next();
+  }
+  try {
+    if (verifyAdminToken(presented)) return next();
+  } catch (err) {
+    if (!(err instanceof AdminAuthNotConfiguredError)) throw err;
+  }
+  if (!cronSecret) {
+    console.error("[Cron Auth] CRON_SECRET is not set \u2014 refusing scheduled job request.");
+    return res.status(503).json({
+      error: "Scheduled job authentication is not configured on this server.",
+      code: "CRON_SECRET_NOT_CONFIGURED"
+    });
+  }
+  return res.status(401).json({
+    error: "Scheduled job authentication required.",
+    code: "CRON_AUTH_REQUIRED"
+  });
+}
+var init_requireAdmin = __esm({
+  "backend/middleware/requireAdmin.ts"() {
+    init_adminAuth();
+  }
+});
+
 // src/utils/ukValidation.ts
 function isUkCountry(value) {
   const raw = String(value ?? "").trim().toLowerCase();
@@ -4567,6 +4699,7 @@ var init_orders = __esm({
     init_serverDb();
     init_emailService();
     init_klaviyoService();
+    init_requireAdmin();
     init_ukValidation();
     router3 = Router2();
     FULFILLMENT_NOTIFICATION = {
@@ -4607,7 +4740,7 @@ var init_orders = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch order" });
       }
     });
-    router3.put("/:id", async (req, res) => {
+    router3.put("/:id", requireAdmin, async (req, res) => {
       try {
         const { id } = req.params;
         const orderData = req.body;
@@ -4803,7 +4936,7 @@ var init_orders = __esm({
         res.status(500).json({ error: err.message || "Failed to submit return request" });
       }
     });
-    router3.post("/:id/admin-action", async (req, res) => {
+    router3.post("/:id/admin-action", requireAdmin, async (req, res) => {
       try {
         const { id } = req.params;
         const { action, refundAmount, reason } = req.body;
@@ -4890,7 +5023,7 @@ var init_orders = __esm({
         res.status(500).json({ error: err.message || "Failed to execute admin action" });
       }
     });
-    router3.delete("/:id", async (req, res) => {
+    router3.delete("/:id", requireAdmin, async (req, res) => {
       try {
         const { id } = req.params;
         const deleted = await deleteSingleItem("orders", id);
@@ -4909,7 +5042,7 @@ var init_orders = __esm({
 });
 
 // backend/services/worldpaySubscription.ts
-import crypto2 from "crypto";
+import crypto4 from "crypto";
 function isPlaceholderCredential(value) {
   if (!value || typeof value !== "string") return true;
   return PLACEHOLDER_PATTERNS.some((rx) => rx.test(value));
@@ -5049,7 +5182,7 @@ function isSchemaRejection(status, data) {
   return text.includes("settlement") || text.includes("schema") || text.includes("unrecognised") || text.includes("unrecognized") || text.includes("unexpected") || text.includes("notsupported") || text.includes("invalidvalue") || text.includes("bodydoesnotmatch");
 }
 function getHeaders(config) {
-  const correlationId = crypto2.randomUUID ? crypto2.randomUUID() : `sub-${Math.random().toString(36).substring(2, 10)}`;
+  const correlationId = crypto4.randomUUID ? crypto4.randomUUID() : `sub-${Math.random().toString(36).substring(2, 10)}`;
   return {
     Authorization: config.authHeader,
     "Content-Type": PAYMENTS_MEDIA_TYPE,
@@ -5306,7 +5439,7 @@ async function fetchTokensForNamespace(namespace) {
       headers: {
         Authorization: config.authHeader,
         Accept: TOKENS_MEDIA_TYPE,
-        "WP-CorrelationId": crypto2.randomUUID ? crypto2.randomUUID() : `tok-${Date.now()}`
+        "WP-CorrelationId": crypto4.randomUUID ? crypto4.randomUUID() : `tok-${Date.now()}`
       }
     });
     if (!response.ok) {
@@ -7756,6 +7889,7 @@ var media_default = router4;
 
 // backend/routes/files.ts
 init_serverDb();
+init_requireAdmin();
 var router5 = Router4();
 router5.get("/", async (_req, res) => {
   try {
@@ -7785,7 +7919,7 @@ router5.post("/", async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to persist files" });
   }
 });
-router5.delete("/:id", async (req, res) => {
+router5.delete("/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const force = req.query.force === "true";
@@ -7839,7 +7973,7 @@ init_prisma();
 init_emailService();
 init_klaviyoService();
 import { Router as Router5 } from "express";
-import crypto from "crypto";
+import crypto3 from "crypto";
 
 // backend/services/recaptchaService.ts
 init_serverDb();
@@ -7948,9 +8082,10 @@ async function verifyRecaptchaToken(token, expectedAction) {
 }
 
 // backend/routes/customers.ts
+init_adminAuth();
 var router6 = Router5();
 function hashPassword(password) {
-  return crypto.createHash("sha256").update(password + "pouch_supply_salt_123!").digest("hex");
+  return crypto3.createHash("sha256").update(password + "pouch_supply_salt_123!").digest("hex");
 }
 async function enrichCustomerAgeStatus(customer) {
   if (!customer || !customer.email) return customer;
@@ -8123,7 +8258,7 @@ router6.post("/forgot-password", async (req, res) => {
     const customersList = await fetchResource("customers");
     const found = customersList.find((c) => c.email.toLowerCase() === emailTrim);
     const resetCode = Math.floor(1e5 + Math.random() * 9e5).toString();
-    const resetToken = crypto.randomBytes(24).toString("hex");
+    const resetToken = crypto3.randomBytes(24).toString("hex");
     const appUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
     const resetLink = `${appUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(emailTrim)}`;
     if (found) {
@@ -8359,7 +8494,7 @@ router6.post("/google-login", async (req, res) => {
       storeCredit: 0,
       referredByCode: null,
       referralCode: newReferralCode,
-      passwordHash: hashPassword(crypto.randomBytes(16).toString("hex")),
+      passwordHash: hashPassword(crypto3.randomBytes(16).toString("hex")),
       addresses: []
     };
     customersList.unshift(newCustomer);
@@ -8383,25 +8518,29 @@ router6.post("/admin-login", async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ error: "Admin email and password are required." });
     }
-    const adminEmail = process.env.ADMIN_EMAIL || "Support@pouch-supply.com";
-    const adminPassword = process.env.ADMIN_PASSWORD || "January14!2019";
-    if (email.trim().toLowerCase() === adminEmail.toLowerCase() && password === adminPassword) {
-      console.log(`[Admin Auth] Secure admin login succeeded for email: ${email}`);
-      const adminToken = `admin-token-${crypto.randomBytes(16).toString("hex")}`;
-      res.json({
-        success: true,
-        message: "Admin access granted.",
-        token: adminToken,
-        adminUser: {
-          email: adminEmail,
-          name: "Pouch Supply Administrator"
-        }
-      });
-    } else {
+    if (!verifyAdminCredentials(email, password)) {
       console.warn(`[Admin Auth] Unauthorized admin login attempt with email: ${email}`);
-      res.status(401).json({ error: "Invalid admin login credentials." });
+      return res.status(401).json({ error: "Invalid admin login credentials." });
     }
+    const token = signAdminToken(String(email).trim().toLowerCase());
+    console.log(`[Admin Auth] Admin login succeeded for ${email}`);
+    res.json({
+      success: true,
+      message: "Admin access granted.",
+      token,
+      adminUser: {
+        email: String(email).trim().toLowerCase(),
+        name: "Pouch Supply Administrator"
+      }
+    });
   } catch (err) {
+    if (err instanceof AdminAuthNotConfiguredError) {
+      console.error("[Admin Auth] Login refused \u2014", err.message);
+      return res.status(503).json({
+        error: "Admin authentication is not configured on this server. Set AUTH_SECRET, ADMIN_EMAIL and ADMIN_PASSWORD.",
+        code: "ADMIN_AUTH_NOT_CONFIGURED"
+      });
+    }
     console.error("[Admin Auth] Login Error:", err);
     res.status(500).json({ error: err.message || "Internal server error during admin validation" });
   }
@@ -8554,11 +8693,12 @@ var blogs_default = router9;
 // backend/routes/worldpay.ts
 init_prisma();
 init_serverDb();
+init_requireAdmin();
 init_worldpaySubscription();
 init_subscriptionCron();
 init_ukValidation();
 import { Router as Router8 } from "express";
-import crypto3 from "crypto";
+import crypto5 from "crypto";
 
 // src/utils/discountUtils.ts
 var MYSTERY_BOX_IMAGE = "/reward-assets/mystery-box.svg";
@@ -9100,7 +9240,7 @@ async function fetchWorldpayPaymentDetails(transactionReference) {
         headers: {
           Authorization: cfg.authHeader,
           Accept: PAYMENT_QUERY_ACCEPT,
-          "WP-CorrelationId": crypto3.randomUUID ? crypto3.randomUUID() : `q-${Date.now()}`
+          "WP-CorrelationId": crypto5.randomUUID ? crypto5.randomUUID() : `q-${Date.now()}`
         }
       });
       if (!response.ok) {
@@ -9638,8 +9778,8 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
   }
   return results;
 }
-router10.get("/reconcile-pending", handleReconcilePending);
-router10.post("/reconcile-pending", handleReconcilePending);
+router10.get("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
+router10.post("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
 var SUBSCRIPTION_REPAIR_LIMIT = 10;
 async function billableSubscriptionsFor(orderId) {
   if (!await getDb()) {
@@ -9858,7 +9998,7 @@ var handleRepairSubscriptions = async (req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 };
-router10.post("/repair-subscriptions", handleRepairSubscriptions);
+router10.post("/repair-subscriptions", requireAdmin, handleRepairSubscriptions);
 var handleRecoverTokens = async (_req, res) => {
   try {
     const results = await recoverMissingSubscriptionTokens();
@@ -9873,8 +10013,8 @@ var handleRecoverTokens = async (_req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 };
-router10.get("/recover-tokens", handleRecoverTokens);
-router10.post("/recover-tokens", handleRecoverTokens);
+router10.get("/recover-tokens", requireAdmin, handleRecoverTokens);
+router10.post("/recover-tokens", requireAdmin, handleRecoverTokens);
 router10.get("/config", (_req, res) => {
   const cfg = getEnvironmentConfig();
   res.json({
@@ -10047,7 +10187,7 @@ async function handleCreateHostedPaymentPage(req, res) {
         optIn: tokenOptIn()
       };
     }
-    const correlationId = crypto3.randomUUID ? crypto3.randomUUID() : `hpp-${Math.random().toString(36).slice(2, 12)}`;
+    const correlationId = crypto5.randomUUID ? crypto5.randomUUID() : `hpp-${Math.random().toString(36).slice(2, 12)}`;
     const userAgent = req.headers["user-agent"] || "worldpay-hpp/1.0";
     const worldpayUrl = `${cfg.baseUrl}/payment_pages`;
     console.log(`[Worldpay HPP ${cfg.environment.toUpperCase()}] POST ${worldpayUrl} for Order: ${transactionReference}`);
@@ -10591,7 +10731,7 @@ router10.get("/order/:id", async (req, res) => {
     return res.status(500).json({ error: error.message || "Failed to fetch order" });
   }
 });
-router10.post("/refund", async (req, res) => {
+router10.post("/refund", requireAdmin, async (req, res) => {
   try {
     const { orderId, amount, reason, transactionId } = req.body;
     if (!orderId) {
@@ -10655,13 +10795,14 @@ var worldpay_default = router10;
 // backend/routes/subscriptions.ts
 init_prisma();
 init_subscriptionRow();
+init_requireAdmin();
 init_klaviyoService();
 init_serverDb();
 init_worldpaySubscription();
 init_subscriptionCron();
 init_subscriptionBox();
 import { Router as Router9 } from "express";
-import crypto4 from "crypto";
+import crypto6 from "crypto";
 var router11 = Router9();
 var handleProcessRenewals = async (_req, res) => {
   try {
@@ -10681,10 +10822,10 @@ var handleProcessRenewals = async (_req, res) => {
     });
   }
 };
-router11.get("/process-renewals", handleProcessRenewals);
-router11.post("/process-renewals", handleProcessRenewals);
-router11.get("/cron", handleProcessRenewals);
-router11.post("/cron", handleProcessRenewals);
+router11.get("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router11.post("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router11.get("/cron", requireCronOrAdmin, handleProcessRenewals);
+router11.post("/cron", requireCronOrAdmin, handleProcessRenewals);
 function canChargeRecurring(sub) {
   if (!sub) return false;
   const href = sub.worldpayRecurringHref || sub.recurringHref;
@@ -10774,7 +10915,7 @@ function toCustomerSubscription(s, now = /* @__PURE__ */ new Date()) {
     credentialIssue: canChargeRecurring(s) ? null : "This plan has no stored-card mandate with Worldpay, so it cannot take a recurring payment. Subscribe again to set one up."
   };
 }
-router11.get("/status", async (_req, res) => {
+router11.get("/status", requireAdmin, async (_req, res) => {
   try {
     let subscriptions = [];
     try {
@@ -11072,7 +11213,7 @@ router11.post(
       const normalizedInterval = normalizeBillingInterval(billingInterval);
       const nextBillingDate = calculateNextBillingDate(normalizedInterval, /* @__PURE__ */ new Date());
       const emailClean = String(customerEmail).toLowerCase().trim();
-      const subId = `sub_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`;
+      const subId = `sub_${Date.now()}_${crypto6.randomBytes(3).toString("hex")}`;
       const effectiveShipping = typeof shippingFee === "number" ? shippingFee : typeof shippingCost === "number" ? shippingCost : Number(amount) >= 40 ? 0 : 2.99;
       const subData = {
         id: subId,
@@ -11150,6 +11291,8 @@ router11.post(
 );
 router11.post(
   "/charge",
+  // Charges the stored card for a subscription id. Was unauthenticated.
+  requireAdmin,
   async (req, res) => {
     try {
       const { subscriptionId } = req.body;
@@ -11832,6 +11975,7 @@ init_emailService();
 import { Router as Router11 } from "express";
 init_emailTemplates();
 init_serverDb();
+init_requireAdmin();
 var router13 = Router11();
 function getSampleTemplateData(type, customData) {
   const sampleItems = [
@@ -11866,7 +12010,7 @@ function getSampleTemplateData(type, customData) {
   };
   return { ...defaultData, ...customData || {} };
 }
-router13.get("/settings", async (_req, res) => {
+router13.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getEmailSettings();
     res.json(settings);
@@ -11874,7 +12018,7 @@ router13.get("/settings", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch email settings" });
   }
 });
-router13.post("/settings", async (req, res) => {
+router13.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveEmailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -11882,7 +12026,7 @@ router13.post("/settings", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save email settings" });
   }
 });
-router13.post("/verify-connection", async (req, res) => {
+router13.post("/verify-connection", requireAdmin, async (req, res) => {
   try {
     const result = await verifyEmailConnection(req.body);
     res.json(result);
@@ -11903,7 +12047,7 @@ router13.get("/recaptcha-settings", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch recaptcha settings" });
   }
 });
-router13.post("/recaptcha-settings", async (req, res) => {
+router13.post("/recaptcha-settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveRecaptchaSettings(req.body);
     res.json({
@@ -11919,7 +12063,7 @@ router13.post("/recaptcha-settings", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save recaptcha settings" });
   }
 });
-router13.get("/logs", async (_req, res) => {
+router13.get("/logs", requireAdmin, async (_req, res) => {
   try {
     const logs = await getEmailLogs();
     res.json(logs);
@@ -11927,7 +12071,7 @@ router13.get("/logs", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch email logs" });
   }
 });
-router13.post("/logs/clear", async (req, res) => {
+router13.post("/logs/clear", requireAdmin, async (req, res) => {
   try {
     const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
     const beforeRaw = req.body?.before;
@@ -11964,7 +12108,7 @@ router13.post("/logs/clear", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to clear email logs" });
   }
 });
-router13.post("/preview", async (req, res) => {
+router13.post("/preview", requireAdmin, async (req, res) => {
   try {
     const { type, customData } = req.body;
     const templateType = type || "order_confirmation";
@@ -12024,7 +12168,7 @@ router13.post("/preview", async (req, res) => {
     res.status(500).send(`<div style="padding:20px; color:red; font-family:sans-serif;">Error rendering preview: ${err.message}</div>`);
   }
 });
-router13.post("/test", async (req, res) => {
+router13.post("/test", requireAdmin, async (req, res) => {
   try {
     const { recipient, type, customSubject, customData, apiKey, fromEmail } = req.body;
     if (!recipient || typeof recipient !== "string" || !recipient.includes("@")) {
@@ -12166,9 +12310,10 @@ var email_default = router13;
 // backend/routes/klaviyo.ts
 init_klaviyoService();
 init_serverDb();
+init_requireAdmin();
 import { Router as Router12 } from "express";
 var router14 = Router12();
-router14.get("/lists", async (req, res) => {
+router14.get("/lists", requireAdmin, async (req, res) => {
   try {
     const apiKey = req.query.apiKey;
     const lists = await getKlaviyoLists(apiKey);
@@ -12177,7 +12322,7 @@ router14.get("/lists", async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch Klaviyo lists" });
   }
 });
-router14.get("/settings", async (_req, res) => {
+router14.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getKlaviyoSettings();
     res.json(settings);
@@ -12185,7 +12330,7 @@ router14.get("/settings", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Klaviyo settings" });
   }
 });
-router14.post("/settings", async (req, res) => {
+router14.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveKlaviyoSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -12270,9 +12415,9 @@ var handleVerify = async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to verify Klaviyo API key" });
   }
 };
-router14.get("/verify", handleVerify);
-router14.post("/verify", handleVerify);
-router14.get("/health", async (_req, res) => {
+router14.get("/verify", requireAdmin, handleVerify);
+router14.post("/verify", requireAdmin, handleVerify);
+router14.get("/health", requireAdmin, async (_req, res) => {
   try {
     const settings = await getKlaviyoSettings();
     let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
@@ -12347,7 +12492,7 @@ router14.get("/health", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to read Klaviyo health" });
   }
 });
-router14.get("/logs", async (_req, res) => {
+router14.get("/logs", requireAdmin, async (_req, res) => {
   try {
     const logs = await getKlaviyoLogs();
     res.json(logs);
@@ -12355,7 +12500,7 @@ router14.get("/logs", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Klaviyo logs" });
   }
 });
-router14.post("/logs/clear", async (req, res) => {
+router14.post("/logs/clear", requireAdmin, async (req, res) => {
   try {
     const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
     const beforeRaw = req.body?.before;
@@ -12444,6 +12589,7 @@ var klaviyo_default = router14;
 // backend/routes/royalMail.ts
 init_royalMailService();
 init_royalMail();
+init_requireAdmin();
 import { Router as Router13 } from "express";
 function sendRoyalMailError(res, error, fallbackMessage) {
   console.error(`[Royal Mail] ${fallbackMessage}:`, error);
@@ -12463,7 +12609,7 @@ function sendRoyalMailError(res, error, fallbackMessage) {
   });
 }
 var router15 = Router13();
-router15.get("/connection", async (_req, res) => {
+router15.get("/connection", requireAdmin, async (_req, res) => {
   try {
     const settings = await getRoyalMailSettings();
     const apiKey = (settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "").trim();
@@ -12508,7 +12654,7 @@ router15.get("/connection", async (_req, res) => {
     });
   }
 });
-router15.post("/create-order", async (req, res) => {
+router15.post("/create-order", requireAdmin, async (req, res) => {
   try {
     const orderData = req.body;
     const settings = await getRoyalMailSettings();
@@ -12563,7 +12709,7 @@ router15.post("/create-order", async (req, res) => {
     });
   }
 });
-router15.get("/orders", async (req, res) => {
+router15.get("/orders", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const params = req.query;
@@ -12573,7 +12719,7 @@ router15.get("/orders", async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch orders" });
   }
 });
-router15.get("/orders/:reference", async (req, res) => {
+router15.get("/orders/:reference", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getOrderByReference(req.params.reference, apiKey);
@@ -12582,7 +12728,7 @@ router15.get("/orders/:reference", async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch order" });
   }
 });
-router15.delete("/orders/:reference", async (req, res) => {
+router15.delete("/orders/:reference", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await cancelOrder(req.params.reference, apiKey);
@@ -12591,7 +12737,7 @@ router15.delete("/orders/:reference", async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to cancel order" });
   }
 });
-router15.get("/version", async (_req, res) => {
+router15.get("/version", requireAdmin, async (_req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getApiVersion(apiKey);
@@ -12600,7 +12746,7 @@ router15.get("/version", async (_req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch API version" });
   }
 });
-router15.get("/settings", async (_req, res) => {
+router15.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getRoyalMailSettings();
     res.json(settings);
@@ -12608,7 +12754,7 @@ router15.get("/settings", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Royal Mail settings" });
   }
 });
-router15.post("/settings", async (req, res) => {
+router15.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveRoyalMailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -12616,7 +12762,7 @@ router15.post("/settings", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save Royal Mail settings" });
   }
 });
-router15.post("/create-shipment", async (req, res) => {
+router15.post("/create-shipment", requireAdmin, async (req, res) => {
   try {
     const { orderId, serviceCode, packageType, weightGrams } = req.body;
     if (!orderId) {
@@ -12632,7 +12778,7 @@ router15.post("/create-shipment", async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to create Royal Mail shipment");
   }
 });
-router15.post("/validate-address", async (req, res) => {
+router15.post("/validate-address", requireAdmin, async (req, res) => {
   try {
     const result = validateAddress(req.body);
     res.json(result);
@@ -12640,7 +12786,7 @@ router15.post("/validate-address", async (req, res) => {
     res.status(500).json({ error: err.message || "Address validation failed" });
   }
 });
-router15.post("/test-service-code", async (req, res) => {
+router15.post("/test-service-code", requireAdmin, async (req, res) => {
   try {
     const codes = Array.isArray(req.body?.serviceCodes) ? req.body.serviceCodes : [req.body?.serviceCode].filter(Boolean);
     if (codes.length === 0) {
@@ -12655,7 +12801,7 @@ router15.post("/test-service-code", async (req, res) => {
     return res.status(200).json({ success: false, message: error?.message || "Service code test failed." });
   }
 });
-router15.post("/rates", async (req, res) => {
+router15.post("/rates", requireAdmin, async (req, res) => {
   try {
     const { weightGrams, countryCode } = req.body;
     const rates = getShippingRates(weightGrams || 70, countryCode || "GB");
@@ -12664,7 +12810,7 @@ router15.post("/rates", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to calculate rates" });
   }
 });
-router15.get("/label/:orderId/order-pdf", async (req, res) => {
+router15.get("/label/:orderId/order-pdf", requireAdmin, async (req, res) => {
   try {
     const { orderId } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -12681,7 +12827,7 @@ router15.get("/label/:orderId/order-pdf", async (req, res) => {
     return sendRoyalMailError(res, err, "Unable to retrieve the Royal Mail label");
   }
 });
-router15.put("/dispatch-order/:orderId", async (req, res) => {
+router15.put("/dispatch-order/:orderId", requireAdmin, async (req, res) => {
   try {
     const result = await dispatchRoyalMailShipment(String(req.params.orderId));
     return res.json(result);
@@ -12721,9 +12867,9 @@ var handleSyncPending = async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to sync pending Royal Mail tracking");
   }
 };
-router15.get("/sync-pending", handleSyncPending);
-router15.post("/sync-pending", handleSyncPending);
-router15.post("/cancel-shipment", async (req, res) => {
+router15.get("/sync-pending", requireCronOrAdmin, handleSyncPending);
+router15.post("/sync-pending", requireCronOrAdmin, handleSyncPending);
+router15.post("/cancel-shipment", requireAdmin, async (req, res) => {
   try {
     const { orderId, royalMailOrderId } = req.body;
     if (!orderId) {
@@ -12735,7 +12881,7 @@ router15.post("/cancel-shipment", async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to cancel shipment");
   }
 });
-router15.post("/create-return-label", async (req, res) => {
+router15.post("/create-return-label", requireAdmin, async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {
@@ -12753,7 +12899,7 @@ router15.post("/create-return-label", async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to retrieve the returns label");
   }
 });
-router15.get("/label/:identifier/pdf", async (req, res) => {
+router15.get("/label/:identifier/pdf", requireAdmin, async (req, res) => {
   try {
     const { identifier } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -12785,7 +12931,7 @@ router15.get("/label/:identifier/pdf", async (req, res) => {
     return res.status(500).json({ success: false, message: error.message || "Unable to retrieve Royal Mail label." });
   }
 });
-router15.put("/dispatch", async (req, res) => {
+router15.put("/dispatch", requireAdmin, async (req, res) => {
   try {
     const { orderIdentifier, orderReference } = req.body;
     if (orderIdentifier === void 0 && !orderReference) {
@@ -13662,6 +13808,7 @@ var auth_default = router18;
 
 // serverApp.ts
 init_prisma();
+init_requireAdmin();
 async function createExpressApp() {
   const app = express();
   app.set("trust proxy", true);
@@ -13775,7 +13922,7 @@ async function createExpressApp() {
   app.get("/api/uploads/:filename", handleUploadsFileRequest);
   app.use("/uploads", express.static(uploadsPath));
   app.use("/api/uploads", express.static(uploadsPath));
-  app.post("/api/upload", async (req, res) => {
+  app.post("/api/upload", requireAdmin, async (req, res) => {
     try {
       const { data, filename, cloudName, apiKey, apiSecret, cloudinaryCloudName, cloudinaryApiKey, cloudinaryApiSecret } = req.body;
       if (!data) {
@@ -13947,7 +14094,7 @@ async function createExpressApp() {
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
-  app.get("/api/status", async (req, res) => {
+  app.get("/api/status", requireAdmin, async (req, res) => {
     res.setHeader("Content-Type", "application/json");
     try {
       const status = await getConnectionStatus();
@@ -13987,14 +14134,14 @@ async function createExpressApp() {
       });
     }
   });
-  app.get("/api/db-status", async (req, res) => {
+  app.get("/api/db-status", requireAdmin, async (req, res) => {
     try {
       await getDb();
     } catch (e) {
     }
     res.json(await getConnectionStatus());
   });
-  app.get("/api/db-details", async (req, res) => {
+  app.get("/api/db-details", requireAdmin, async (req, res) => {
     try {
       const details = await getDatabaseDetails();
       res.json(details);
@@ -14003,7 +14150,7 @@ async function createExpressApp() {
       res.status(500).json({ error: err.message || "Failed to fetch database details" });
     }
   });
-  app.post("/api/update-db-uri", async (req, res) => {
+  app.post("/api/update-db-uri", requireAdmin, async (req, res) => {
     try {
       const { uri } = req.body;
       if (!uri) {
@@ -14016,7 +14163,7 @@ async function createExpressApp() {
       res.status(500).json({ error: err.message || "Failed to update connection string" });
     }
   });
-  app.post("/api/backup", async (req, res) => {
+  app.post("/api/backup", requireAdmin, async (req, res) => {
     try {
       const name = req.body?.name || `Manual Backup ${(/* @__PURE__ */ new Date()).toLocaleDateString()}`;
       const snapshot = await createDatabaseBackup(name);
@@ -14025,7 +14172,7 @@ async function createExpressApp() {
       res.status(500).json({ error: err?.message || "Failed to create database backup" });
     }
   });
-  app.get("/api/backup", async (req, res) => {
+  app.get("/api/backup", requireAdmin, async (req, res) => {
     try {
       const list = await listDatabaseBackups();
       res.json(list);
@@ -14033,7 +14180,7 @@ async function createExpressApp() {
       res.status(500).json({ error: err?.message || "Failed to list database backups" });
     }
   });
-  app.post("/api/backup/restore", async (req, res) => {
+  app.post("/api/backup/restore", requireAdmin, async (req, res) => {
     try {
       const { id } = req.body;
       if (!id) return res.status(400).json({ error: "Backup ID is required" });
@@ -14043,7 +14190,7 @@ async function createExpressApp() {
       res.status(500).json({ error: err?.message || "Failed to restore database backup" });
     }
   });
-  app.get("/api/db-diagnostics", async (req, res) => {
+  app.get("/api/db-diagnostics", requireAdmin, async (req, res) => {
     try {
       const isConnected = await getDb();
       if (!isConnected) {
@@ -14131,8 +14278,8 @@ async function createExpressApp() {
       });
     }
   };
-  app.get("/api/test-cloudinary", handleTestCloudinary);
-  app.post("/api/test-cloudinary", handleTestCloudinary);
+  app.get("/api/test-cloudinary", requireAdmin, handleTestCloudinary);
+  app.post("/api/test-cloudinary", requireAdmin, handleTestCloudinary);
   app.get("/api/layoutsettings", async (req, res) => {
     try {
       const data = await fetchLayoutSettings();
@@ -14141,7 +14288,7 @@ async function createExpressApp() {
       res.status(500).json({ error: err.message || "Failed to load layout settings" });
     }
   });
-  app.post("/api/layoutsettings", async (req, res) => {
+  app.post("/api/layoutsettings", requireAdmin, async (req, res) => {
     try {
       const saved = await saveLayoutSettings(req.body);
       res.json({ status: "success", data: saved });
@@ -14157,7 +14304,7 @@ async function createExpressApp() {
       res.status(500).json({ error: err.message || "Failed to load dev settings" });
     }
   });
-  app.post("/api/devsettings", async (req, res) => {
+  app.post("/api/devsettings", requireAdmin, async (req, res) => {
     try {
       const saved = await saveDevSettings(req.body);
       res.json({ status: "success", data: saved });
@@ -14185,7 +14332,7 @@ async function createExpressApp() {
       });
     }
   });
-  app.use("/api/media", media_default);
+  app.use("/api/media", requireAdmin, media_default);
   app.use("/api/products", products_default);
   app.use("/api/collections", collections_default);
   app.use("/api/orders", orders_default);
@@ -14197,7 +14344,7 @@ async function createExpressApp() {
   app.use("/api/worldpay/subscriptions", subscriptions_default);
   app.use("/api/subscriptions", subscriptions_default);
   app.use("/api/worldpay", worldpay_default);
-  app.use("/api/folder-structure", structure_default);
+  app.use("/api/folder-structure", requireAdmin, structure_default);
   app.use("/api/email", email_default);
   app.use("/api/klaviyo", klaviyo_default);
   app.use("/api/royalmail", royalMail_default);
