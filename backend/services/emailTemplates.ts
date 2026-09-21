@@ -49,8 +49,32 @@ const BRAND_ACCENT = "#008060";
 const BRAND_BG = "#f8fafc";
 const SUPPORT_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || "support@pouch-supply.com";
 
+// The storefront logo is stored however it was uploaded: Cloudinary hands back an
+// absolute https URL, the local uploader hands back "/api/uploads/<file>", and the
+// browser fallback stores a base64 data URI. Only the first of those survives an
+// inbox — a mail client has no base URL to resolve a relative src against, and
+// Gmail, Outlook and Yahoo all strip `data:` image sources. So the logo has to be
+// made absolute here or every template arrives with a broken image box.
+// Deliberately not NEXTAUTH_URL: that is an auth callback host (currently the
+// vercel.app deployment URL) and would put a stranger's domain in front of every
+// customer. The apex 308-redirects to www, so www is the form that fetches clean.
+const EMAIL_ASSET_BASE_URL = (
+  process.env.EMAIL_ASSET_BASE_URL ||
+  process.env.APP_URL ||
+  'https://www.pouch-supply.com'
+).trim().replace(/\/+$/, '');
+
+function resolveEmailLogoSrc(raw?: string): string {
+  const url = (raw || '').trim();
+  if (!url) return '';
+  // Better the typeset wordmark below than an empty box the client refused to load.
+  if (/^data:/i.test(url)) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  return `${EMAIL_ASSET_BASE_URL}/${url.replace(/^\/+/, '')}`;
+}
+
 function renderBaseHeader(title: string, subtitle?: string, data?: EmailTemplateData): string {
-  const logoUrl = data?.headerLogoImage || data?.logoUrl || '';
+  const logoUrl = resolveEmailLogoSrc(data?.headerLogoImage || data?.logoUrl);
 
   return `
   <!DOCTYPE html>

@@ -70,6 +70,7 @@ const TEMPLATE_OPTIONS = [
   { id: 'order_cancelled', label: 'Order Cancelled', category: 'Transactional' },
   { id: 'order_refunded', label: 'Order Refunded', category: 'Transactional' },
   { id: 'order_exchanged', label: 'Product Exchange', category: 'Transactional' },
+  { id: 'subscription_price_change', label: 'Subscription Price Change', category: 'Transactional' },
   { id: 'password_reset', label: 'Password Reset', category: 'Account' },
   { id: 'email_verification', label: 'Email Verification', category: 'Account' },
   { id: 'welcome_email', label: 'Welcome Email', category: 'Marketing' },

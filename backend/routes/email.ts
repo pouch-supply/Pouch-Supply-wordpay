@@ -30,6 +30,7 @@ import {
   renderOrderShippedTemplate,
   renderOutForDeliveryTemplate,
   renderDeliveredTemplate,
+  renderSubscriptionPriceChangeTemplate,
   renderOrderCancelledTemplate,
   renderOrderRefundedTemplate,
   renderOrderExchangedTemplate,
@@ -76,7 +77,12 @@ function getSampleTemplateData(type: EmailTemplateType, customData?: any): Email
     resetToken: 'sample_reset_token',
     discountCode: 'WELCOME10',
     supportEmail: 'scottkivlinpouch@gmail.com',
-    siteUrl: 'https://pouch-supply.com'
+    siteUrl: 'https://pouch-supply.com',
+    planName: 'Monthly Canister Club',
+    previousAmount: 24.99,
+    newAmount: 27.99,
+    effectiveFrom: '2026-11-01',
+    billingInterval: 'every 4 weeks'
   };
 
   return { ...defaultData, ...(customData || {}) };
@@ -239,6 +245,9 @@ router.post('/preview', requireAdmin, async (req: Request, res: Response) => {
         break;
       case 'order_delivered':
         html = renderDeliveredTemplate(data);
+        break;
+      case 'subscription_price_change':
+        html = renderSubscriptionPriceChangeTemplate(data);
         break;
       case 'order_cancelled':
         html = renderOrderCancelledTemplate(data);
