@@ -18,14 +18,20 @@ export type BillingFrequency = string;
 export const EXTRA_CAN_PRICE = 3.8;
 
 /**
- * Discount for committing to a delivery rhythm. Weekly is the smallest because
- * the customer is already paying most often.
+ * Discount for committing to a delivery rhythm.
+ *
+ * Withdrawn before go-live: subscription plans are sold at their plan price and
+ * the rhythm no longer changes it. Discounting is done through the discount
+ * system instead, so there is one place that decides what money comes off an
+ * order rather than two that have to agree.
+ *
+ * Kept as a function rather than deleted because every price in the app —
+ * checkout, the account plan editor, the renewal worker and the admin repricing
+ * tools — runs through it. Returning 0 turns the rhythm discount off everywhere
+ * at once, and is the single line to change if it is ever brought back.
  */
-export function frequencyDiscountPercent(frequency: BillingFrequency | undefined | null): number {
-  const f = String(frequency || '').trim().toLowerCase();
-  if (f === 'weekly' || f === 'week' || f === '1week') return 5;
-  if (f === 'one month' || f === 'monthly' || f === 'month' || f === '1month') return 12;
-  return 10;
+export function frequencyDiscountPercent(_frequency: BillingFrequency | undefined | null): number {
+  return 0;
 }
 
 export interface RecurringAmountInput {

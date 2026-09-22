@@ -380,6 +380,44 @@ export default function CheckoutView({
   };
 
   /**
+   * Applies the automatic launch offer when the shopper qualifies.
+   *
+   * The first fifty accounts get 10% off their first order with no code to
+   * type. Whether they qualify is decided entirely by the server — from the
+   * accounts and orders that exist — and re-checked before the payment session
+   * is created, so nothing here can award it.
+   *
+   * It never overwrites a discount the shopper has already applied: a code they
+   * chose to enter beats one we applied for them.
+   */
+  useEffect(() => {
+    const customerEmail = (email || loggedInCustomer?.email || '').trim();
+    if (!customerEmail || currentDiscount) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/discounts/auto?email=${encodeURIComponent(customerEmail)}`);
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        const auto = data?.discount;
+        if (cancelled || !auto) return;
+        setCurrentDiscount(auto);
+        if (onApplyDiscount) onApplyDiscount(auto);
+        setPromoSuccess(`${auto.details} applied automatically.`);
+      } catch {
+        // No automatic discount is better than a broken checkout.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately not depending on currentDiscount: re-running when it changes
+    // would re-apply the offer the moment a shopper removed it.
+  }, [email, loggedInCustomer?.email]);
+
+  /**
    * Asks the server whether a one-per-customer code is still available to this
    * shopper. Any failure answers "yes": a network problem must not block a sale
    * the payment step would have accepted.

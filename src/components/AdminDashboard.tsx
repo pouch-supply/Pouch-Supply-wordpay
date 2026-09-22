@@ -2645,7 +2645,7 @@ export default function AdminDashboard({
           { q: 'How long do subscriptions repeat?', a: 'Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.', question: 'How long do subscriptions repeat?', answer: 'Your tailored canister bundles renew automatically at your specific interval. Pause or cancel anytime for free.' }
         ] : undefined,
         alertBadgeText: sectionType === 'Plans' ? 'Most customers save up to £55/month' : undefined,
-        promoBannerText: sectionType === 'Plans' ? '★ FIRST 50 SUBSCRIBERS - Get 10% OFF FOR LIFE >' : undefined,
+        promoBannerText: sectionType === 'Plans' ? '★ FIRST 50 CUSTOMERS - Get 10% OFF YOUR FIRST ORDER >' : undefined,
         planItems: sectionType === 'Plans' ? [
           {
             slug: 'lite',

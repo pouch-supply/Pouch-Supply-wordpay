@@ -1714,7 +1714,8 @@ export default function CustomerAccount({
         isSubscription: true,
         subscriptionPlan: `${selectedPlanTier.name} Plan`,
         subscriptionFrequency: frequency,
-        frequencyDiscount: selectedPlanTier.discount,
+        // Rhythm discounts are withdrawn; nothing to show against the line.
+        frequencyDiscount: undefined,
         subscriptionItems: selectedItems,
         total: subPlanPrice
       };
@@ -2000,7 +2001,6 @@ export default function CustomerAccount({
             const currentDetails = o.subscriptionDetails || {
               planName: custState.subPlan?.toUpperCase() || 'Subscription Box',
               frequency: custState.subFrequency || 'Bi-Weekly',
-              frequencyDiscount: '10%',
               paymentStatus: 'Cancelled'
             };
             const subDetails: any = {

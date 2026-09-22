@@ -910,6 +910,145 @@ router.post("/:id/return-request", requireCustomer, async (req: AdminRequest, re
   }
 });
 
+/**
+ * Consumer right-of-withdrawal requests, from the public form.
+ *
+ * Not behind requireCustomer, because withdrawal is a right a buyer has whether
+ * or not they ever made an account — and the form is reachable from the footer
+ * while signed out. Ownership is proved by knowing the order id AND the email
+ * the order was placed with, which is the same pair the confirmation email
+ * carries.
+ *
+ * Both routes answer a wrong id and a wrong email with the SAME message, so the
+ * pair cannot be used to discover which order numbers exist.
+ *
+ * The whole flow used to be a fiction. The modal matched the order against a
+ * list the browser had — empty for a signed-out visitor, so nothing ever
+ * matched — then waited a second on a setTimeout, marked the order "Refunded"
+ * in React state alone and rendered a receipt from a template. Nothing was
+ * saved, nobody was told, and no money moved.
+ */
+const WITHDRAWAL_MISMATCH =
+  "We could not find an order with that number and email address. Please check both against your order confirmation email.";
+
+function findOrderForWithdrawal(orders: any[], orderId: string, email: string): any | null {
+  const wantedId = String(orderId || "").trim().replace(/^#/, "").toLowerCase();
+  const wantedEmail = String(email || "").trim().toLowerCase();
+  if (!wantedId || !wantedEmail) return null;
+
+  const order = orders.find((o: any) => String(o?.id || "").trim().toLowerCase() === wantedId);
+  if (!order) return null;
+  if (String(order.customerEmail || "").trim().toLowerCase() !== wantedEmail) return null;
+  return order;
+}
+
+// POST /withdrawal/lookup - confirm the order and return what can be withdrawn
+router.post("/withdrawal/lookup", async (req: Request, res: Response) => {
+  try {
+    const { orderId, email } = req.body || {};
+    const orders: any[] = (await fetchResource("orders")) || [];
+    const order = findOrderForWithdrawal(orders, orderId, email);
+    if (!order) return res.status(404).json({ error: WITHDRAWAL_MISMATCH });
+
+    // Only what the form needs to show. The full order record carries the
+    // address, the gateway references and the payment detail, none of which
+    // belongs in a response this lightly authenticated.
+    return res.json({
+      order: {
+        id: order.id,
+        customerName: order.customerName,
+        date: order.date,
+        total: order.total,
+        alreadyRequested: Boolean(order.returnRequest),
+        items: (Array.isArray(order.items) ? order.items : []).map((i: any) => ({
+          productId: i?.productId,
+          productTitle: i?.productTitle,
+          price: Number(i?.price) || 0,
+          quantity: Number(i?.quantity) || 1,
+          image: i?.image || ""
+        }))
+      }
+    });
+  } catch (err: any) {
+    console.error("[Orders Router] Withdrawal lookup error:", err);
+    res.status(500).json({ error: "Could not check that order. Please try again." });
+  }
+});
+
+// POST /withdrawal - record the request
+router.post("/withdrawal", async (req: Request, res: Response) => {
+  try {
+    const { orderId, email, name, selectedItems, reason } = req.body || {};
+
+    const orders: any[] = (await fetchResource("orders")) || [];
+    const order = findOrderForWithdrawal(orders, orderId, email);
+    if (!order) return res.status(404).json({ error: WITHDRAWAL_MISMATCH });
+
+    const orderItems: any[] = Array.isArray(order.items) ? order.items : [];
+    const wanted = Array.isArray(selectedItems) ? selectedItems.map(String) : [];
+    const itemsToReturn = wanted.length
+      ? orderItems.filter((i: any) => wanted.includes(String(i?.productId)))
+      : orderItems;
+
+    if (itemsToReturn.length === 0) {
+      return res.status(400).json({ error: "Select at least one item to withdraw." });
+    }
+
+    const refundDue = Number(
+      itemsToReturn.reduce((sum: number, i: any) => sum + (Number(i?.price) || 0) * (Number(i?.quantity) || 1), 0).toFixed(2)
+    );
+
+    const tags = Array.isArray(order.tags) ? [...order.tags] : [];
+    if (!tags.includes("Withdrawal Requested")) tags.push("Withdrawal Requested");
+
+    const updatedOrder = await saveSingleOrder({
+      ...order,
+      tags,
+      // Deliberately NOT paymentStatus: 'Refunded'. This is a request; the money
+      // moves when an administrator processes it through /:id/admin-action, and
+      // showing an order as refunded before that told the customer and the shop
+      // that they had been paid back when nothing had left the account.
+      returnRequest: {
+        type: "Withdrawal",
+        reason: String(reason || "Consumer right of withdrawal").slice(0, 500),
+        itemsToReturn,
+        refundMethod: "original",
+        status: "Pending",
+        requestedAt: new Date().toISOString(),
+        requestedBy: String(name || order.customerName || "").slice(0, 120),
+        refundDue
+      }
+    });
+
+    // Sent to the address ON THE ORDER, never to whatever was typed into the
+    // form: matching one does not make the other a safe place to send details.
+    try {
+      const { sendOrderCancelledEmail } = await import("../services/emailService");
+      await sendOrderCancelledEmail(
+        updatedOrder,
+        `Withdrawal requested for ${itemsToReturn.length} item(s), £${refundDue.toFixed(2)}. ` +
+          `Our team will confirm your refund shortly.`
+      );
+    } catch (mailErr: any) {
+      // The request is recorded either way; a failed email must not lose it.
+      console.error(`[Orders Router] Withdrawal email failed for ${order.id}:`, mailErr?.message);
+    }
+
+    console.log(`[Orders Router] Withdrawal requested for ${order.id}: ${itemsToReturn.length} item(s), £${refundDue.toFixed(2)}.`);
+
+    return res.json({
+      success: true,
+      orderId: order.id,
+      itemCount: itemsToReturn.length,
+      refundDue,
+      message: "Your withdrawal request has been registered. We will email you once it is processed."
+    });
+  } catch (err: any) {
+    console.error("[Orders Router] Withdrawal error:", err);
+    res.status(500).json({ error: "Could not register the request. Please try again." });
+  }
+});
+
 // POST /:id/admin-action - Admin Approve / Decline / Process Return, Refund, or Exchange
 router.post("/:id/admin-action", requireAdmin, async (req: Request, res: Response) => {
   try {

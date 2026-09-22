@@ -1,7 +1,17 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, FileText, CheckCircle2, AlertCircle, ShoppingBag, Package, RefreshCw, Undo } from 'lucide-react';
 import { Order } from '../types';
+
+/** What the withdrawal lookup returns — only what the form needs to show. */
+interface WithdrawalOrder {
+  id: string;
+  customerName: string;
+  date?: string;
+  total: number;
+  alreadyRequested?: boolean;
+  items: Array<{ productId: string; productTitle: string; price: number; quantity: number; image?: string }>;
+}
 
 interface OrderWithdrawalModalProps {
   isOpen: boolean;
@@ -24,17 +34,54 @@ export default function OrderWithdrawalModal({
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Dynamic matching of the order
-  const matchedOrder = useMemo(() => {
-    if (!orderNumber.trim()) return null;
-    const cleanNum = orderNumber.trim().replace(/^#/, '').toLowerCase();
-    const found = orders.find(
-      (o) =>
-        o.id.toLowerCase() === cleanNum ||
-        o.id.replace(/^#/, '').toLowerCase() === cleanNum
-    );
-    return found || null;
-  }, [orderNumber, orders]);
+  /**
+   * The order, as the SERVER confirms it.
+   *
+   * This used to be looked up in the `orders` prop. That list is whatever the
+   * app happens to hold — for a signed-out visitor it is empty, and the
+   * withdrawal form is reachable from the footer while signed out, so no order
+   * ever matched and the form could not be used at all. The server checks the
+   * order number and the email together and returns only the lines that can be
+   * withdrawn.
+   */
+  const [matchedOrder, setMatchedOrder] = useState<WithdrawalOrder | null>(null);
+  const [isLooking, setIsLooking] = useState(false);
+
+  useEffect(() => {
+    const id = orderNumber.trim().replace(/^#/, '');
+    const mail = email.trim();
+    if (!id || !mail.includes('@')) {
+      setMatchedOrder(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLooking(true);
+    // Debounced: the pair is checked as it is typed, and a keystroke should not
+    // fire a request.
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/orders/withdrawal/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId: id, email: mail })
+        });
+        const data = await res.json().catch(() => null);
+        if (cancelled) return;
+        setMatchedOrder(res.ok && data?.order ? data.order : null);
+      } catch {
+        if (!cancelled) setMatchedOrder(null);
+      } finally {
+        if (!cancelled) setIsLooking(false);
+      }
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+      clearTimeout(handle);
+    };
+  }, [orderNumber, email]);
 
   // Set all items selected by default when order is matched
   React.useEffect(() => {
@@ -54,7 +101,7 @@ export default function OrderWithdrawalModal({
     );
   };
 
-  const handleConfirmSubmit = (e: React.FormEvent) => {
+  const handleConfirmSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -66,35 +113,45 @@ export default function OrderWithdrawalModal({
       setError('Email address is required.');
       return;
     }
-
     if (!matchedOrder) {
-      setError('We could not find any order with that order number in our records. Please verify your confirmation code.');
+      setError(
+        'We could not find an order with that number and email address. Please check both against your order confirmation email.'
+      );
       return;
     }
-
-    if (matchedOrder.customerEmail.toLowerCase() !== email.trim().toLowerCase()) {
-      setError(`The email address provided (${email}) does not match the email associated with Order #${matchedOrder.id}. Please enter the email used during checkout.`);
-      return;
-    }
-
     if (selectedItems.length === 0) {
       setError('Please select at least one item to withdraw.');
       return;
     }
 
     setIsSubmitting(true);
+    try {
+      // The request is RECORDED here. It used to be a one-second setTimeout
+      // followed by a receipt screen, with nothing saved and nobody told.
+      const res = await fetch('/api/orders/withdrawal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: matchedOrder.id,
+          email: email.trim(),
+          name: name.trim() || matchedOrder.customerName,
+          selectedItems
+        })
+      });
+      const data = await res.json().catch(() => null);
 
-    // Execute merchant processing and validation workflow
-    setTimeout(() => {
-      onConfirmWithdrawal(
-        matchedOrder.id,
-        email.trim(),
-        name.trim() || matchedOrder.customerName,
-        selectedItems
-      );
-      setIsSubmitting(false);
+      if (!res.ok || data?.success !== true) {
+        setError(data?.error || 'We could not register the request. Please try again.');
+        return;
+      }
+
+      onConfirmWithdrawal(matchedOrder.id, email.trim(), name.trim() || matchedOrder.customerName, selectedItems);
       setIsSubmitted(true);
-    }, 1000);
+    } catch {
+      setError('We could not reach the server. Please check your connection and try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleReset = () => {
@@ -104,6 +161,7 @@ export default function OrderWithdrawalModal({
     setSelectedItems([]);
     setError(null);
     setIsSubmitted(false);
+    setMatchedOrder(null);
   };
 
   const handleCloseAndReset = () => {

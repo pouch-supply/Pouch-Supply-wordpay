@@ -73,6 +73,24 @@ export async function checkDiscountUsable(
   excludeOrderId?: string
 ): Promise<DiscountUsageVerdict> {
   if (!applied) return { ok: true };
+
+  // The automatic new-customer offer is never taken on trust. It is not a
+  // stored discount, so its own limitOnePerCustomer flag arrives from the
+  // browser; eligibility is recomputed here from the accounts and orders that
+  // exist, which is what actually stops it being replayed or hand-crafted.
+  const { isNewCustomerDiscount, checkNewCustomerEligibility } = await import(
+    "./newCustomerDiscount"
+  );
+  if (isNewCustomerDiscount(applied)) {
+    const verdict = await checkNewCustomerEligibility(customerEmail);
+    if (verdict.eligible) return { ok: true };
+    return {
+      ok: false,
+      message: "The New Customer Discount does not apply to this order.",
+      priorOrderId: verdict.reason
+    };
+  }
+
   if (!(await isOnePerCustomer(applied))) return { ok: true };
 
   const prior = await findPriorUse(customerEmail, applied, excludeOrderId);

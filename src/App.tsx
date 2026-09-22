@@ -1478,8 +1478,10 @@ export default function App() {
 
     const listSummary = structuredSubItems.map(i => i.formattedLabel).join(', ');
 
-    const freqDiscountPct = (frequency === 'Next Day (Test)' || frequency === 'Next Day') ? 10 : (frequency === 'Weekly' ? 5 : (frequency === 'One Month' ? 12 : 10));
-    const desc = `${packName} [${frequency} - ${freqDiscountPct}% OFF] - (${listSummary})`;
+    // No rhythm discount any more, so the line reads "[Bi-Weekly]" rather than
+    // "[Bi-Weekly - 10% OFF]". The label is parsed back out in several places,
+    // which cope with the bracket carrying the frequency alone.
+    const desc = `${packName} [${frequency}] - (${listSummary})`;
 
     const now = new Date();
     const nextPaymentDate = new Date(now);
@@ -1505,7 +1507,9 @@ export default function App() {
         isSubscription: true,
         subscriptionPlan: packName,
         subscriptionFrequency: frequency,
-        frequencyDiscount: `${freqDiscountPct}%`,
+        // Left unset: every reader renders it only when present, so a plan with
+        // no rhythm discount shows no "% OFF" badge at all rather than "0% OFF".
+        frequencyDiscount: undefined,
         subscriptionItems: structuredSubItems,
         nextPaymentDate: nextPaymentDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
       } as any
@@ -1901,6 +1905,14 @@ export default function App() {
   };
 
   const handleConfirmWithdrawal = (orderId: string, email: string, name: string, selectedItems: string[]) => {
+    // The request itself is recorded by the server before this runs (see
+    // POST /api/orders/withdrawal); this only brings any copy of the order the
+    // app is already holding into line with it.
+    //
+    // It used to set paymentStatus: 'Refunded' here, in React state alone. That
+    // told the customer and the shop the money had been returned when nothing
+    // had been saved, nobody had been told and no refund had been made. A
+    // withdrawal is a REQUEST; an administrator processes the refund.
     setOrders(prevOrders => {
       return prevOrders.map(o => {
         if (o.id === orderId) {
@@ -1908,103 +1920,26 @@ export default function App() {
           if (!currentTags.includes('Withdrawal Requested')) {
             currentTags.push('Withdrawal Requested');
           }
-          const itemSpecTag = `Withdraw: ${selectedItems.length} item(s)`;
-          if (!currentTags.includes(itemSpecTag)) {
-            currentTags.push(itemSpecTag);
-          }
-          return {
-            ...o,
-            tags: currentTags,
-            paymentStatus: 'Refunded' // Display Refunded status for completed withdrawal request
-          };
+          return { ...o, tags: currentTags };
         }
         return o;
       });
     });
 
-    // Generate simulated HTML email copy and save to simulated logs
+    // Confirmation to the customer is sent by the server, to the address on the
+    // order. This used to build its own HTML receipt here — branded for another
+    // shop entirely ("PerfumeSampler") — and then fire /api/email/send-trigger
+    // with type 'order_processing', so the customer got a second, unrelated
+    // email about their order being processed. Both are gone; only the on-screen
+    // acknowledgement is raised here.
     const targetOrder = orders.find(o => o.id === orderId);
     if (targetOrder) {
-      const withdrawnProducts = targetOrder.items.filter(i => selectedItems.includes(i.productId));
+      const withdrawnProducts = (targetOrder.items || []).filter(i => selectedItems.includes(i.productId));
       const totalRefund = withdrawnProducts.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-      const itemsHtml = withdrawnProducts.map(item => `
-        <div style="display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
-          <span style="color: #334155; font-weight: 600;">${item.productTitle} &times; ${item.quantity}</span>
-          <span style="font-family: monospace; font-weight: bold; color: #1e293b;">£${(item.price * item.quantity).toFixed(2)}</span>
-        </div>
-      `).join('');
-
-      const emailHtml = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); color: #334155;">
-          <div style="background-color: #071d37; padding: 25px 20px; text-align: center;">
-            <span style="font-size: 18px; font-weight: 900; color: #ffffff; letter-spacing: 2px;">POUCH SUPPLY CO.</span>
-            <div style="font-size: 9px; font-weight: bold; color: #00e599; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px;">Order withdrawal receipt</div>
-          </div>
-          
-          <div style="padding: 24px; text-align: left;">
-            <p style="font-size: 13px; font-weight: bold; color: #0f172a; margin-top: 0;">Hi ${name || targetOrder.customerName || 'Value Member'},</p>
-            <p style="font-size: 12.5px; color: #475569; line-height: 1.6; margin-bottom: 20px;">
-              Your formal request to withdraw products from Order <strong>#${orderId}</strong> has been successfully registered. Our team has received this request and is manually reviewing it to match transactions quickly.
-            </p>
-
-            <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
-              <div style="font-size: 9.5px; font-weight: bold; text-transform: uppercase; color: #94a3b8; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; margin-bottom: 10px; letter-spacing: 0.5px;">
-                Withdrawn Products Summary
-              </div>
-              
-              <div style="margin-bottom: 12px;">
-                ${itemsHtml}
-              </div>
-
-              <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: bold; color: #e11d48; padding-top: 8px;">
-                <span>Total Estimated Credit:</span>
-                <span>£${totalRefund.toFixed(2)}</span>
-              </div>
-            </div>
-
-            <div style="background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 12px; padding: 14px; margin-bottom: 20px; font-size: 11.5px; line-height: 1.5; color: #b45309;">
-              <strong>Manual Verification Status:</strong><br/>
-              No manual action is required from you! An administrator will review your withdrawal list, adjust shipping parameters, and process any transaction balance back onto your primary card brand.
-            </div>
-
-            <p style="font-size: 11.5px; color: #64748b; line-height: 1.5;">
-              If you have any questions, please visit your account dashboard online or reach out to our Customer Operations Desk.
-            </p>
-          </div>
-          
-          <div style="background-color: #f8fafc; padding: 15px; border-top: 1px solid #f1f5f9; text-align: center; font-size: 10px; color: #94a3b8;">
-            Thank you for shopping with PerfumeSampler.
-          </div>
-        </div>
-      `;
-
-      const newEmail = {
-        to: email || targetOrder.customerEmail,
-        subject: `Order Withdrawal Confirmation - #${orderId}`,
-        preview: `Your request to withdraw products from Order #${orderId} is registered. Estimated Credit: £${totalRefund.toFixed(2)}.`,
-        body: emailHtml,
-        date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-
-      // Dispatch real email via API trigger
-      fetch('/api/email/send-trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'order_processing',
-          recipient: email || targetOrder.customerEmail,
-          data: { orderId, customerName: targetOrder.customerName }
-        })
-      }).catch(() => {});
-
-      // Dispatch real-time global listener alert
-      window.dispatchEvent(new CustomEvent('ps-emails-updated'));
-
-      // Show beautiful interactive notification banner
       setEmailToast({
-        to: email || targetOrder.customerEmail,
-        subject: `Order Withdrawal Confirmation - #${orderId}`,
+        to: targetOrder.customerEmail,
+        subject: `Order Withdrawal Requested - #${orderId}`,
         refund: totalRefund
       });
     }

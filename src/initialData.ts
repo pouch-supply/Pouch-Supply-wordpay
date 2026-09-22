@@ -99,7 +99,7 @@ export const DEFAULT_PAGES: CustomPage[] = [
           title: 'CHOOSE YOUR PLAN',
           description: 'Flexible subscriptions. Premium brands. Serious savings.',
           alertBadgeText: 'Most customers save up to £55/month',
-          promoBannerText: '★ FIRST 50 SUBSCRIBERS - Get 10% OFF FOR LIFE >',
+          promoBannerText: '★ FIRST 50 CUSTOMERS - Get 10% OFF YOUR FIRST ORDER >',
           planItems: [
             {
               slug: 'lite',

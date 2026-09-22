@@ -174,7 +174,7 @@ function PlansSection({ sec, handleLinkClick }: PlansSectionProps) {
   const title = settings.title || 'CHOOSE YOUR PLAN';
   const description = settings.description || 'Flexible subscriptions. Premium brands. Serious savings.';
   const alertBadgeText = settings.alertBadgeText || 'Most customers save up to £55/month';
-  const promoText = settings.promoBannerText || '★ FIRST 50 SUBSCRIBERS - Get 10% OFF FOR LIFE >';
+  const promoText = settings.promoBannerText || '★ FIRST 50 CUSTOMERS - Get 10% OFF YOUR FIRST ORDER >';
 
   // Default plans fallback
   const plans = settings.planItems || [

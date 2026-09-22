@@ -461,27 +461,14 @@ export function resolveDiscountCode(
     };
   }
 
-  // 4. Special Subscriber Discounts (SUB10, SUBSCRIBER10, FIRST50)
-  if (code === 'SUB10' || code === 'SUBSCRIBER10' || code === 'FIRST50') {
-    const subDiscount: Discount = {
-      id: 'disc-sub-first50',
-      title: code,
-      status: 'Active',
-      method: 'Code',
-      eligibility: 'All customers',
-      type: 'Amount off order',
-      valueType: 'Percentage',
-      valueAmount: 10,
-      details: '10% First 50 Subscribers Permanent Discount',
-      used: 1,
-      limitOnePerCustomer: false
-    };
-    return {
-      success: true,
-      discount: subDiscount,
-      message: '10% First 50 Subscribers discount applied!'
-    };
-  }
+  // 4. The first-50 offer is no longer a code.
+  //
+  // SUB10 / SUBSCRIBER10 / FIRST50 used to resolve here to a permanent 10% for
+  // ANYONE who typed one — no limit of fifty, no check that the person was new,
+  // and no limit to one order. The offer is now applied automatically by the
+  // server to the first fifty accounts on their first order
+  // (backend/services/newCustomerDiscount.ts), so there is no code to share and
+  // nothing for the browser to claim.
 
   // 5. Customer Referral Codes
   const matchingCustomer = customers.find(c => c.referralCode && c.referralCode.toUpperCase() === code);

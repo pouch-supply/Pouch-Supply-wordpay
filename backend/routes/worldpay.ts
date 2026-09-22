@@ -2317,7 +2317,13 @@ router.post('/verify-payment', async (req: Request, res: Response) => {
         total: typeof total === 'number' ? total : parseFloat(total) || 0,
         discountApplied: req.body.discountApplied || null,
         storeCreditApplied: req.body.storeCreditApplied || 0,
-        isTestMode: req.body.isTestMode ?? true,
+        // From the server's own Worldpay environment, never the request body
+        // and never a default of `true`. This is a rebuilt pending record for a
+        // payment that has already happened, and the flag decides whether the
+        // order is tagged "Worldpay Test Order" — so on a live account a real
+        // sale was being labelled as a test whenever the original pending
+        // record had been lost.
+        isTestMode: getEnvironmentConfig().isTestMode,
         createdAt: Date.now()
       };
     }

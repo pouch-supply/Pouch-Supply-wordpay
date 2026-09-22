@@ -76,13 +76,28 @@ export default function Footer({ onNavigate, layoutSettings }: FooterProps) {
           </div>
 
           <div className="pt-2">
-            <button
-              onClick={() => onNavigate?.('frontend-subscribe')}
-              className="bg-indigo-600 hover:bg-indigo-700 hover:scale-[1.02] active:scale-95 text-white font-black text-xs sm:text-sm py-3.5 px-8 rounded-2xl transition-all shadow-md hover:shadow-indigo-200 cursor-pointer uppercase tracking-widest flex items-center gap-2 mx-auto"
+            {/*
+              A real link to /pages/subscribe, not a bare button.
+
+              It used to be a button whose only action was `onNavigate?.(...)` —
+              an optional prop, so anywhere the Footer was rendered without it
+              the button silently did nothing, and there was no href to fall
+              back on. As an anchor it always goes somewhere: the click handler
+              keeps the in-app navigation when the prop is there, and the href
+              does the job when it is not.
+            */}
+            <a
+              href="/pages/subscribe"
+              onClick={(e) => {
+                if (!onNavigate) return; // let the browser follow the href
+                e.preventDefault();
+                onNavigate('frontend-subscribe');
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 hover:scale-[1.02] active:scale-95 text-white font-black text-xs sm:text-sm py-3.5 px-8 rounded-2xl transition-all shadow-md hover:shadow-indigo-200 cursor-pointer uppercase tracking-widest inline-flex items-center gap-2 mx-auto no-underline"
             >
               <span>Start Your Subscription</span>
               <ArrowRight className="h-4 w-4 stroke-[2.5]" />
-            </button>
+            </a>
           </div>
         </div>
       </div>

@@ -14,6 +14,32 @@ const router = Router();
  * payment session and on order creation — this endpoint is a courtesy, and
  * nothing relies on the client having called it.
  */
+/**
+ * The discount that applies to this shopper without them typing anything.
+ *
+ * Currently the launch offer: the first 50 accounts get 10% off their first
+ * order. The storefront asks as the customer is identified and applies whatever
+ * comes back; it never decides eligibility itself, and the payment session
+ * re-checks before taking money.
+ */
+router.get("/auto", async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim();
+    if (!email) return res.json({ discount: null });
+
+    const { autoDiscountFor, newCustomerPlacesRemaining } = await import(
+      "../services/newCustomerDiscount"
+    );
+    const discount = await autoDiscountFor(email);
+    res.json({ discount, placesRemaining: await newCustomerPlacesRemaining() });
+  } catch (err: any) {
+    console.error("[Discounts Router] GET /auto Error:", err);
+    // No automatic discount beats a failed checkout: the shopper simply pays
+    // the normal price rather than seeing an error.
+    res.json({ discount: null });
+  }
+});
+
 router.post("/validate", async (req, res) => {
   try {
     const { customerEmail, discount } = req.body || {};

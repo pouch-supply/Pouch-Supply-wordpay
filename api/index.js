@@ -128,7 +128,7 @@ var init_initialData = __esm({
               title: "CHOOSE YOUR PLAN",
               description: "Flexible subscriptions. Premium brands. Serious savings.",
               alertBadgeText: "Most customers save up to \xA355/month",
-              promoBannerText: "\u2605 FIRST 50 SUBSCRIBERS - Get 10% OFF FOR LIFE >",
+              promoBannerText: "\u2605 FIRST 50 CUSTOMERS - Get 10% OFF YOUR FIRST ORDER >",
               planItems: [
                 {
                   slug: "lite",
@@ -4418,6 +4418,107 @@ var init_discountUsageRules = __esm({
   }
 });
 
+// backend/services/newCustomerDiscount.ts
+var newCustomerDiscount_exports = {};
+__export(newCustomerDiscount_exports, {
+  NEW_CUSTOMER_DISCOUNT_ID: () => NEW_CUSTOMER_DISCOUNT_ID,
+  NEW_CUSTOMER_LIMIT: () => NEW_CUSTOMER_LIMIT,
+  NEW_CUSTOMER_PERCENT: () => NEW_CUSTOMER_PERCENT,
+  autoDiscountFor: () => autoDiscountFor,
+  buildNewCustomerDiscount: () => buildNewCustomerDiscount,
+  checkNewCustomerEligibility: () => checkNewCustomerEligibility,
+  isNewCustomerDiscount: () => isNewCustomerDiscount,
+  newCustomerPlacesRemaining: () => newCustomerPlacesRemaining
+});
+function buildNewCustomerDiscount() {
+  return {
+    id: NEW_CUSTOMER_DISCOUNT_ID,
+    title: "New Customer Discount",
+    status: "Active",
+    method: "Automatic",
+    eligibility: "First 50 customers",
+    type: "Amount off order",
+    valueType: "Percentage",
+    valueAmount: NEW_CUSTOMER_PERCENT,
+    details: `${NEW_CUSTOMER_PERCENT}% New Customer Discount`,
+    used: 0,
+    // First order only. The usage check enforces this server-side as well.
+    limitOnePerCustomer: true,
+    isAutomatic: true
+  };
+}
+async function loadCustomersByJoinDate() {
+  const byEmail = /* @__PURE__ */ new Map();
+  try {
+    const rows = await prisma.customer.findMany({ orderBy: { createdAt: "asc" } });
+    for (const row of rows || []) byEmail.set(clean(row.email), row);
+  } catch {
+  }
+  try {
+    const stored = await fetchResource("customers") || [];
+    for (const row of stored) {
+      const email = clean(row?.email);
+      if (!email) continue;
+      byEmail.set(email, { ...row || {}, ...byEmail.get(email) || {} });
+    }
+  } catch {
+  }
+  return Array.from(byEmail.values()).sort((a, b) => {
+    const ta = Date.parse(a?.createdAt ?? "") || Number.MAX_SAFE_INTEGER;
+    const tb = Date.parse(b?.createdAt ?? "") || Number.MAX_SAFE_INTEGER;
+    return ta - tb;
+  });
+}
+async function hasOrdered(email) {
+  const wanted = clean(email);
+  if (!wanted) return true;
+  try {
+    const orders = await fetchResource("orders") || [];
+    return orders.some((o) => clean(o?.customerEmail) === wanted);
+  } catch {
+    return true;
+  }
+}
+async function checkNewCustomerEligibility(customerEmail) {
+  const email = clean(customerEmail);
+  if (!email) return { eligible: false, reason: "No customer email" };
+  const customers = await loadCustomersByJoinDate();
+  const index = customers.findIndex((c) => clean(c?.email) === email);
+  if (index === -1) {
+    return { eligible: false, reason: "No account for this email" };
+  }
+  const position = index + 1;
+  if (position > NEW_CUSTOMER_LIMIT) {
+    return { eligible: false, position, reason: `Account #${position} is outside the first ${NEW_CUSTOMER_LIMIT}` };
+  }
+  if (await hasOrdered(email)) {
+    return { eligible: false, position, reason: "The offer applies to a first order only" };
+  }
+  return { eligible: true, position };
+}
+async function autoDiscountFor(customerEmail) {
+  const verdict = await checkNewCustomerEligibility(customerEmail);
+  return verdict.eligible ? buildNewCustomerDiscount() : null;
+}
+function isNewCustomerDiscount(applied) {
+  return String(applied?.id || "") === NEW_CUSTOMER_DISCOUNT_ID;
+}
+async function newCustomerPlacesRemaining() {
+  const customers = await loadCustomersByJoinDate();
+  return Math.max(0, NEW_CUSTOMER_LIMIT - customers.length);
+}
+var NEW_CUSTOMER_LIMIT, NEW_CUSTOMER_PERCENT, NEW_CUSTOMER_DISCOUNT_ID, clean;
+var init_newCustomerDiscount = __esm({
+  "backend/services/newCustomerDiscount.ts"() {
+    init_serverDb();
+    init_prisma();
+    NEW_CUSTOMER_LIMIT = 50;
+    NEW_CUSTOMER_PERCENT = 10;
+    NEW_CUSTOMER_DISCOUNT_ID = "disc-new-customer-10";
+    clean = (v) => String(v || "").toLowerCase().trim();
+  }
+});
+
 // backend/services/discountUsage.ts
 async function storedDiscountFor(applied) {
   try {
@@ -4443,6 +4544,16 @@ async function findPriorUse(customerEmail, applied, excludeOrderId) {
 }
 async function checkDiscountUsable(customerEmail, applied, excludeOrderId) {
   if (!applied) return { ok: true };
+  const { isNewCustomerDiscount: isNewCustomerDiscount2, checkNewCustomerEligibility: checkNewCustomerEligibility2 } = await Promise.resolve().then(() => (init_newCustomerDiscount(), newCustomerDiscount_exports));
+  if (isNewCustomerDiscount2(applied)) {
+    const verdict = await checkNewCustomerEligibility2(customerEmail);
+    if (verdict.eligible) return { ok: true };
+    return {
+      ok: false,
+      message: "The New Customer Discount does not apply to this order.",
+      priorOrderId: verdict.reason
+    };
+  }
   if (!await isOnePerCustomer(applied)) return { ok: true };
   const prior = await findPriorUse(customerEmail, applied, excludeOrderId);
   if (!prior) return { ok: true };
@@ -4919,7 +5030,16 @@ async function saveSingleOrder(orderData) {
   }
   return formattedOrder;
 }
-var router3, FULFILLMENT_NOTIFICATION, orders_default;
+function findOrderForWithdrawal(orders, orderId, email) {
+  const wantedId = String(orderId || "").trim().replace(/^#/, "").toLowerCase();
+  const wantedEmail = String(email || "").trim().toLowerCase();
+  if (!wantedId || !wantedEmail) return null;
+  const order = orders.find((o) => String(o?.id || "").trim().toLowerCase() === wantedId);
+  if (!order) return null;
+  if (String(order.customerEmail || "").trim().toLowerCase() !== wantedEmail) return null;
+  return order;
+}
+var router3, FULFILLMENT_NOTIFICATION, WITHDRAWAL_MISMATCH, orders_default;
 var init_orders = __esm({
   "backend/routes/orders.ts"() {
     init_serverDb();
@@ -5200,6 +5320,91 @@ var init_orders = __esm({
         res.status(500).json({ error: err.message || "Failed to submit return request" });
       }
     });
+    WITHDRAWAL_MISMATCH = "We could not find an order with that number and email address. Please check both against your order confirmation email.";
+    router3.post("/withdrawal/lookup", async (req, res) => {
+      try {
+        const { orderId, email } = req.body || {};
+        const orders = await fetchResource("orders") || [];
+        const order = findOrderForWithdrawal(orders, orderId, email);
+        if (!order) return res.status(404).json({ error: WITHDRAWAL_MISMATCH });
+        return res.json({
+          order: {
+            id: order.id,
+            customerName: order.customerName,
+            date: order.date,
+            total: order.total,
+            alreadyRequested: Boolean(order.returnRequest),
+            items: (Array.isArray(order.items) ? order.items : []).map((i) => ({
+              productId: i?.productId,
+              productTitle: i?.productTitle,
+              price: Number(i?.price) || 0,
+              quantity: Number(i?.quantity) || 1,
+              image: i?.image || ""
+            }))
+          }
+        });
+      } catch (err) {
+        console.error("[Orders Router] Withdrawal lookup error:", err);
+        res.status(500).json({ error: "Could not check that order. Please try again." });
+      }
+    });
+    router3.post("/withdrawal", async (req, res) => {
+      try {
+        const { orderId, email, name, selectedItems, reason } = req.body || {};
+        const orders = await fetchResource("orders") || [];
+        const order = findOrderForWithdrawal(orders, orderId, email);
+        if (!order) return res.status(404).json({ error: WITHDRAWAL_MISMATCH });
+        const orderItems = Array.isArray(order.items) ? order.items : [];
+        const wanted = Array.isArray(selectedItems) ? selectedItems.map(String) : [];
+        const itemsToReturn = wanted.length ? orderItems.filter((i) => wanted.includes(String(i?.productId))) : orderItems;
+        if (itemsToReturn.length === 0) {
+          return res.status(400).json({ error: "Select at least one item to withdraw." });
+        }
+        const refundDue = Number(
+          itemsToReturn.reduce((sum, i) => sum + (Number(i?.price) || 0) * (Number(i?.quantity) || 1), 0).toFixed(2)
+        );
+        const tags = Array.isArray(order.tags) ? [...order.tags] : [];
+        if (!tags.includes("Withdrawal Requested")) tags.push("Withdrawal Requested");
+        const updatedOrder = await saveSingleOrder({
+          ...order,
+          tags,
+          // Deliberately NOT paymentStatus: 'Refunded'. This is a request; the money
+          // moves when an administrator processes it through /:id/admin-action, and
+          // showing an order as refunded before that told the customer and the shop
+          // that they had been paid back when nothing had left the account.
+          returnRequest: {
+            type: "Withdrawal",
+            reason: String(reason || "Consumer right of withdrawal").slice(0, 500),
+            itemsToReturn,
+            refundMethod: "original",
+            status: "Pending",
+            requestedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            requestedBy: String(name || order.customerName || "").slice(0, 120),
+            refundDue
+          }
+        });
+        try {
+          const { sendOrderCancelledEmail: sendOrderCancelledEmail2 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
+          await sendOrderCancelledEmail2(
+            updatedOrder,
+            `Withdrawal requested for ${itemsToReturn.length} item(s), \xA3${refundDue.toFixed(2)}. Our team will confirm your refund shortly.`
+          );
+        } catch (mailErr) {
+          console.error(`[Orders Router] Withdrawal email failed for ${order.id}:`, mailErr?.message);
+        }
+        console.log(`[Orders Router] Withdrawal requested for ${order.id}: ${itemsToReturn.length} item(s), \xA3${refundDue.toFixed(2)}.`);
+        return res.json({
+          success: true,
+          orderId: order.id,
+          itemCount: itemsToReturn.length,
+          refundDue,
+          message: "Your withdrawal request has been registered. We will email you once it is processed."
+        });
+      } catch (err) {
+        console.error("[Orders Router] Withdrawal error:", err);
+        res.status(500).json({ error: "Could not register the request. Please try again." });
+      }
+    });
     router3.post("/:id/admin-action", requireAdmin, async (req, res) => {
       try {
         const { id } = req.params;
@@ -5372,11 +5577,8 @@ var init_planCatalogue = __esm({
 });
 
 // src/lib/subscriptionPricing.ts
-function frequencyDiscountPercent(frequency) {
-  const f = String(frequency || "").trim().toLowerCase();
-  if (f === "weekly" || f === "week" || f === "1week") return 5;
-  if (f === "one month" || f === "monthly" || f === "month" || f === "1month") return 12;
-  return 10;
+function frequencyDiscountPercent(_frequency) {
+  return 0;
 }
 function computeRecurringAmount({
   planPrice,
@@ -9274,6 +9476,18 @@ init_requireAdmin();
 init_discountUsage();
 import { Router as Router6 } from "express";
 var router7 = Router6();
+router7.get("/auto", async (req, res) => {
+  try {
+    const email = String(req.query.email || "").trim();
+    if (!email) return res.json({ discount: null });
+    const { autoDiscountFor: autoDiscountFor2, newCustomerPlacesRemaining: newCustomerPlacesRemaining2 } = await Promise.resolve().then(() => (init_newCustomerDiscount(), newCustomerDiscount_exports));
+    const discount = await autoDiscountFor2(email);
+    res.json({ discount, placesRemaining: await newCustomerPlacesRemaining2() });
+  } catch (err) {
+    console.error("[Discounts Router] GET /auto Error:", err);
+    res.json({ discount: null });
+  }
+});
 router7.post("/validate", async (req, res) => {
   try {
     const { customerEmail, discount } = req.body || {};
@@ -11049,7 +11263,13 @@ router10.post("/verify-payment", async (req, res) => {
         total: typeof total === "number" ? total : parseFloat(total) || 0,
         discountApplied: req.body.discountApplied || null,
         storeCreditApplied: req.body.storeCreditApplied || 0,
-        isTestMode: req.body.isTestMode ?? true,
+        // From the server's own Worldpay environment, never the request body
+        // and never a default of `true`. This is a rebuilt pending record for a
+        // payment that has already happened, and the flag decides whether the
+        // order is tagged "Worldpay Test Order" — so on a live account a real
+        // sale was being labelled as a test whenever the original pending
+        // record had been lost.
+        isTestMode: getEnvironmentConfig().isTestMode,
         createdAt: Date.now()
       };
     }
@@ -11573,18 +11793,18 @@ function isSubscriptionOrder(order) {
   );
 }
 async function loadCustomerSubscriptions(email) {
-  const clean = String(email || "").toLowerCase().trim();
-  if (!clean) return [];
+  const clean2 = String(email || "").toLowerCase().trim();
+  if (!clean2) return [];
   const byId = /* @__PURE__ */ new Map();
   try {
-    const rows = await prisma.subscription.findMany({ where: { customerEmail: clean } });
+    const rows = await prisma.subscription.findMany({ where: { customerEmail: clean2 } });
     for (const row of rows || []) byId.set(String(row.id), row);
   } catch (_e) {
   }
   try {
     const stored = await fetchResource("subscriptions") || [];
     for (const s of stored) {
-      if (String(s?.customerEmail || "").toLowerCase().trim() !== clean) continue;
+      if (String(s?.customerEmail || "").toLowerCase().trim() !== clean2) continue;
       const id = String(s.id || "");
       byId.set(id, { ...byId.get(id) || {}, ...s });
     }
@@ -11593,17 +11813,17 @@ async function loadCustomerSubscriptions(email) {
   return Array.from(byId.values());
 }
 async function loadSubscriptionById(id) {
-  const clean = String(id || "").trim();
-  if (!clean) return null;
+  const clean2 = String(id || "").trim();
+  if (!clean2) return null;
   let prismaRow = null;
   try {
-    prismaRow = await prisma.subscription.findUnique({ where: { id: clean } });
+    prismaRow = await prisma.subscription.findUnique({ where: { id: clean2 } });
   } catch (_e) {
   }
   let storedRow = null;
   try {
     const stored = await fetchResource("subscriptions") || [];
-    storedRow = stored.find((s) => String(s?.id) === clean) || null;
+    storedRow = stored.find((s) => String(s?.id) === clean2) || null;
   } catch (_e) {
   }
   if (!prismaRow && !storedRow) return null;

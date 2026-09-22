@@ -5,6 +5,7 @@ import {
   Crown, Tag, Flame, ShieldCheck, Lock, Truck, Gift, Clock
 } from 'lucide-react';
 import PlansCanOverlay from './PlansCanOverlay';
+import { frequencyDiscountPercent } from '../lib/subscriptionPricing';
 
 /**
  * One product the customer put in their box, with the identity needed to show
@@ -320,8 +321,12 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
 
     const extraCans = isUltimate && totalSelectedCount > 12 ? totalSelectedCount - 12 : 0;
     const baseSubPrice = activePrice + (extraCans * 3.80);
-    const freqDiscountPercent = frequency === 'Weekly' ? 5 : (frequency === 'One Month' || frequency === 'Monthly' ? 12 : 10);
-    const finalPrice = Number((baseSubPrice * ((100 - freqDiscountPercent) / 100)).toFixed(2));
+    // Priced from the shared rule, which no longer discounts by rhythm. This
+    // used to carry its own 5/10/12 ladder, so a change here and a change there
+    // could disagree about what the same plan costs.
+    const finalPrice = Number(
+      (baseSubPrice * ((100 - frequencyDiscountPercent(frequency)) / 100)).toFixed(2)
+    );
 
     const planUpper = (activePlan?.name || activePlanSlug || 'PRO').toUpperCase();
     const displayName = isUltimate && extraCans > 0 
@@ -344,7 +349,7 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
     const title = settings.title || 'CHOOSE YOUR PLAN';
     const description = settings.description || 'Flexible subscriptions. Premium brands. Serious savings.';
     const alertBadgeText = settings.alertBadgeText || 'Most customers save up to £55/month';
-    const promoText = settings.promoBannerText || '★ FIRST 50 SUBSCRIBERS - Get 10% OFF FOR LIFE >';
+    const promoText = settings.promoBannerText || '★ FIRST 50 CUSTOMERS - Get 10% OFF YOUR FIRST ORDER >';
 
     return (
       <div className="w-full text-white py-8 px-4" style={{ backgroundColor: bgColor }}>
@@ -395,7 +400,7 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Weekly <span className="text-[9px] opacity-90 font-extrabold ml-1">(5% OFF)</span>
+                Weekly
               </button>
               <button 
                 onClick={() => setFrequency('Bi-Weekly')}
@@ -405,7 +410,7 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Bi-Weekly <span className="text-[9px] opacity-90 font-extrabold ml-1">(10% OFF)</span>
+                Bi-Weekly
               </button>
               <button 
                 onClick={() => setFrequency('One Month')}
@@ -415,7 +420,7 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                One Month <span className="text-[9px] opacity-90 font-extrabold ml-1">(12% OFF)</span>
+                One Month
               </button>
             </div>
           </div>
@@ -882,11 +887,10 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
                 onChange={(e) => setFrequency(e.target.value)}
                 className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
               >
-                {/* Frequency names only. The discount each one carries is shown
-                    on its own line below ("Frequency Discount"), so repeating it
-                    here said the same thing twice. Values are unchanged: they are
-                    the stored billing interval and are matched by string. */}
-                <option value="Next Day (Test)">Next Day (Test)</option>
+                {/* Frequency names only, and no test cadence: "Next Day (Test)"
+                    was a one-day billing option for testing and must not be
+                    sellable. Values are the stored billing interval and are
+                    matched by string elsewhere, so they are left as they are. */}
                 <option value="Weekly">Weekly</option>
                 <option value="Bi-Weekly">Bi-Weekly</option>
                 <option value="One Month">One Month</option>
@@ -897,19 +901,18 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
             {(() => {
               const extraCans = activePlanSlug === 'ultimate' && totalSelectedCount > 12 ? totalSelectedCount - 12 : 0;
               const rawSubTotal = activePrice + (extraCans * 3.80);
-              const discountPct = frequency === 'Next Day (Test)' ? 10 : (frequency === 'Weekly' ? 5 : (frequency === 'One Month' ? 12 : 10));
-              const calculatedRate = rawSubTotal * ((100 - discountPct) / 100);
+              const calculatedRate = rawSubTotal * ((100 - frequencyDiscountPercent(frequency)) / 100);
 
               return (
                 <div className="border-t border-slate-100 pt-4 space-y-3 bg-slate-50 p-4 rounded-xl">
+                  {/* The "Frequency Discount" row is gone with the discount itself.
+                      The struck-through price beside the flat rate went with it:
+                      it was rawSubTotal * 1.15, a number nothing was ever sold
+                      at, and showing it against an undiscounted price would
+                      claim a saving that is not being given. */}
                   <div className="flex justify-between items-center text-xs text-slate-600">
                     <span>{activeLimit} pouches flat rate</span>
-                    <span className="line-through text-slate-400">£{(rawSubTotal * 1.15).toFixed(2)}</span>
-                  </div>
-
-                  <div className="flex justify-between items-center text-xs text-emerald-700 font-extrabold bg-emerald-50 p-2 rounded-lg border border-emerald-100">
-                    <span>Frequency Discount ({frequency})</span>
-                    <span>-{discountPct}% OFF</span>
+                    <span className="font-bold text-slate-700">£{rawSubTotal.toFixed(2)}</span>
                   </div>
 
                   {activePlanSlug === 'ultimate' && totalSelectedCount > 12 && (
@@ -953,7 +956,7 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
 
                   <div className="flex items-start gap-1.5 text-[10px] text-slate-400 leading-normal pt-1">
                     <Info className="h-3 w-3 shrink-0 text-slate-400 mt-0.5" />
-                    <span>You will be billed £{calculatedRate.toFixed(2)} recursively based on {frequency} frequency ({discountPct}% discount applied). Access swap, skips, or instant terminations anytime from your customer portal.</span>
+                    <span>You will be billed £{calculatedRate.toFixed(2)} on your {frequency} schedule. Swap, skip or cancel anytime from your customer portal.</span>
                   </div>
                 </div>
               );
