@@ -17,6 +17,13 @@ import {
   getOrderSubscriptionId
 } from '../../utils/subscriptionParser';
 import { getPlanImage, getPlanSlug } from '../../utils/planImages';
+import {
+  UK_COUNTRY_CODE,
+  UK_COUNTRY_NAME,
+  normalizeUkPhone,
+  normalizeUkPostcode,
+  validateUkDelivery
+} from '../../utils/ukValidation';
 
 const PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&q=80&w=300";
 
@@ -86,6 +93,173 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [copiedRefOrderId, setCopiedRefOrderId] = useState<string | null>(null);
   const [isMarkingDelivered, setIsMarkingDelivered] = useState(false);
   const [showDeliveredConfirm, setShowDeliveredConfirm] = useState(false);
+
+  // Customer & delivery details editor on the order detail page.
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [customerForm, setCustomerForm] = useState({
+    customerName: '',
+    customerEmail: '',
+    addressLine1: '',
+    city: '',
+    postcode: '',
+    phone: ''
+  });
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+  const [customerFormError, setCustomerFormError] = useState<string | null>(null);
+
+  /**
+   * The delivery address actually recorded on an order.
+   *
+   * `shippingAddress` is the structured copy checkout writes, kept both at the
+   * top level and inside `data`; `destination` is the joined display string and
+   * is all that the oldest orders have.
+   *
+   * This panel used to print a hard-coded "124 High Street, Suite 4B / London,
+   * EC1A 1BB" under every single order, so the address an admin read there had
+   * nothing to do with where the parcel was going.
+   */
+  const getOrderAddress = (order: Order) => {
+    const raw: any =
+      (order as any).shippingAddress || (order as any).data?.shippingAddress || {};
+    return {
+      addressLine1: String(raw.addressLine1 || raw.address1 || raw.line1 || '').trim(),
+      city: String(raw.city || raw.town || '').trim(),
+      postcode: String(raw.postcode || raw.postCode || '').trim(),
+      country: String(raw.country || UK_COUNTRY_NAME).trim(),
+      phone: String(raw.phone || (order as any).customerPhone || '').trim()
+    };
+  };
+
+  /**
+   * Rejoins the address for display, skipping any part the first line already
+   * contains — saved lines frequently hold the whole address, and appending the
+   * town and postcode again produced "…, telford, tf4 2tq, United Kingdom,
+   * London" strings like the ones already in the data.
+   */
+  const buildDestination = (line: string, city: string, postcode: string, country: string) => {
+    const first = line.trim();
+    const lower = first.toLowerCase();
+    const parts = [first];
+    for (const part of [city, postcode, country]) {
+      const value = String(part || '').trim();
+      if (!value) continue;
+      if (lower.includes(value.toLowerCase())) continue;
+      parts.push(value);
+    }
+    return parts.filter(Boolean).join(', ');
+  };
+
+  const openCustomerEditor = () => {
+    if (!selectedOrder) return;
+    const address = getOrderAddress(selectedOrder);
+    setCustomerForm({
+      customerName: selectedOrder.customerName || '',
+      customerEmail: selectedOrder.customerEmail || '',
+      // An order with no structured address has only the joined string, so that
+      // is what the admin gets to correct.
+      addressLine1: address.addressLine1 || String(selectedOrder.destination || ''),
+      city: address.city,
+      postcode: address.postcode,
+      phone: address.phone
+    });
+    setCustomerFormError(null);
+    setShowCustomerModal(true);
+  };
+
+  /**
+   * Writes the edited customer and delivery details back to the order.
+   *
+   * Saved through PUT /api/orders/:id rather than the dashboard's bulk save:
+   * orders are deliberately excluded from that (see AdminDashboard), because
+   * posting the whole list deletes any order placed after the tab was opened.
+   */
+  const handleSaveCustomerDetails = async () => {
+    if (!selectedOrder) return;
+    setCustomerFormError(null);
+
+    const name = customerForm.customerName.trim();
+    const email = customerForm.customerEmail.trim().toLowerCase();
+    const addressLine1 = customerForm.addressLine1.trim();
+    const city = customerForm.city.trim();
+    const postcode = normalizeUkPostcode(customerForm.postcode);
+    const phone = normalizeUkPhone(customerForm.phone) || customerForm.phone.trim();
+
+    if (!name) {
+      setCustomerFormError('A customer name is required.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setCustomerFormError('Enter a valid email address.');
+      return;
+    }
+    if (!addressLine1) {
+      setCustomerFormError('A delivery address is required.');
+      return;
+    }
+
+    // The same UK rules checkout applies. An address corrected by hand still has
+    // to be one Royal Mail will accept, or the label cannot be bought for it.
+    const check = validateUkDelivery({ phone, postcode, country: UK_COUNTRY_NAME });
+    if (!check.valid) {
+      setCustomerFormError(check.errors[0]);
+      return;
+    }
+
+    const existingAddress: any =
+      (selectedOrder as any).shippingAddress ||
+      (selectedOrder as any).data?.shippingAddress ||
+      {};
+
+    const patch = {
+      customerName: name,
+      customerEmail: email,
+      customerPhone: phone,
+      destination: buildDestination(addressLine1, city, postcode, UK_COUNTRY_NAME),
+      // Spread the existing address so fields this form does not show are kept.
+      shippingAddress: {
+        ...existingAddress,
+        fullName: name,
+        email,
+        phone,
+        addressLine1,
+        city,
+        postcode,
+        country: UK_COUNTRY_NAME,
+        countryCode: UK_COUNTRY_CODE
+      }
+    };
+
+    setIsSavingCustomer(true);
+    try {
+      const response = await fetch(`/api/orders/${encodeURIComponent(String(selectedOrder.id))}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      const data = await response.json().catch(() => ({} as any));
+      if (!response.ok || data?.success === false) {
+        throw new Error(data?.error || 'The server rejected the change.');
+      }
+
+      // The saved record the server returns wins over the local guess: it has
+      // been through the same normalisation as every other write.
+      const updated = { ...selectedOrder, ...patch, ...(data?.order || {}) } as Order;
+      parentOnUpdateOrders(parentOrders.map(o => (o.id === selectedOrder.id ? updated : o)));
+      setSelectedOrder(updated);
+      setShowCustomerModal(false);
+      setTimelineComments(prev => ({
+        ...prev,
+        [selectedOrder.id]: [
+          { text: 'Updated the customer details and delivery address.', date: 'Just now' },
+          ...(prev[selectedOrder.id] || [])
+        ]
+      }));
+    } catch (err: any) {
+      setCustomerFormError(err?.message || 'Could not save the customer details.');
+    } finally {
+      setIsSavingCustomer(false);
+    }
+  };
 
   // Helper to detect if an order is a subscription order
   const isSubOrder = (order: Order) => {
@@ -1546,22 +1720,50 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
               <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5 space-y-4">
                 <div className="border-b border-slate-100 pb-3 flex justify-between items-center">
                   <h3 className="text-xs font-black uppercase text-slate-900 tracking-wide">Customer Details</h3>
-                  <button className="text-indigo-600 font-bold text-xs hover:underline cursor-pointer">Edit</button>
+                  <button
+                    type="button"
+                    onClick={openCustomerEditor}
+                    className="text-indigo-600 font-bold text-xs hover:underline cursor-pointer"
+                  >
+                    Edit
+                  </button>
                 </div>
 
                 <div className="space-y-3 text-xs">
                   <div>
                     <p className="font-black text-slate-900">{selectedOrder.customerName}</p>
-                    <p className="text-indigo-600 font-bold hover:underline cursor-pointer">{selectedOrder.customerEmail}</p>
+                    <a
+                      href={`mailto:${selectedOrder.customerEmail}`}
+                      className="text-indigo-600 font-bold hover:underline cursor-pointer break-all"
+                    >
+                      {selectedOrder.customerEmail}
+                    </a>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100">
-                    <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Shipping Address</p>
-                    <p className="font-bold text-slate-800">{selectedOrder.customerName}</p>
-                    <p className="text-slate-600">124 High Street, Suite 4B</p>
-                    <p className="text-slate-600">London, EC1A 1BB</p>
-                    <p className="text-slate-600">United Kingdom</p>
-                  </div>
+                  {(() => {
+                    const address = getOrderAddress(selectedOrder);
+                    const cityLine = [address.city, address.postcode].filter(Boolean).join(', ');
+                    return (
+                      <div className="pt-2 border-t border-slate-100">
+                        <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Shipping Address</p>
+                        <p className="font-bold text-slate-800">{selectedOrder.customerName}</p>
+                        {address.addressLine1 ? (
+                          <>
+                            <p className="text-slate-600">{address.addressLine1}</p>
+                            {cityLine && <p className="text-slate-600">{cityLine}</p>}
+                            <p className="text-slate-600">{address.country || UK_COUNTRY_NAME}</p>
+                          </>
+                        ) : (
+                          // Orders taken before the address was stored as separate
+                          // fields have only the joined string.
+                          <p className="text-slate-600">{selectedOrder.destination || 'No address recorded'}</p>
+                        )}
+                        {address.phone && (
+                          <p className="text-slate-500 mt-1">{address.phone}</p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="pt-2 border-t border-slate-100">
                     <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Tags</p>
@@ -1579,6 +1781,125 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             </div>
 
           </div>
+
+          {/* EDIT CUSTOMER DETAILS MODAL */}
+          {showCustomerModal && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl border border-slate-200 max-w-md w-full shadow-2xl animate-scale max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center border-b border-slate-100 p-6 pb-3">
+                  <h3 className="font-black text-slate-900 text-sm">Edit Customer Details</h3>
+                  <button
+                    onClick={() => setShowCustomerModal(false)}
+                    className="text-slate-400 hover:text-slate-600 cursor-pointer text-xs font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-4 text-xs px-6 pt-4">
+                  <div>
+                    <label className="block font-bold text-slate-700 uppercase tracking-wider text-[9.5px] mb-1">Customer Name</label>
+                    <input
+                      type="text"
+                      value={customerForm.customerName}
+                      onChange={(e) => setCustomerForm(prev => ({ ...prev, customerName: e.target.value }))}
+                      className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 uppercase tracking-wider text-[9.5px] mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={customerForm.customerEmail}
+                      onChange={(e) => setCustomerForm(prev => ({ ...prev, customerEmail: e.target.value }))}
+                      className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                    />
+                    <p className="text-[9.5px] text-slate-400 mt-1">
+                      Order emails and the customer's order history follow this address.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 uppercase tracking-wider text-[9.5px] mb-1">Address</label>
+                    <input
+                      type="text"
+                      value={customerForm.addressLine1}
+                      onChange={(e) => setCustomerForm(prev => ({ ...prev, addressLine1: e.target.value }))}
+                      placeholder="e.g. 39 Tonks Drive"
+                      className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 uppercase tracking-wider text-[9.5px] mb-1">Town / City</label>
+                      <input
+                        type="text"
+                        value={customerForm.city}
+                        onChange={(e) => setCustomerForm(prev => ({ ...prev, city: e.target.value }))}
+                        placeholder="e.g. Telford"
+                        className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-slate-700 uppercase tracking-wider text-[9.5px] mb-1">Postcode</label>
+                      <input
+                        type="text"
+                        value={customerForm.postcode}
+                        onChange={(e) => setCustomerForm(prev => ({ ...prev, postcode: e.target.value }))}
+                        placeholder="e.g. TF4 2TQ"
+                        className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500 uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 uppercase tracking-wider text-[9.5px] mb-1">Phone</label>
+                    <input
+                      type="tel"
+                      value={customerForm.phone}
+                      onChange={(e) => setCustomerForm(prev => ({ ...prev, phone: e.target.value }))}
+                      placeholder="e.g. 07700 900123"
+                      className="w-full border border-slate-200 p-2.5 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                    />
+                    <p className="text-[9.5px] text-slate-400 mt-1">
+                      Royal Mail prints this on the label and the courier uses it for delivery problems.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-[10px] text-slate-500">
+                    Delivery is United Kingdom only, so the country is fixed.
+                  </div>
+
+                  {customerFormError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5 text-[10.5px] font-bold flex items-start gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                      <span>{customerFormError}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-3 mt-6">
+                  <button
+                    onClick={() => setShowCustomerModal(false)}
+                    disabled={isSavingCustomer}
+                    className="py-2 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer transition-all shadow-3xs disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveCustomerDetails}
+                    disabled={isSavingCustomer}
+                    className="py-2 px-4 bg-[#0F172A] hover:bg-slate-800 text-white text-xs font-black rounded-lg cursor-pointer transition-all shadow-2xs uppercase tracking-widest flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isSavingCustomer && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {isSavingCustomer ? 'Saving' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* EDIT TRACKING MODAL */}
           {showTrackingModal && (
