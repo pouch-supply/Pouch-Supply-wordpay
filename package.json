@@ -15,7 +15,8 @@
     "repair:coupon-pricing": "esbuild scripts/repairCouponPricedSubscriptions.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/repairCouponPricedSubscriptions.cjs --log-level=warning && node dist/repairCouponPricedSubscriptions.cjs",
     "verify:coupon-carryover": "esbuild scripts/verifyCouponCarryover.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/verifyCouponCarryover.cjs --log-level=warning && node dist/verifyCouponCarryover.cjs",
     "verify:discount-usage": "esbuild scripts/verifyDiscountUsage.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/verifyDiscountUsage.cjs --log-level=warning && node dist/verifyDiscountUsage.cjs",
-    "verify:cancelled-never-charged": "esbuild scripts/verifyCancelledNeverCharged.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/verifyCancelledNeverCharged.cjs --log-level=warning && node dist/verifyCancelledNeverCharged.cjs"
+    "verify:cancelled-never-charged": "esbuild scripts/verifyCancelledNeverCharged.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/verifyCancelledNeverCharged.cjs --log-level=warning && node dist/verifyCancelledNeverCharged.cjs",
+    "verify:admin-session": "esbuild scripts/verifyAdminSession.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/verifyAdminSession.cjs --log-level=warning && node dist/verifyAdminSession.cjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

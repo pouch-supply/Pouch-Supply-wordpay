@@ -76,6 +76,88 @@ export function clearAdminToken(): void {
   }
 }
 
+/** Fired when an admin session is found to be over. Carries a `reason`. */
+export const ADMIN_SESSION_EXPIRED_EVENT = 'ps:admin-session-expired';
+
+/** The flag App.tsx reads to decide whether to render the dashboard. */
+const ADMIN_FLAG_KEY = 'ps_admin_authenticated';
+
+/**
+ * When the stored admin token stops being accepted, in epoch milliseconds.
+ *
+ * The token is `v1.<base64url payload>.<signature>` and the payload is plain
+ * JSON carrying `exp` — it is signed, not encrypted, so reading it here is
+ * expected. This is only used to decide what to SHOW; the server re-verifies
+ * the signature on every request and is the thing that actually says no.
+ *
+ * Returns null when there is no token or it cannot be read, which callers treat
+ * as "no usable session".
+ */
+export function adminTokenExpiresAt(): number | null {
+  const token = getAdminToken();
+  if (!token) return null;
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const exp = JSON.parse(json)?.exp;
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is there an admin session that the API would still accept?
+ *
+ * The dashboard used to ask only whether a token STRING existed. An admin who
+ * left the tab open overnight came back to a full dashboard built on an
+ * eight-hour token that had died in the small hours: the shell rendered, every
+ * /api/ call 401'd, and the result was a dashboard with panels that looked
+ * broken rather than a prompt to sign in again.
+ */
+export function hasValidAdminSession(): boolean {
+  const expiresAt = adminTokenExpiresAt();
+  return expiresAt !== null && expiresAt > Date.now();
+}
+
+/** Milliseconds until the session ends, or 0 if it already has. */
+export function adminSessionTimeRemaining(): number {
+  const expiresAt = adminTokenExpiresAt();
+  if (expiresAt === null) return 0;
+  return Math.max(0, expiresAt - Date.now());
+}
+
+/** Ends the admin session locally: the token and the view flag go together. */
+export function clearAdminSession(): void {
+  clearAdminToken();
+  try {
+    sessionStorage.removeItem(ADMIN_FLAG_KEY);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/**
+ * Announces that the admin session is over, at most once.
+ *
+ * A dashboard load fires a dozen parallel API calls, so an expired session
+ * produces a burst of 401s. Without this latch each one would raise its own
+ * event and the modal would be told to open a dozen times. The latch lifts on
+ * the next successful sign-in.
+ */
+let expiryAnnounced = false;
+
+export function notifyAdminSessionExpired(reason: 'expired' | 'rejected'): void {
+  if (expiryAnnounced || typeof window === 'undefined') return;
+  expiryAnnounced = true;
+  window.dispatchEvent(new CustomEvent(ADMIN_SESSION_EXPIRED_EVENT, { detail: { reason } }));
+}
+
+export function resetAdminSessionExpiryNotice(): void {
+  expiryAnnounced = false;
+}
+
 /** Resolves a request input to a URL string without throwing on odd inputs. */
 function urlOf(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input;
@@ -108,9 +190,16 @@ export function installAdminFetch(): void {
   const originalFetch = window.fetch.bind(window);
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const token = getAdminToken() || getCustomerToken();
+    const adminToken = getAdminToken();
+    const token = adminToken || getCustomerToken();
     if (!token || !isSameOriginApiCall(urlOf(input))) {
       return originalFetch(input, init);
+    }
+
+    // An admin token that has already run out is not worth sending, and the
+    // person needs telling now rather than after a screen of empty panels.
+    if (adminToken && !hasValidAdminSession()) {
+      notifyAdminSessionExpired('expired');
     }
 
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
@@ -120,7 +209,18 @@ export function installAdminFetch(): void {
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    return originalFetch(input, { ...init, headers });
+    const response = await originalFetch(input, { ...init, headers });
+
+    // The server is the authority on whether the token is still good — a clock
+    // difference, a redeploy with a new AUTH_SECRET or a revoked account all
+    // produce a rejection the expiry check above cannot predict. Caught here,
+    // at the one place every /api/ call passes through, rather than in each of
+    // the dozens of call sites that would otherwise have to handle it.
+    if (adminToken && (response.status === 401 || response.status === 403)) {
+      notifyAdminSessionExpired('rejected');
+    }
+
+    return response;
   };
 }
 

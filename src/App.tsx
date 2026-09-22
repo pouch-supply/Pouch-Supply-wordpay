@@ -8,7 +8,19 @@ import {
 } from './initialData';
 import { DEFAULT_DEV_SETTINGS } from './data/initialDevSettings';
 import { applyDevSettingsToDOM } from './utils/devModeInjector';
-import { getAdminToken, clearAdminToken, getCustomerToken, clearCustomerToken } from './lib/adminApi';
+import {
+  getAdminToken,
+  clearAdminToken,
+  getCustomerToken,
+  clearCustomerToken,
+  hasValidAdminSession,
+  adminSessionTimeRemaining,
+  clearAdminSession,
+  notifyAdminSessionExpired,
+  resetAdminSessionExpiryNotice,
+  ADMIN_SESSION_EXPIRED_EVENT
+} from './lib/adminApi';
+import AdminSessionExpiredModal from './components/admin/AdminSessionExpiredModal';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import ProductsGrid from './components/ProductsGrid';
@@ -699,7 +711,28 @@ export default function App() {
     // The signed token is the real credential; this flag only decides which view
     // renders. Without a token the dashboard would render but every admin call
     // would 401, so both must be present to count as signed in.
-    return sessionStorage.getItem('ps_admin_authenticated') === 'true' && Boolean(getAdminToken());
+    //
+    // The token's EXPIRY is checked too, not just its presence. A tab left open
+    // overnight still holds the string for an eight-hour token that died hours
+    // ago; rendering the dashboard from that produced the empty panels and
+    // failing saves this now avoids.
+    return sessionStorage.getItem('ps_admin_authenticated') === 'true' && hasValidAdminSession();
+  });
+  /**
+   * Set when the admin session ends, which puts the blocking notice on screen.
+   *
+   * Seeded on first render for the case this was reported from: the tab was
+   * signed in yesterday (`ps_admin_authenticated` is still 'true') and the token
+   * has since expired. The sign-in screen alone would leave the admin guessing
+   * why they were thrown out, so the notice is shown over it and says so.
+   */
+  const [adminSessionExpired, setAdminSessionExpired] = useState<'expired' | 'rejected' | null>(() => {
+    try {
+      const wasSignedIn = sessionStorage.getItem('ps_admin_authenticated') === 'true';
+      return wasSignedIn && !hasValidAdminSession() ? 'expired' : null;
+    } catch {
+      return null;
+    }
   });
   const [cartOpen, setCartOpen] = useState<boolean>(false);
   const [customerDrawerOpen, setCustomerDrawerOpen] = useState<boolean>(false);
@@ -711,6 +744,61 @@ export default function App() {
   const [checkoutDiscount, setCheckoutDiscount] = useState<Discount | null>(null);
   const [checkoutTotal, setCheckoutTotal] = useState<number>(0);
   const [isWithdrawalOpen, setIsWithdrawalOpen] = useState<boolean>(false);
+
+  /**
+   * Watches the admin session and says so, out loud, the moment it ends.
+   *
+   * Three things can end it, and all three land here:
+   *   - the token's own expiry passing while the tab sits open (the timer);
+   *   - an /api/ call coming back 401/403 (the fetch wrapper raises the event);
+   *   - the tab being woken after the laptop was asleep, when no timer fired
+   *     (the visibility and focus re-check).
+   *
+   * Without this the dashboard simply kept rendering against a dead token:
+   * panels came up empty, saves failed, and nothing said why.
+   */
+  useEffect(() => {
+    if (!isAdminAuthenticated) return;
+
+    const onExpired = (event: Event) => {
+      const reason = (event as CustomEvent)?.detail?.reason;
+      setAdminSessionExpired(reason === 'rejected' ? 'rejected' : 'expired');
+    };
+    window.addEventListener(ADMIN_SESSION_EXPIRED_EVENT, onExpired);
+
+    // Re-checked rather than trusted: a sleeping machine does not run timers, so
+    // an admin who opens the lid next morning would otherwise see nothing until
+    // they clicked something.
+    const recheck = () => {
+      if (!hasValidAdminSession()) notifyAdminSessionExpired('expired');
+    };
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('focus', recheck);
+
+    // setTimeout is clamped to ~24.8 days, comfortably beyond the 8-hour token,
+    // so a single timer is enough. +1s so it fires just after the expiry.
+    const remaining = adminSessionTimeRemaining();
+    const timer = window.setTimeout(recheck, remaining + 1000);
+
+    // Covers the case where the session was already dead when this mounted.
+    recheck();
+
+    return () => {
+      window.removeEventListener(ADMIN_SESSION_EXPIRED_EVENT, onExpired);
+      document.removeEventListener('visibilitychange', recheck);
+      window.removeEventListener('focus', recheck);
+      window.clearTimeout(timer);
+    };
+  }, [isAdminAuthenticated]);
+
+  /** Ends the admin session locally and returns to the sign-in screen. */
+  const signOutExpiredAdmin = () => {
+    clearAdminSession();
+    resetAdminSessionExpiryNotice();
+    setAdminSessionExpired(null);
+    setIsAdminAuthenticated(false);
+    setIsAdminDirty(false);
+  };
 
   // Unified SPA navigation helper mapping state shifts to matching browser URLs
   const navigateToTab = (tab: string, productId?: string, collectionId?: string) => {
@@ -2027,6 +2115,10 @@ export default function App() {
           !isAdminAuthenticated ? (
             <AdminLogin
               onLoginSuccess={() => {
+                // A fresh token: re-arm the one-shot expiry notice so the next
+                // expiry is announced too, and clear any notice still on screen.
+                resetAdminSessionExpiryNotice();
+                setAdminSessionExpired(null);
                 setIsAdminAuthenticated(true);
                 sessionStorage.setItem('ps_admin_authenticated', 'true');
               }}
@@ -2086,6 +2178,8 @@ export default function App() {
                 setIsAdminAuthenticated(false);
                 sessionStorage.removeItem('ps_admin_authenticated');
                 clearAdminToken();
+                resetAdminSessionExpiryNotice();
+                setAdminSessionExpired(null);
                 setIsAdminActive(false);
               }}
             />
@@ -3099,6 +3193,15 @@ export default function App() {
         orders={orders}
         onConfirmWithdrawal={handleConfirmWithdrawal}
       />
+
+      {/* Shown over the dashboard once the admin session is no longer accepted.
+          Rendered last so it sits above every other panel and modal. */}
+      {adminSessionExpired && isAdminActive && (
+        <AdminSessionExpiredModal
+          reason={adminSessionExpired}
+          onSignInAgain={signOutExpiredAdmin}
+        />
+      )}
 
       {/* Interactive Simulated Email Dispatch Toast */}
       <AnimatePresence>
