@@ -7432,9 +7432,13 @@ var init_royalMailService = __esm({
 // backend/services/subscriptionCron.ts
 var subscriptionCron_exports = {};
 __export(subscriptionCron_exports, {
+  CHARGEABLE_STATUS: () => CHARGEABLE_STATUS,
   addBillingInterval: () => addBillingInterval,
   buildRenewalOrderRef: () => buildRenewalOrderRef,
   calculateNextBillingDate: () => calculateNextBillingDate,
+  currentSubscriptionStatus: () => currentSubscriptionStatus,
+  effectiveSubscriptionStatus: () => effectiveSubscriptionStatus,
+  isChargeableStatus: () => isChargeableStatus,
   nextBillingDateAfterCharge: () => nextBillingDateAfterCharge,
   normalizeBillingInterval: () => normalizeBillingInterval,
   processDueSubscriptions: () => processDueSubscriptions,
@@ -7496,12 +7500,52 @@ function nextBillingDateAfterCharge(interval, scheduledFor, now = /* @__PURE__ *
   }
   return next;
 }
+function isChargeableStatus(status) {
+  return String(status ?? "").trim().toLowerCase() === CHARGEABLE_STATUS;
+}
+function effectiveSubscriptionStatus(a, b) {
+  const sa = String(a ?? "").trim().toLowerCase();
+  const sb = String(b ?? "").trim().toLowerCase();
+  if (!sa) return sb;
+  if (!sb) return sa;
+  if (sa === sb) return sa;
+  if (!isChargeableStatus(sa)) return sa;
+  if (!isChargeableStatus(sb)) return sb;
+  return sa;
+}
+async function currentSubscriptionStatus(subId) {
+  let fromPrisma;
+  let fromStore;
+  let readAnything = false;
+  try {
+    const row = await prisma.subscription.findUnique({
+      where: { id: String(subId) },
+      select: { status: true }
+    });
+    if (row) {
+      fromPrisma = row.status;
+      readAnything = true;
+    }
+  } catch (_e) {
+  }
+  try {
+    const stored = await fetchResource("subscriptions") || [];
+    const row = stored.find((s) => String(s?.id) === String(subId));
+    if (row) {
+      fromStore = row.status;
+      readAnything = true;
+    }
+  } catch (_e) {
+  }
+  if (!readAnything) return "unverifiable";
+  return effectiveSubscriptionStatus(fromStore, fromPrisma) || "unverifiable";
+}
 async function loadAllSubscriptions() {
   const byId = /* @__PURE__ */ new Map();
   const isConnected = await getDb().catch(() => false);
   if (isConnected) {
     try {
-      const rows = await prisma.subscription.findMany({ where: { status: "active" } });
+      const rows = await prisma.subscription.findMany();
       for (const row of rows || []) {
         byId.set(String(row.id), row);
       }
@@ -7513,7 +7557,10 @@ async function loadAllSubscriptions() {
     for (const row of stored) {
       if (!row || !row.id) continue;
       const key = String(row.id);
-      byId.set(key, { ...row || {}, ...byId.get(key) || {} });
+      const fromPrisma = byId.get(key);
+      const merged = { ...row || {}, ...fromPrisma || {} };
+      merged.status = effectiveSubscriptionStatus(row?.status, fromPrisma?.status);
+      byId.set(key, merged);
     }
   } catch (_e) {
   }
@@ -7660,6 +7707,18 @@ async function processDueSubscriptions() {
         continue;
       }
       const claimedNextBilling = nextBillingDateAfterCharge(interval, periodStart, now);
+      const liveStatus = await currentSubscriptionStatus(subId);
+      if (!isChargeableStatus(liveStatus)) {
+        console.warn(
+          `[Subscription Worker] Sub ${subId} is "${liveStatus}" as of now \u2014 NOT charging. A cancellation landed after this run started.`
+        );
+        results.push({
+          id: subId,
+          status: "skipped",
+          reason: `Cancelled before the charge was sent (status "${liveStatus}")`
+        });
+        continue;
+      }
       try {
         const chargeResult = await chargeRecurringSubscription({
           tokenHref,
@@ -7848,11 +7907,31 @@ async function processDueSubscriptions() {
     isProcessing = false;
   }
 }
+function workerShouldRun() {
+  const explicit = String(process.env.SUBSCRIPTION_WORKER ?? "").trim().toLowerCase();
+  if (explicit === "1" || explicit === "true") {
+    return { run: true, reason: "SUBSCRIPTION_WORKER is set" };
+  }
+  if (explicit === "0" || explicit === "false") {
+    return { run: false, reason: "SUBSCRIPTION_WORKER is disabled" };
+  }
+  const serverless = Boolean(
+    process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.FUNCTIONS_WORKER_RUNTIME
+  );
+  return serverless ? { run: false, reason: "serverless runtime \u2014 the scheduled cron ping is the trigger" } : { run: true, reason: "long-running server" };
+}
 function startSubscriptionRenewalWorker(intervalMs = 5 * 60 * 1e3) {
   if (cronIntervalHandle) {
     clearInterval(cronIntervalHandle);
   }
-  console.log(`[Subscription Worker] Background worker initialized (interval: ${intervalMs / 1e3}s).`);
+  const { run, reason } = workerShouldRun();
+  if (!run) {
+    console.log(
+      `[Subscription Worker] In-process timer NOT started (${reason}). Renewals run when /api/subscriptions/cron is called.`
+    );
+    return;
+  }
+  console.log(`[Subscription Worker] Background worker initialized (interval: ${intervalMs / 1e3}s, ${reason}).`);
   setTimeout(() => {
     processDueSubscriptions().catch((err) => console.error("[Subscription Worker] Startup run error:", err));
   }, 3e3);
@@ -7860,7 +7939,7 @@ function startSubscriptionRenewalWorker(intervalMs = 5 * 60 * 1e3) {
     processDueSubscriptions().catch((err) => console.error("[Subscription Worker] Periodic run error:", err));
   }, intervalMs);
 }
-var PRISMA_SUBSCRIPTION_FIELDS, MAX_CONSECUTIVE_FAILURES, RUN_TIME_BUDGET_MS, isProcessing, cronIntervalHandle;
+var CHARGEABLE_STATUS, PRISMA_SUBSCRIPTION_FIELDS, MAX_CONSECUTIVE_FAILURES, RUN_TIME_BUDGET_MS, isProcessing, cronIntervalHandle;
 var init_subscriptionCron = __esm({
   "backend/services/subscriptionCron.ts"() {
     init_prisma();
@@ -7868,6 +7947,7 @@ var init_subscriptionCron = __esm({
     init_worldpaySubscription();
     init_subscriptionBox();
     init_subscriptionPricingService();
+    CHARGEABLE_STATUS = "active";
     PRISMA_SUBSCRIPTION_FIELDS = /* @__PURE__ */ new Set([
       "customerId",
       "customerEmail",
@@ -11437,7 +11517,6 @@ init_klaviyoService();
 init_serverDb();
 init_worldpaySubscription();
 init_subscriptionCron();
-init_subscriptionBox();
 import { Router as Router9 } from "express";
 import crypto6 from "crypto";
 var router11 = Router9();
@@ -11973,191 +12052,6 @@ router11.post(
   }
 );
 router11.post(
-  "/charge",
-  // Charges the stored card for a subscription id. Was unauthenticated.
-  requireAdmin,
-  async (req, res) => {
-    try {
-      const { subscriptionId } = req.body;
-      if (!subscriptionId) {
-        return res.status(400).json({
-          success: false,
-          message: "subscriptionId is required"
-        });
-      }
-      let subscription = null;
-      try {
-        subscription = await prisma.subscription.findUnique({
-          where: { id: subscriptionId }
-        });
-      } catch (_e) {
-      }
-      if (!subscription) {
-        try {
-          const stored = await fetchResource("subscriptions") || [];
-          subscription = stored.find((s) => String(s.id) === String(subscriptionId));
-        } catch (_e) {
-        }
-      }
-      if (!subscription) {
-        return res.status(404).json({
-          success: false,
-          message: "Subscription not found"
-        });
-      }
-      if (subscription.status !== "active") {
-        return res.status(400).json({
-          success: false,
-          message: `Subscription is ${subscription.status}.`
-        });
-      }
-      if (!canChargeRecurring(subscription)) {
-        return res.status(400).json({
-          success: false,
-          message: "This subscription has no Worldpay stored credential, so no recurring payment can be taken. Worldpay must store the card on the first payment and deliver its token href to the tokenCreated webhook."
-        });
-      }
-      const newOrderId = `PS${Math.floor(1e4 + Math.random() * 9e4)}`;
-      const transactionReference = renewalTransactionReference(newOrderId);
-      const { amount: chargeAmount } = resolveEffectiveAmount(subscription, /* @__PURE__ */ new Date());
-      const result = await chargeRecurringSubscription({
-        tokenHref: subscription.worldpayTokenHref,
-        recurringHref: subscription.worldpayRecurringHref,
-        transactionReference,
-        amount: chargeAmount,
-        currency: subscription.currency || "GBP",
-        schemeReference: subscription.worldpaySchemeReference,
-        previousTransactionId: subscription.worldpayTransactionId,
-        customerEmail: subscription.customerEmail
-      });
-      const nextBillingDate = nextBillingDateAfterCharge(
-        subscription.billingInterval,
-        subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null
-      );
-      const updatePayload = {
-        lastPaymentStatus: "authorized",
-        lastPaymentId: result?.id || transactionReference,
-        lastPaymentAt: /* @__PURE__ */ new Date(),
-        // Worldpay can rotate the stored card token on a charge; keeping the
-        // returned one means the next renewal presents the current card.
-        worldpayTokenHref: result?.tokenHref || subscription.worldpayTokenHref || null,
-        nextBillingDate,
-        failedPaymentCount: 0
-      };
-      let updated = null;
-      try {
-        updated = await prisma.subscription.update({
-          where: { id: subscription.id },
-          data: updatePayload
-        });
-      } catch (_e) {
-        updated = { ...subscription, ...updatePayload };
-      }
-      try {
-        const stored = await fetchResource("subscriptions") || [];
-        const updatedList = stored.map(
-          (s) => String(s.id) === String(subscription.id) ? { ...s, ...updatePayload } : s
-        );
-        await saveResource("subscriptions", updatedList);
-      } catch (_e) {
-      }
-      const shippingAmount = typeof subscription.shippingFee === "number" ? subscription.shippingFee : typeof subscription.shippingCost === "number" ? subscription.shippingCost : typeof subscription.shippingAmount === "number" ? subscription.shippingAmount : typeof subscription.deliveryCost === "number" ? subscription.deliveryCost : chargeAmount >= 40 ? 0 : 2.99;
-      const itemSubtotal = Number(Math.max(0, chargeAmount - shippingAmount).toFixed(2)) || chargeAmount;
-      const orderItems = buildRenewalOrderItems(subscription, itemSubtotal, planTitleFromSubscription(subscription));
-      const newOrderData = {
-        id: newOrderId,
-        orderId: newOrderId,
-        customerName: subscription.customerName || "Valued Subscriber",
-        customerEmail: subscription.customerEmail,
-        destination: subscription.shippingAddress || subscription.destination || "United Kingdom",
-        items: orderItems,
-        // The chosen products travel with the renewal so the order detail view
-        // shows the real box contents rather than re-parsing the plan title.
-        subscriptionItems: extractBoxItems(subscription),
-        subscriptionPlan: planTitleFromSubscription(subscription),
-        total: chargeAmount,
-        subtotal: itemSubtotal,
-        shippingCost: shippingAmount,
-        deliveryCost: shippingAmount,
-        storeCreditApplied: 0,
-        discountApplied: null,
-        status: "Processing",
-        fulfillmentStatus: "Unfulfilled",
-        paymentStatus: "Paid",
-        paymentMethod: "Worldpay Recurring Subscription",
-        worldpayTxId: result?.id || transactionReference,
-        // Always the gateway REFERENCE — this is what an inbound Worldpay
-        // webhook carries as transactionReference, and therefore the only field
-        // that lets it match this order instead of inventing a new one.
-        gatewayTxId: transactionReference,
-        worldpayAuthCode: result?.authCode || "AUTH-OK-MIT",
-        gatewayAuthCode: result?.authCode || "AUTH-OK-MIT",
-        cardBrand: "Worldpay Stored Card",
-        deliveryMethod: subscription.deliveryMethod || "Royal Mail Tracked 24/48",
-        carrier: "Royal Mail",
-        tags: ["Storefront", "Subscription Order", "Worldpay Recurring"],
-        date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        subscriptionId: subscription.id,
-        isSubscription: true,
-        data: {
-          subscriptionId: subscription.id,
-          // The reference Worldpay booked this payment under: this order's id
-          // under the SUB-ORD- prefix, matching the renewal worker.
-          transactionReference,
-          schemeReference: result?.schemeReference || subscription.worldpaySchemeReference,
-          paymentMethod: "Worldpay Access MIT",
-          recurringRenewal: true,
-          shippingCost: shippingAmount,
-          subtotal: itemSubtotal
-        },
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      try {
-        const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
-        await saveSingleOrder2(newOrderData);
-      } catch (_ordErr) {
-      }
-      return res.json({
-        success: true,
-        transactionReference,
-        worldpayResponse: result,
-        subscription: updated
-      });
-    } catch (error) {
-      console.error("[Subscription Charge]", error);
-      const subscriptionId = req.body?.subscriptionId;
-      if (subscriptionId) {
-        const retryDate = /* @__PURE__ */ new Date();
-        retryDate.setDate(retryDate.getDate() + 1);
-        const failUpdate = {
-          lastPaymentStatus: "failed",
-          failedPaymentCount: { increment: 1 },
-          nextBillingDate: retryDate
-        };
-        try {
-          await prisma.subscription.update({
-            where: { id: subscriptionId },
-            data: failUpdate
-          });
-        } catch (_e) {
-        }
-        try {
-          const stored = await fetchResource("subscriptions") || [];
-          const updatedList = stored.map(
-            (s) => String(s.id) === String(subscriptionId) ? { ...s, lastPaymentStatus: "failed", failedPaymentCount: (s.failedPaymentCount || 0) + 1, nextBillingDate: retryDate } : s
-          );
-          await saveResource("subscriptions", updatedList);
-        } catch (_e) {
-        }
-      }
-      return res.status(402).json({
-        success: false,
-        message: error.message || "Recurring payment failed"
-      });
-    }
-  }
-);
-router11.post(
   "/cancel",
   async (req, res) => {
     try {
@@ -12172,13 +12066,26 @@ router11.post(
       const cancellationTime = (/* @__PURE__ */ new Date()).toISOString();
       const cancelReason = reason || "Customer cancelled subscription plan via Account portal";
       let subscription = null;
+      let prismaCancelled = false;
+      let storeCancelled = false;
       if (subscriptionId) {
         try {
           subscription = await prisma.subscription.update({
             where: { id: subscriptionId },
-            data: { status: "cancelled" }
+            data: {
+              status: "cancelled",
+              // Written here too, not just to the JSON store: these are real
+              // columns, and leaving them null made the typed row look like a
+              // plan that had never been cancelled at all.
+              cancelledAt: new Date(cancellationTime),
+              cancellationReason: cancelReason
+            }
           });
-        } catch (_e) {
+          prismaCancelled = true;
+        } catch (err) {
+          console.error(
+            `[Subscription Cancel] Neon write FAILED for ${subscriptionId}: ${err?.message}. The JSON store write below is now the only record of this cancellation.`
+          );
         }
       }
       try {
@@ -12199,11 +12106,29 @@ router11.post(
         });
         if (modified) {
           await saveResource("subscriptions", updatedList);
+          storeCancelled = true;
           subscription = updatedList.find(
             (s) => subscriptionId ? String(s.id) === String(subscriptionId) : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
           ) || subscription;
         }
-      } catch (_e) {
+      } catch (err) {
+        console.error(
+          `[Subscription Cancel] Store write FAILED for ${subscriptionId || emailClean}: ${err?.message}`
+        );
+      }
+      if (!prismaCancelled && !storeCancelled) {
+        console.error(
+          `[Subscription Cancel] NOTHING was cancelled for ${subscriptionId || emailClean}. The plan is still live and will be charged again.`
+        );
+        return res.status(500).json({
+          success: false,
+          message: "The cancellation could not be saved, so the plan is still active. Please try again \u2014 if it keeps failing, contact support before your next billing date."
+        });
+      }
+      if (!prismaCancelled || !storeCancelled) {
+        console.warn(
+          `[Subscription Cancel] Partial write for ${subscriptionId || emailClean}: Neon=${prismaCancelled ? "cancelled" : "NOT updated"}, store=${storeCancelled ? "cancelled" : "NOT updated"}. No further charge will be taken, but the two stores disagree.`
+        );
       }
       let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);
       const stillSubscribed = matchedEmail ? await customerHasOtherLiveSubscription(matchedEmail, subscriptionId || subscription?.id) : false;

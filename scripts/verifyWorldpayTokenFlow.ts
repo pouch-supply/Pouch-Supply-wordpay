@@ -93,6 +93,8 @@ async function main() {
   process.env.WORLDPAY_ENVIRONMENT = 'live';
   process.env.WORLDPAY_TOKEN_OPT_IN = 'Silent';
   process.env.NODE_ENV = 'test';
+  // The renewal worker is driven through its cron endpoint, which authenticates.
+  process.env.CRON_SECRET = 'harness-cron-secret';
 
   // No outbound side effects from a test run.
   process.env.GMAIL_APP_PASSWORD = '';
@@ -188,6 +190,33 @@ async function main() {
     return subs.find((s: any) => String(s.sourceOrderId) === String(orderId));
   };
 
+  /**
+   * Bills a plan the way production does: make it due, then let the renewal
+   * worker take it.
+   *
+   * The harness used to POST /api/subscriptions/charge. That endpoint is gone —
+   * it was the one charge path with no duplicate protection, and driving the
+   * real worker is what the live schedule actually does anyway.
+   */
+  const renewNow = async (subscriptionId: string) => {
+    const subs: any[] = (await fetchResource('subscriptions')) || [];
+    const due = new Date(Date.now() - 60 * 1000).toISOString();
+    await saveResource(
+      'subscriptions',
+      subs.map((s: any) => (String(s.id) === String(subscriptionId) ? { ...s, nextBillingDate: due } : s))
+    );
+
+    const res = await realFetch(`${base}/api/subscriptions/cron`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.CRON_SECRET}`
+      },
+      body: '{}'
+    });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+
   const checkoutBody = (orderId: string, email: string) => ({
     orderId,
     amount: 25,
@@ -266,8 +295,8 @@ async function main() {
 
     console.log('\n=== 3. The renewal presents the stored card ===');
     calls.authorizations.length = 0;
-    const charge = await post('/api/subscriptions/charge', { subscriptionId: afterWebhook?.id });
-    check('recurring charge succeeded', charge.body?.success === true, JSON.stringify(charge.body).slice(0, 200));
+    const charge = await renewNow(afterWebhook?.id);
+    check('recurring charge succeeded', charge.body?.succeeded === 1, JSON.stringify(charge.body).slice(0, 200));
 
     const mit = calls.authorizations[0];
     check('a charge was actually sent to Worldpay', Boolean(mit));
@@ -508,8 +537,8 @@ async function main() {
     scenario.tokens[EMAIL_7] = [];
     scenario.rotatedToken = TOKEN_G;
     calls.authorizations.length = 0;
-    const rotate = await post('/api/subscriptions/charge', { subscriptionId: fromTokensApi?.id });
-    check('the renewal succeeded', rotate.body?.success === true, JSON.stringify(rotate.body).slice(0, 160));
+    const rotate = await renewNow(fromTokensApi?.id);
+    check('the renewal succeeded', rotate.body?.succeeded === 1, JSON.stringify(rotate.body).slice(0, 160));
     check('it presented the card it had', calls.authorizations[0]?.instruction?.paymentInstrument?.href === TOKEN_D);
 
     const rotated = await subscriptionFor(ORDER_7);

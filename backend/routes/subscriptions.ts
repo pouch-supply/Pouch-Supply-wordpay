@@ -5,11 +5,10 @@ import { prisma } from "../../src/lib/prisma";
 import { upsertSubscriptionRow } from "../../src/lib/subscriptionRow";
 import { requireAdmin, requireCronOrAdmin, requireCustomer, mayActOnCustomer, AdminRequest } from "../middleware/requireAdmin";
 import { getPlanCatalogue, findPlan } from "../services/planCatalogue";
-import { repriceForPlan, clearedPendingFields, resolveEffectiveAmount } from "../services/subscriptionPricingService";
+import { repriceForPlan, clearedPendingFields } from "../services/subscriptionPricingService";
 import { trackSubscriptionStarted } from "../services/klaviyoService";
 import { fetchResource, saveResource } from "../../serverDb";
 import {
-  chargeRecurringSubscription,
   extractRecurringAuthorizationHref,
   extractSchemeReference,
   extractTokenHref,
@@ -19,11 +18,8 @@ import {
 import {
   processDueSubscriptions,
   calculateNextBillingDate,
-  nextBillingDateAfterCharge,
-  normalizeBillingInterval,
-  renewalTransactionReference
+  normalizeBillingInterval
 } from "../services/subscriptionCron";
-import { buildRenewalOrderItems, extractBoxItems, planTitleFromSubscription } from "../services/subscriptionBox";
 
 const router = Router();
 
@@ -806,238 +802,28 @@ router.post(
 );
 
 /**
- * Charge an existing subscription.
+ * There is deliberately NO endpoint for charging a subscription on demand.
+ *
+ * `POST /api/subscriptions/charge` used to take the stored card immediately for
+ * any subscription id, whether or not anything was due. It was the one charge
+ * path with none of the protections the renewal worker has:
+ *
+ *   - it minted a RANDOM order id, so the charge was anchored to no billing
+ *     period and `renewalOrderExists` could never recognise it as a repeat;
+ *   - it ran no duplicate check at all, so calling it twice took the money
+ *     twice, and calling it on the day a renewal ran took it a second time;
+ *   - it advanced `nextBillingDate` before writing the order, and the order
+ *     write was wrapped in an empty catch — so a failure there left the card
+ *     charged, the schedule moved on and NO order to show for the money.
+ *
+ * Recurring money is now only ever taken by the renewal worker, from the
+ * subscription's own due date: see `processDueSubscriptions`. Its order id is
+ * derived from the billing period, so every retry of a period produces the same
+ * id and the same Worldpay reference, the order is checked for existence before
+ * the gateway is called, and Worldpay refuses a reference it has already seen.
+ *
+ * To bill a plan early, move its `nextBillingDate` and let the worker take it.
  */
-router.post(
-  "/charge",
-  // Charges the stored card for a subscription id. Was unauthenticated.
-  requireAdmin,
-  async (req: Request, res: Response) => {
-    try {
-      const { subscriptionId } = req.body;
-
-      if (!subscriptionId) {
-        return res.status(400).json({
-          success: false,
-          message: "subscriptionId is required",
-        });
-      }
-
-      let subscription: any = null;
-
-      try {
-        subscription = await prisma.subscription.findUnique({
-          where: { id: subscriptionId },
-        });
-      } catch (_e) {}
-
-      if (!subscription) {
-        try {
-          const stored: any[] = (await fetchResource("subscriptions")) || [];
-          subscription = stored.find((s: any) => String(s.id) === String(subscriptionId));
-        } catch (_e) {}
-      }
-
-      if (!subscription) {
-        return res.status(404).json({
-          success: false,
-          message: "Subscription not found",
-        });
-      }
-
-      if (subscription.status !== "active") {
-        return res.status(400).json({
-          success: false,
-          message: `Subscription is ${subscription.status}.`,
-        });
-      }
-
-      if (!canChargeRecurring(subscription)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "This subscription has no Worldpay stored credential, so no recurring payment can be taken. " +
-            "Worldpay must store the card on the first payment and deliver its token href to the " +
-            "tokenCreated webhook.",
-        });
-      }
-
-      // The order this charge will create, decided BEFORE the gateway call so
-      // the reference can name it. The reference used to be a random
-      // `SUB-<timestamp>-<hex>` minted here while the order id was generated
-      // further down, after the charge — which left a payment in the Worldpay
-      // dashboard with nothing on it pointing at the order it paid for.
-      const newOrderId = `PS${Math.floor(10000 + Math.random() * 90000)}`;
-      const transactionReference = renewalTransactionReference(newOrderId);
-
-      // Same rule as the renewal worker: a scheduled price is charged only once
-      // its notice period has elapsed, so a manual charge cannot be used to
-      // apply a price rise early.
-      const { amount: chargeAmount } = resolveEffectiveAmount(subscription, new Date());
-      const result = await chargeRecurringSubscription({
-        tokenHref: subscription.worldpayTokenHref,
-        recurringHref: subscription.worldpayRecurringHref,
-        transactionReference,
-        amount: chargeAmount,
-        currency: subscription.currency || "GBP",
-        schemeReference: subscription.worldpaySchemeReference,
-        previousTransactionId: subscription.worldpayTransactionId,
-        customerEmail: subscription.customerEmail,
-      });
-
-      // Shared scheduling helper, anchored to the date that was due.
-      const nextBillingDate = nextBillingDateAfterCharge(
-        subscription.billingInterval,
-        subscription.nextBillingDate ? new Date(subscription.nextBillingDate) : null
-      );
-
-      const updatePayload = {
-        lastPaymentStatus: "authorized",
-        lastPaymentId: result?.id || transactionReference,
-        lastPaymentAt: new Date(),
-        // Worldpay can rotate the stored card token on a charge; keeping the
-        // returned one means the next renewal presents the current card.
-        worldpayTokenHref: result?.tokenHref || subscription.worldpayTokenHref || null,
-        nextBillingDate,
-        failedPaymentCount: 0,
-      };
-
-      let updated: any = null;
-
-      try {
-        updated = await prisma.subscription.update({
-          where: { id: subscription.id },
-          data: updatePayload,
-        });
-      } catch (_e) {
-        updated = { ...subscription, ...updatePayload };
-      }
-
-      try {
-        const stored: any[] = (await fetchResource("subscriptions")) || [];
-        const updatedList = stored.map((s: any) =>
-          String(s.id) === String(subscription.id) ? { ...s, ...updatePayload } : s
-        );
-        await saveResource("subscriptions", updatedList);
-      } catch (_e) {}
-
-      // Calculate shipping cost and item subtotal
-      const shippingAmount = typeof subscription.shippingFee === 'number'
-        ? subscription.shippingFee
-        : (typeof subscription.shippingCost === 'number'
-            ? subscription.shippingCost
-            : (typeof subscription.shippingAmount === 'number'
-                ? subscription.shippingAmount
-                : (typeof subscription.deliveryCost === 'number'
-                    ? subscription.deliveryCost
-                    : (chargeAmount >= 40 ? 0 : 2.99))));
-
-      const itemSubtotal = Number(Math.max(0, chargeAmount - shippingAmount).toFixed(2)) || chargeAmount;
-
-      // Create recurring order record in database, under the id the gateway
-      // reference above was built from.
-      const orderItems = buildRenewalOrderItems(subscription, itemSubtotal, planTitleFromSubscription(subscription));
-
-      const newOrderData = {
-        id: newOrderId,
-        orderId: newOrderId,
-        customerName: subscription.customerName || 'Valued Subscriber',
-        customerEmail: subscription.customerEmail,
-        destination: subscription.shippingAddress || subscription.destination || 'United Kingdom',
-        items: orderItems,
-        // The chosen products travel with the renewal so the order detail view
-        // shows the real box contents rather than re-parsing the plan title.
-        subscriptionItems: extractBoxItems(subscription),
-        subscriptionPlan: planTitleFromSubscription(subscription),
-        total: chargeAmount,
-        subtotal: itemSubtotal,
-        shippingCost: shippingAmount,
-        deliveryCost: shippingAmount,
-        storeCreditApplied: 0,
-        discountApplied: null,
-        status: 'Processing',
-        fulfillmentStatus: 'Unfulfilled',
-        paymentStatus: 'Paid',
-        paymentMethod: 'Worldpay Recurring Subscription',
-        worldpayTxId: result?.id || transactionReference,
-        // Always the gateway REFERENCE — this is what an inbound Worldpay
-        // webhook carries as transactionReference, and therefore the only field
-        // that lets it match this order instead of inventing a new one.
-        gatewayTxId: transactionReference,
-        worldpayAuthCode: result?.authCode || 'AUTH-OK-MIT',
-        gatewayAuthCode: result?.authCode || 'AUTH-OK-MIT',
-        cardBrand: 'Worldpay Stored Card',
-        deliveryMethod: subscription.deliveryMethod || 'Royal Mail Tracked 24/48',
-        carrier: 'Royal Mail',
-        tags: ['Storefront', 'Subscription Order', 'Worldpay Recurring'],
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        subscriptionId: subscription.id,
-        isSubscription: true,
-        data: {
-          subscriptionId: subscription.id,
-          // The reference Worldpay booked this payment under: this order's id
-          // under the SUB-ORD- prefix, matching the renewal worker.
-          transactionReference,
-          schemeReference: result?.schemeReference || subscription.worldpaySchemeReference,
-          paymentMethod: 'Worldpay Access MIT',
-          recurringRenewal: true,
-          shippingCost: shippingAmount,
-          subtotal: itemSubtotal
-        },
-        createdAt: new Date().toISOString()
-      };
-
-      try {
-        const { saveSingleOrder } = await import('./orders');
-        await saveSingleOrder(newOrderData);
-      } catch (_ordErr) {}
-
-      return res.json({
-        success: true,
-        transactionReference,
-        worldpayResponse: result,
-        subscription: updated,
-      });
-    } catch (error: any) {
-      console.error("[Subscription Charge]", error);
-
-      const subscriptionId = req.body?.subscriptionId;
-
-      if (subscriptionId) {
-        const retryDate = new Date();
-        retryDate.setDate(retryDate.getDate() + 1);
-
-        const failUpdate = {
-          lastPaymentStatus: "failed",
-          failedPaymentCount: { increment: 1 },
-          nextBillingDate: retryDate,
-        };
-
-        try {
-          await prisma.subscription.update({
-            where: { id: subscriptionId },
-            data: failUpdate,
-          });
-        } catch (_e) {}
-
-        try {
-          const stored: any[] = (await fetchResource("subscriptions")) || [];
-          const updatedList = stored.map((s: any) =>
-            String(s.id) === String(subscriptionId)
-              ? { ...s, lastPaymentStatus: "failed", failedPaymentCount: (s.failedPaymentCount || 0) + 1, nextBillingDate: retryDate }
-              : s
-          );
-          await saveResource("subscriptions", updatedList);
-        } catch (_e) {}
-      }
-
-      return res.status(402).json({
-        success: false,
-        message: error.message || "Recurring payment failed",
-      });
-    }
-  }
-);
 
 /**
  * Cancel subscription.
@@ -1061,14 +847,35 @@ router.post(
 
       let subscription: any = null;
 
+      // Whether the cancellation actually reached each store. Both writes used
+      // to be swallowed, so a cancellation that saved nowhere still answered
+      // "success" to the customer — and a cancellation that saved to only one
+      // store left the renewal worker reading the other one's stale "active"
+      // and charging the card again. Tracked so neither can pass silently.
+      let prismaCancelled = false;
+      let storeCancelled = false;
+
       // 1. Update in Prisma if subscriptionId is provided
       if (subscriptionId) {
         try {
           subscription = await prisma.subscription.update({
             where: { id: subscriptionId },
-            data: { status: "cancelled" },
+            data: {
+              status: "cancelled",
+              // Written here too, not just to the JSON store: these are real
+              // columns, and leaving them null made the typed row look like a
+              // plan that had never been cancelled at all.
+              cancelledAt: new Date(cancellationTime),
+              cancellationReason: cancelReason
+            },
           });
-        } catch (_e) {}
+          prismaCancelled = true;
+        } catch (err: any) {
+          console.error(
+            `[Subscription Cancel] Neon write FAILED for ${subscriptionId}: ${err?.message}. ` +
+              `The JSON store write below is now the only record of this cancellation.`
+          );
+        }
       }
 
       // 2. Update in StoreResource('subscriptions')
@@ -1097,6 +904,7 @@ router.post(
 
         if (modified) {
           await saveResource("subscriptions", updatedList);
+          storeCancelled = true;
           // Reports back the plan that was actually changed, using the same
           // rule the update above applied.
           subscription = updatedList.find((s: any) =>
@@ -1105,7 +913,39 @@ router.post(
               : Boolean(emailClean && String(s.customerEmail || "").toLowerCase().trim() === emailClean)
           ) || subscription;
         }
-      } catch (_e) {}
+      } catch (err: any) {
+        console.error(
+          `[Subscription Cancel] Store write FAILED for ${subscriptionId || emailClean}: ${err?.message}`
+        );
+      }
+
+      // Nothing recorded it anywhere. Telling a customer their plan is cancelled
+      // while the card is still on a billing schedule is the one outcome this
+      // route must never produce.
+      if (!prismaCancelled && !storeCancelled) {
+        console.error(
+          `[Subscription Cancel] NOTHING was cancelled for ${subscriptionId || emailClean}. ` +
+            `The plan is still live and will be charged again.`
+        );
+        return res.status(500).json({
+          success: false,
+          message:
+            "The cancellation could not be saved, so the plan is still active. " +
+            "Please try again — if it keeps failing, contact support before your next billing date."
+        });
+      }
+
+      if (!prismaCancelled || !storeCancelled) {
+        // One store has it, the other does not. The renewal worker now treats the
+        // non-chargeable status as the winner (see effectiveSubscriptionStatus),
+        // so the customer is safe — but the records disagree and want repairing.
+        console.warn(
+          `[Subscription Cancel] Partial write for ${subscriptionId || emailClean}: ` +
+            `Neon=${prismaCancelled ? "cancelled" : "NOT updated"}, ` +
+            `store=${storeCancelled ? "cancelled" : "NOT updated"}. ` +
+            `No further charge will be taken, but the two stores disagree.`
+        );
+      }
 
       // 3. Update Customer Record in StoreResource('customers')
       let matchedEmail = emailClean || (subscription?.customerEmail ? String(subscription.customerEmail).toLowerCase().trim() : null);

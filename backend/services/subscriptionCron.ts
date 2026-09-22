@@ -115,6 +115,79 @@ export function nextBillingDateAfterCharge(
   return next;
 }
 
+/** The only status a card may be charged under. */
+export const CHARGEABLE_STATUS = 'active';
+
+export function isChargeableStatus(status: any): boolean {
+  return String(status ?? '').trim().toLowerCase() === CHARGEABLE_STATUS;
+}
+
+/**
+ * The status to act on when the two stores disagree about one subscription.
+ *
+ * Cancelling writes to Prisma and to the JSON store in two separate steps, and
+ * either can fail, so the two genuinely do disagree in this data. When they do,
+ * the one that does NOT permit a charge wins.
+ *
+ * That asymmetry is deliberate. Failing to take a payment that was owed is
+ * recoverable — the period stays due and the next run takes it. Taking one from
+ * a customer who cancelled is not: the money has left their account, and no
+ * amount of later correction undoes having charged them after they told you to
+ * stop. PS65700's plan was cancelled at 04:48 on 21 Sep and charged again at
+ * 17:28 the same day precisely because the stale 'active' side was believed.
+ */
+export function effectiveSubscriptionStatus(a: any, b: any): string {
+  const sa = String(a ?? '').trim().toLowerCase();
+  const sb = String(b ?? '').trim().toLowerCase();
+
+  if (!sa) return sb;
+  if (!sb) return sa;
+  if (sa === sb) return sa;
+
+  // They differ: whichever is not chargeable is the answer.
+  if (!isChargeableStatus(sa)) return sa;
+  if (!isChargeableStatus(sb)) return sb;
+  return sa;
+}
+
+/**
+ * This subscription's status right now, read fresh from both stores.
+ *
+ * Used as the last check before a charge. Anything unreadable answers with a
+ * non-chargeable status: if we cannot confirm the plan is still active, we do
+ * not take the money.
+ */
+export async function currentSubscriptionStatus(subId: string): Promise<string> {
+  let fromPrisma: any;
+  let fromStore: any;
+  let readAnything = false;
+
+  try {
+    const row = await prisma.subscription.findUnique({
+      where: { id: String(subId) },
+      select: { status: true }
+    });
+    if (row) {
+      fromPrisma = row.status;
+      readAnything = true;
+    }
+  } catch (_e) {
+    // Prisma unreachable; the store below may still answer.
+  }
+
+  try {
+    const stored: any[] = (await fetchResource('subscriptions')) || [];
+    const row = stored.find((s: any) => String(s?.id) === String(subId));
+    if (row) {
+      fromStore = row.status;
+      readAnything = true;
+    }
+  } catch (_e) {}
+
+  if (!readAnything) return 'unverifiable';
+  return effectiveSubscriptionStatus(fromStore, fromPrisma) || 'unverifiable';
+}
+
 /**
  * Reads every subscription from Prisma AND the JSON store and merges them by id.
  *
@@ -129,7 +202,16 @@ async function loadAllSubscriptions(): Promise<any[]> {
   const isConnected = await getDb().catch(() => false);
   if (isConnected) {
     try {
-      const rows = await prisma.subscription.findMany({ where: { status: 'active' } });
+      // Deliberately NOT filtered to status 'active'.
+      //
+      // It used to be, and that is how a cancelled plan kept being charged.
+      // Cancelling writes to Prisma and to the JSON store separately, each in
+      // its own swallowed catch, so a failed Prisma write left the plan
+      // 'cancelled' in the store and 'active' in Prisma. The merge below lets
+      // the Prisma row win, and a filtered query could only ever return the
+      // stale 'active' one — the store's cancellation was invisible here.
+      // Loading every row is what lets a cancellation in EITHER store veto.
+      const rows = await prisma.subscription.findMany();
       for (const row of rows || []) {
         byId.set(String(row.id), row);
       }
@@ -143,7 +225,11 @@ async function loadAllSubscriptions(): Promise<any[]> {
     for (const row of stored) {
       if (!row || !row.id) continue;
       const key = String(row.id);
-      byId.set(key, { ...(row || {}), ...(byId.get(key) || {}) });
+      const fromPrisma = byId.get(key);
+      const merged = { ...(row || {}), ...(fromPrisma || {}) };
+      // Prisma wins every other field, but NOT the status — see below.
+      merged.status = effectiveSubscriptionStatus(row?.status, fromPrisma?.status);
+      byId.set(key, merged);
     }
   } catch (_e) {}
 
@@ -477,6 +563,27 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
       // existence first, and Worldpay refuses a reference it has already seen.
       const claimedNextBilling = nextBillingDateAfterCharge(interval, periodStart, now);
 
+      // Last look before the money moves.
+      //
+      // A run works through the due list one at a time, and each renewal takes a
+      // gateway call plus an order write, an email and a Klaviyo push — long
+      // enough for a customer to cancel while this loop is still going. The
+      // status read at the top of the run would be stale by then, so it is read
+      // again here, from both stores, immediately before the card is presented.
+      const liveStatus = await currentSubscriptionStatus(subId);
+      if (!isChargeableStatus(liveStatus)) {
+        console.warn(
+          `[Subscription Worker] Sub ${subId} is "${liveStatus}" as of now — NOT charging. ` +
+            `A cancellation landed after this run started.`
+        );
+        results.push({
+          id: subId,
+          status: 'skipped',
+          reason: `Cancelled before the charge was sent (status "${liveStatus}")`
+        });
+        continue;
+      }
+
       try {
         // 1. Charge Worldpay using the stored MIT credential / scheme reference
         const chargeResult = await chargeRecurringSubscription({
@@ -724,6 +831,39 @@ export async function processDueSubscriptions(): Promise<RenewalResult> {
 let cronIntervalHandle: NodeJS.Timeout | null = null;
 
 /**
+ * Should this process run its own renewal timer?
+ *
+ * Not under serverless. `createExpressApp()` runs on every cold start, so an
+ * unconditional timer meant each new lambda instance fired a renewal run three
+ * seconds after boot and then every five minutes — as many concurrent runs as
+ * there were warm instances, each with its own `isProcessing` flag and blind to
+ * the others. Ordinary traffic could therefore start a charge run at any hour.
+ *
+ * In production the schedule is declared once, in vercel.json, as an hourly call
+ * to /api/subscriptions/cron. That is the single natural trigger. A long-running
+ * server (local `npm run dev`, or a container) has no such scheduler, so it
+ * keeps the timer.
+ *
+ * SUBSCRIPTION_WORKER=1 forces it on, =0 forces it off.
+ */
+function workerShouldRun(): { run: boolean; reason: string } {
+  const explicit = String(process.env.SUBSCRIPTION_WORKER ?? '').trim().toLowerCase();
+  if (explicit === '1' || explicit === 'true') {
+    return { run: true, reason: 'SUBSCRIPTION_WORKER is set' };
+  }
+  if (explicit === '0' || explicit === 'false') {
+    return { run: false, reason: 'SUBSCRIPTION_WORKER is disabled' };
+  }
+
+  const serverless = Boolean(
+    process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.FUNCTIONS_WORKER_RUNTIME
+  );
+  return serverless
+    ? { run: false, reason: 'serverless runtime — the scheduled cron ping is the trigger' }
+    : { run: true, reason: 'long-running server' };
+}
+
+/**
  * Initializes the background recurring worker timer.
  */
 export function startSubscriptionRenewalWorker(intervalMs: number = 5 * 60 * 1000) {
@@ -731,7 +871,16 @@ export function startSubscriptionRenewalWorker(intervalMs: number = 5 * 60 * 100
     clearInterval(cronIntervalHandle);
   }
 
-  console.log(`[Subscription Worker] Background worker initialized (interval: ${intervalMs / 1000}s).`);
+  const { run, reason } = workerShouldRun();
+  if (!run) {
+    console.log(
+      `[Subscription Worker] In-process timer NOT started (${reason}). ` +
+        `Renewals run when /api/subscriptions/cron is called.`
+    );
+    return;
+  }
+
+  console.log(`[Subscription Worker] Background worker initialized (interval: ${intervalMs / 1000}s, ${reason}).`);
 
   // Run shortly after startup
   setTimeout(() => {

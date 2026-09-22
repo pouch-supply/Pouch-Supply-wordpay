@@ -228,7 +228,11 @@ async function main() {
       .findUnique({ where: { id: ASSIGN_SUB }, select: { worldpayTokenHref: true } })
       .catch(() => null);
     console.log(`  Neon now reports: ${check?.worldpayTokenHref || 'NULL'}`);
-    console.log('  Charge it with POST /api/subscriptions/charge to confirm before the renewal date.');
+    // There is no on-demand charge endpoint any more — see the note where
+    // /api/subscriptions/charge used to be. To bill early, move the due date and
+    // let the renewal worker take it.
+    console.log('  To confirm it before the renewal date, bring nextBillingDate forward and run');
+    console.log('  the renewal worker (GET /api/subscriptions/cron).');
   }
 
   await prisma.$disconnect().catch(() => {});
