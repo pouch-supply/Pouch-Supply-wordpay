@@ -95,3 +95,110 @@ export function existingShippingFor(sub: any): number {
   }
   return defaultShippingFor(Number(sub?.itemPrice) || 0);
 }
+
+/**
+ * Is this basket line a subscription plan?
+ *
+ * This decides whether a RECURRING CHARGE gets created, so it is deliberately
+ * stricter than the detector in orders.ts that only labels an order. That one
+ * also treats any title containing "pack" as a subscription, which is fine for
+ * a badge and unacceptable here: it would put a customer who bought a six-pack
+ * of tins onto a monthly billing schedule.
+ *
+ * `vendor === "Subscription Pack"` and a sub-pack sku ARE safe to add, and
+ * their absence is what broke PS35806, PS56514 and PS65700: orders.ts tagged
+ * them "Subscription Order" and built subscriptionDetails for them, while this
+ * side found no matching item and created no subscription at all.
+ */
+export function isSubscriptionLine(item: any): boolean {
+  if (!item) return false;
+  if (item.isSubscription) return true;
+  if (String(item.vendor || '').trim().toLowerCase() === 'subscription pack') return true;
+  const ids = [item.productId, item.sku].map(v => String(v || '').toLowerCase());
+  return ids.some(v => v.includes('sub-pack'));
+}
+
+/** The undiscounted total of an order's subscription lines. */
+export function subscriptionLinesTotal(items: any[]): number {
+  return (Array.isArray(items) ? items : [])
+    .filter(isSubscriptionLine)
+    .reduce((sum, it) => sum + (Number(it?.price || 0) * (Number(it?.quantity) || 1)), 0);
+}
+
+export interface NewSubscriptionAmountInput {
+  /** Total of the order's subscription lines at their own, undiscounted prices. */
+  subItemsTotal: number;
+  /** Shipping actually charged on the order that created the subscription. */
+  orderShipping: number;
+  /** What the shopper actually paid — net of any coupon and store credit. */
+  orderTotal: number;
+  /** Money a coupon took off that order, where the order recorded it. */
+  discountAmount?: number | null;
+  /** Store credit spent on that order. */
+  storeCreditApplied?: number | null;
+  /** True when a REWARD waived delivery, rather than the spend threshold. */
+  rewardWaivedDelivery?: boolean;
+}
+
+export interface NewSubscriptionAmount {
+  /** The gross recurring charge: the plan's own price plus its shipping. */
+  amount: number;
+  /** The shipping that recurring charge carries. */
+  shipping: number;
+  /** What applied to the first order only, and was kept out of `amount`. */
+  oneOffReduction: number;
+}
+
+/**
+ * What a subscription should charge every period, given the order that created it.
+ *
+ * A coupon and store credit buy ONE delivery. The order total is net of both, so
+ * storing it as `Subscription.amount` reissued the coupon on every renewal: a
+ * £20 plan bought with a £2 coupon was charged £18 for life instead of £18 once
+ * and £20 thereafter.
+ *
+ * The recurring charge is therefore built from the subscription lines' own
+ * prices, which no discount ever touches — that also keeps one-off items bought
+ * in the same basket out of it. For a subscription-only checkout with no coupon
+ * and no credit this returns exactly what the order total gave.
+ *
+ * Shared by the checkout callback and the backfill script so the two can never
+ * disagree about what a plan costs.
+ */
+export function recurringAmountForNewSubscription(
+  input: NewSubscriptionAmountInput
+): NewSubscriptionAmount {
+  const subItemsTotal = Number(input.subItemsTotal) || 0;
+  const orderShipping = Number(input.orderShipping) || 0;
+
+  const coupon = Number(input.discountAmount);
+  const credit = Number(input.storeCreditApplied);
+  const oneOffReduction = pennies(
+    (Number.isFinite(coupon) && coupon > 0 ? coupon : 0) +
+      (Number.isFinite(credit) && credit > 0 ? credit : 0)
+  );
+
+  // A coupon can drag an order under the free-delivery threshold that the plan's
+  // own price clears. Keeping that postage would bill it on every renewal, so
+  // the plan is judged on its undiscounted value instead.
+  const shippingChargedOnDiscountedValue =
+    oneOffReduction > 0 && orderShipping > 0 && subItemsTotal >= FREE_SHIPPING_THRESHOLD;
+
+  // A reward such as "Free Delivery on your next order" waives the charge on
+  // THIS order only, so the recurring fee falls back to the normal rule.
+  const shipping = input.rewardWaivedDelivery
+    ? defaultShippingFor(subItemsTotal)
+    : shippingChargedOnDiscountedValue
+      ? 0
+      : orderShipping;
+
+  const amount =
+    subItemsTotal > 0
+      ? pennies(subItemsTotal + shipping)
+      // No usable line prices to build on. Adding the one-off reductions back to
+      // the total recovers the undiscounted order value, which is the closest
+      // thing to the plan's real price left in the payload.
+      : pennies(Math.max(Number(input.orderTotal) || 0, 0) + oneOffReduction);
+
+  return { amount, shipping, oneOffReduction };
+}

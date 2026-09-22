@@ -882,10 +882,14 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
                 onChange={(e) => setFrequency(e.target.value)}
                 className="w-full text-xs font-semibold border border-slate-200 p-2.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
               >
-                <option value="Next Day (Test)">Next Day (Test - 1 Day Recurring)</option>
-                <option value="Weekly">Weekly (5% Discount)</option>
-                <option value="Bi-Weekly">Bi-Weekly (10% Discount - Most Popular)</option>
-                <option value="One Month">One Month (12% Discount)</option>
+                {/* Frequency names only. The discount each one carries is shown
+                    on its own line below ("Frequency Discount"), so repeating it
+                    here said the same thing twice. Values are unchanged: they are
+                    the stored billing interval and are matched by string. */}
+                <option value="Next Day (Test)">Next Day (Test)</option>
+                <option value="Weekly">Weekly</option>
+                <option value="Bi-Weekly">Bi-Weekly</option>
+                <option value="One Month">One Month</option>
               </select>
             </div>
 

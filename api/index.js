@@ -2381,8 +2381,15 @@ var init_requireAdmin = __esm({
 });
 
 // backend/services/emailTemplates.ts
+function resolveEmailLogoSrc(raw) {
+  const url = (raw || "").trim();
+  if (!url) return "";
+  if (/^data:/i.test(url)) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  return `${EMAIL_ASSET_BASE_URL}/${url.replace(/^\/+/, "")}`;
+}
 function renderBaseHeader(title, subtitle, data) {
-  const logoUrl = data?.headerLogoImage || data?.logoUrl || "";
+  const logoUrl = resolveEmailLogoSrc(data?.headerLogoImage || data?.logoUrl);
   return `
   <!DOCTYPE html>
   <html>
@@ -2881,7 +2888,7 @@ function renderAdminNewOrderTemplate(data) {
     </div>
   ` + renderBaseFooter();
 }
-var BRAND_NAME, BRAND_HEADER_BG, BRAND_PRIMARY, BRAND_ACCENT, BRAND_BG, SUPPORT_EMAIL;
+var BRAND_NAME, BRAND_HEADER_BG, BRAND_PRIMARY, BRAND_ACCENT, BRAND_BG, SUPPORT_EMAIL, EMAIL_ASSET_BASE_URL;
 var init_emailTemplates = __esm({
   "backend/services/emailTemplates.ts"() {
     BRAND_NAME = "Pouch Supply Co.";
@@ -2890,6 +2897,7 @@ var init_emailTemplates = __esm({
     BRAND_ACCENT = "#008060";
     BRAND_BG = "#f8fafc";
     SUPPORT_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || "support@pouch-supply.com";
+    EMAIL_ASSET_BASE_URL = (process.env.EMAIL_ASSET_BASE_URL || process.env.APP_URL || "https://www.pouch-supply.com").trim().replace(/\/+$/, "");
   }
 });
 
@@ -4359,6 +4367,94 @@ var init_ukValidation = __esm({
   }
 });
 
+// backend/services/discountUsageRules.ts
+function releasesDiscount(order) {
+  return String(order?.fulfillmentStatus || "") === "Cancelled";
+}
+function normalizeCode(value) {
+  return String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function isSameDiscount(a, b) {
+  if (!a || !b) return false;
+  const aId = String(a?.id ?? "").trim().toLowerCase();
+  const bId = String(b?.id ?? "").trim().toLowerCase();
+  if (aId && bId) return aId === bId;
+  const aCode = normalizeCode(a?.title);
+  const bCode = normalizeCode(b?.title);
+  return Boolean(aCode) && aCode === bCode;
+}
+function resolveOnePerCustomer(stored, applied) {
+  if (!applied) return false;
+  if (stored) return Boolean(stored.limitOnePerCustomer);
+  if (String(applied.id || "").startsWith("disc-ref-virtual-")) return true;
+  return Boolean(applied.limitOnePerCustomer);
+}
+function findPriorUseIn(orders, customerEmail, applied, excludeOrderId) {
+  const email = String(customerEmail || "").toLowerCase().trim();
+  if (!email || !applied) return null;
+  const exclude = excludeOrderId ? String(excludeOrderId) : null;
+  return (orders || []).find((o) => {
+    if (!o) return false;
+    const id = String(o.id ?? o.orderId ?? "");
+    if (exclude && id === exclude) return false;
+    if (String(o.customerEmail || "").toLowerCase().trim() !== email) return false;
+    if (releasesDiscount(o)) return false;
+    return isSameDiscount(o.discountApplied, applied);
+  }) || null;
+}
+function refusal(applied, prior) {
+  const code = String(applied?.title || applied?.id || "This discount code");
+  return {
+    ok: false,
+    // Deliberately no order id: checkout is open to guests, so this message can
+    // be produced for any email someone cares to type, and it should not report
+    // back what that person has ordered. The id goes to the log instead.
+    message: `Discount code "${code}" can only be used once per customer, and you have already used it.`,
+    priorOrderId: String(prior?.id ?? prior?.orderId ?? "")
+  };
+}
+var init_discountUsageRules = __esm({
+  "backend/services/discountUsageRules.ts"() {
+  }
+});
+
+// backend/services/discountUsage.ts
+async function storedDiscountFor(applied) {
+  try {
+    const discounts = await fetchResource("discounts") || [];
+    return discounts.find((d) => isSameDiscount(d, applied)) || null;
+  } catch {
+    return null;
+  }
+}
+async function isOnePerCustomer(applied) {
+  if (!applied) return false;
+  return resolveOnePerCustomer(await storedDiscountFor(applied), applied);
+}
+async function findPriorUse(customerEmail, applied, excludeOrderId) {
+  if (!customerEmail || !applied) return null;
+  let orders = [];
+  try {
+    orders = await fetchResource("orders") || [];
+  } catch {
+    return null;
+  }
+  return findPriorUseIn(orders, customerEmail, applied, excludeOrderId);
+}
+async function checkDiscountUsable(customerEmail, applied, excludeOrderId) {
+  if (!applied) return { ok: true };
+  if (!await isOnePerCustomer(applied)) return { ok: true };
+  const prior = await findPriorUse(customerEmail, applied, excludeOrderId);
+  if (!prior) return { ok: true };
+  return refusal(applied, prior);
+}
+var init_discountUsage = __esm({
+  "backend/services/discountUsage.ts"() {
+    init_serverDb();
+    init_discountUsageRules();
+  }
+});
+
 // backend/services/worldpayRefund.ts
 var worldpayRefund_exports = {};
 __export(worldpayRefund_exports, {
@@ -4831,6 +4927,7 @@ var init_orders = __esm({
     init_klaviyoService();
     init_requireAdmin();
     init_ukValidation();
+    init_discountUsage();
     router3 = Router2();
     FULFILLMENT_NOTIFICATION = {
       Processing: "order_processing",
@@ -4923,6 +5020,19 @@ var init_orders = __esm({
           });
           if (!check.valid) {
             return res.status(400).json({ error: check.errors[0], errors: check.errors });
+          }
+          if (orderData.discountApplied) {
+            const usable = await checkDiscountUsable(
+              orderData.customerEmail,
+              orderData.discountApplied,
+              orderData.id || orderData.orderId
+            );
+            if (!usable.ok) {
+              console.warn(
+                `[Orders] Refused order ${orderData.id || orderData.orderId} for ${orderData.customerEmail}: discount already used on ${usable.priorOrderId}.`
+              );
+              return res.status(400).json({ error: usable.message });
+            }
           }
         }
         const savedOrder = await saveSingleOrder(orderData);
@@ -5295,6 +5405,29 @@ function existingShippingFor(sub) {
     if (Number.isFinite(n) && n >= 0) return n;
   }
   return defaultShippingFor(Number(sub?.itemPrice) || 0);
+}
+function isSubscriptionLine(item) {
+  if (!item) return false;
+  if (item.isSubscription) return true;
+  if (String(item.vendor || "").trim().toLowerCase() === "subscription pack") return true;
+  const ids = [item.productId, item.sku].map((v) => String(v || "").toLowerCase());
+  return ids.some((v) => v.includes("sub-pack"));
+}
+function subscriptionLinesTotal(items) {
+  return (Array.isArray(items) ? items : []).filter(isSubscriptionLine).reduce((sum, it) => sum + Number(it?.price || 0) * (Number(it?.quantity) || 1), 0);
+}
+function recurringAmountForNewSubscription(input) {
+  const subItemsTotal = Number(input.subItemsTotal) || 0;
+  const orderShipping = Number(input.orderShipping) || 0;
+  const coupon = Number(input.discountAmount);
+  const credit = Number(input.storeCreditApplied);
+  const oneOffReduction = pennies(
+    (Number.isFinite(coupon) && coupon > 0 ? coupon : 0) + (Number.isFinite(credit) && credit > 0 ? credit : 0)
+  );
+  const shippingChargedOnDiscountedValue = oneOffReduction > 0 && orderShipping > 0 && subItemsTotal >= FREE_SHIPPING_THRESHOLD;
+  const shipping = input.rewardWaivedDelivery ? defaultShippingFor(subItemsTotal) : shippingChargedOnDiscountedValue ? 0 : orderShipping;
+  const amount = subItemsTotal > 0 ? pennies(subItemsTotal + shipping) : pennies(Math.max(Number(input.orderTotal) || 0, 0) + oneOffReduction);
+  return { amount, shipping, oneOffReduction };
 }
 var EXTRA_CAN_PRICE, pennies, FREE_SHIPPING_THRESHOLD, STANDARD_SHIPPING;
 var init_subscriptionPricing = __esm({
@@ -9058,8 +9191,23 @@ var customers_default = router6;
 // backend/routes/discounts.ts
 init_serverDb();
 init_requireAdmin();
+init_discountUsage();
 import { Router as Router6 } from "express";
 var router7 = Router6();
+router7.post("/validate", async (req, res) => {
+  try {
+    const { customerEmail, discount } = req.body || {};
+    if (!discount) {
+      return res.status(400).json({ ok: false, message: "A discount is required." });
+    }
+    if (!customerEmail) return res.json({ ok: true });
+    const verdict = await checkDiscountUsable(customerEmail, discount);
+    res.json({ ok: verdict.ok, message: verdict.message });
+  } catch (err) {
+    console.error("[Discounts Router] POST /validate Error:", err);
+    res.json({ ok: true });
+  }
+});
 router7.get("/", async (req, res) => {
   try {
     const data = await fetchResource("discounts");
@@ -9436,7 +9584,9 @@ function resolveDeliveryCost(subtotalAfterDiscount, discount, baseCost = STANDAR
 }
 
 // backend/routes/worldpay.ts
+init_subscriptionPricing();
 init_klaviyoService();
+init_discountUsage();
 var router10 = Router8();
 function assertDeliverable(body) {
   const address = body?.shippingAddress && typeof body.shippingAddress === "object" ? body.shippingAddress : {};
@@ -9777,13 +9927,6 @@ async function getPendingCheckout(orderId) {
   }
   return void 0;
 }
-function isSubscriptionLine(item) {
-  if (!item) return false;
-  if (item.isSubscription) return true;
-  if (String(item.vendor || "").trim().toLowerCase() === "subscription pack") return true;
-  const ids = [item.productId, item.sku].map((v) => String(v || "").toLowerCase());
-  return ids.some((v) => v.includes("sub-pack"));
-}
 async function saveVerifiedOrder(orderId, details) {
   const pending = details.pendingData || await getPendingCheckout(orderId);
   const { saveSingleOrder: saveSingleOrder2 } = await Promise.resolve().then(() => (init_orders(), orders_exports));
@@ -9861,7 +10004,7 @@ async function saveVerifiedOrder(orderId, details) {
   const discountApplied = pending?.discountApplied || details.discountApplied || null;
   const subItemsList = items.filter(isSubscriptionLine);
   const subItem = subItemsList[0];
-  const subItemsTotal = subItemsList.reduce((sum, it) => sum + Number(it.price || 0) * (Number(it.quantity) || 1), 0);
+  const subItemsTotal = subscriptionLinesTotal(items);
   const effectiveShipping = typeof pending?.shippingCost === "number" ? pending.shippingCost : typeof pending?.deliveryCost === "number" ? pending.deliveryCost : typeof details.shippingCost === "number" ? details.shippingCost : typeof details.deliveryCost === "number" ? details.deliveryCost : total > subItemsTotal && subItemsTotal > 0 ? Number((total - subItemsTotal).toFixed(2)) : resolveDeliveryCost(total, discountApplied);
   const deliveryMethod = pending?.deliveryMethod || details.deliveryMethod || "Royal Mail Tracked 24/48";
   const paymentConfirmed = details.paymentConfirmed !== false;
@@ -9911,8 +10054,15 @@ async function saveVerifiedOrder(orderId, details) {
         );
       }
       const rewardWaivedDelivery = effectiveShipping === 0 && isFreeShippingReward(discountApplied);
-      const recurringShipping = rewardWaivedDelivery ? resolveDeliveryCost(subItemsTotal, null) : effectiveShipping;
-      const subAmount = rewardWaivedDelivery ? Number((subItemsTotal + recurringShipping).toFixed(2)) : total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2));
+      const { amount: subAmount, shipping: recurringShipping } = recurringAmountForNewSubscription({
+        subItemsTotal,
+        orderShipping: effectiveShipping,
+        orderTotal: total,
+        discountAmount: pending?.discountAmount ?? details.discountAmount,
+        storeCreditApplied,
+        rewardWaivedDelivery
+      });
+      const recurringItems = items.filter((it) => !it?.isRewardItem);
       const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       createdSubscriptionId = subId;
       const subData = {
@@ -9948,7 +10098,7 @@ async function saveVerifiedOrder(orderId, details) {
         lastPaymentStatus: "authorized",
         lastPaymentId: details.transactionId || orderId,
         lastPaymentAt: /* @__PURE__ */ new Date(),
-        items
+        items: recurringItems
       };
       {
         const { upsertSubscriptionRow: upsertSubscriptionRow2 } = await Promise.resolve().then(() => (init_subscriptionRow(), subscriptionRow_exports));
@@ -10531,6 +10681,15 @@ async function handleCreateHostedPaymentPage(req, res) {
     const deliverable = assertDeliverable(req.body);
     if (!deliverable.ok) {
       return res.status(400).json({ success: false, message: deliverable.message });
+    }
+    if (discountApplied) {
+      const usable = await checkDiscountUsable(customerEmail, discountApplied, orderId);
+      if (!usable.ok) {
+        console.warn(
+          `[Worldpay Session] Refused order ${orderId} for ${customerEmail}: discount already used on ${usable.priorOrderId}.`
+        );
+        return res.status(400).json({ success: false, message: usable.message });
+      }
     }
     const cfg = getEnvironmentConfig();
     const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
@@ -12530,7 +12689,12 @@ function getSampleTemplateData(type, customData) {
     resetToken: "sample_reset_token",
     discountCode: "WELCOME10",
     supportEmail: "scottkivlinpouch@gmail.com",
-    siteUrl: "https://pouch-supply.com"
+    siteUrl: "https://pouch-supply.com",
+    planName: "Monthly Canister Club",
+    previousAmount: 24.99,
+    newAmount: 27.99,
+    effectiveFrom: "2026-11-01",
+    billingInterval: "every 4 weeks"
   };
   return { ...defaultData, ...customData || {} };
 }
@@ -12662,6 +12826,9 @@ router13.post("/preview", requireAdmin, async (req, res) => {
         break;
       case "order_delivered":
         html = renderDeliveredTemplate(data);
+        break;
+      case "subscription_price_change":
+        html = renderSubscriptionPriceChangeTemplate(data);
         break;
       case "order_cancelled":
         html = renderOrderCancelledTemplate(data);

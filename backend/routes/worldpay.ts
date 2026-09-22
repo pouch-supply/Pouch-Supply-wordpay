@@ -24,7 +24,13 @@ import {
   validateUkDelivery
 } from '../../src/utils/ukValidation';
 import { isFreeShippingReward, resolveDeliveryCost } from '../../src/utils/discountUtils';
+import {
+  isSubscriptionLine,
+  recurringAmountForNewSubscription,
+  subscriptionLinesTotal
+} from '../../src/lib/subscriptionPricing';
 import { trackSubscriptionStarted } from '../services/klaviyoService';
+import { checkDiscountUsable } from '../services/discountUsage';
 
 const router = Router();
 
@@ -607,27 +613,6 @@ async function getPendingCheckout(orderId: string): Promise<PendingCheckout | un
 }
 
 // Helper to save a verified successful order directly into Prisma and StoreResource
-/**
- * Is this basket line a subscription plan?
- *
- * This decides whether a RECURRING CHARGE gets created, so it is deliberately
- * stricter than the detector in orders.ts that only labels an order. That one
- * also treats any title containing "pack" as a subscription, which is fine for
- * a badge and unacceptable here: it would put a customer who bought a six-pack
- * of tins onto a monthly billing schedule.
- *
- * `vendor === "Subscription Pack"` and a sub-pack sku ARE safe to add, and
- * their absence is what broke PS35806, PS56514 and PS65700: orders.ts tagged
- * them "Subscription Order" and built subscriptionDetails for them, while this
- * side found no matching item and created no subscription at all.
- */
-function isSubscriptionLine(item: any): boolean {
-  if (!item) return false;
-  if (item.isSubscription) return true;
-  if (String(item.vendor || "").trim().toLowerCase() === "subscription pack") return true;
-  const ids = [item.productId, item.sku].map(v => String(v || "").toLowerCase());
-  return ids.some(v => v.includes("sub-pack"));
-}
 async function saveVerifiedOrder(
   orderId: string,
   details: {
@@ -831,7 +816,7 @@ async function saveVerifiedOrder(
   // Calculate items subtotal
   const subItemsList = items.filter(isSubscriptionLine);
   const subItem = subItemsList[0];
-  const subItemsTotal = subItemsList.reduce((sum: number, it: any) => sum + (Number(it.price || 0) * (Number(it.quantity) || 1)), 0);
+  const subItemsTotal = subscriptionLinesTotal(items);
 
   // Extract shipping charges from the first order to ensure it remains in all auto recurring subscription payments
   const effectiveShipping = typeof pending?.shippingCost === 'number'
@@ -958,19 +943,27 @@ async function saveVerifiedOrder(
         );
       }
 
-      // A loyalty reward such as "Free Delivery on your next order" waives the
-      // charge on THIS order only. Carrying its £0 into the subscription would
-      // ship every future renewal free, so the recurring fee falls back to the
-      // normal rule while the order itself keeps the waiver.
+      // A reward such as "Free Delivery on your next order" waives the charge on
+      // THIS order only, so the order keeps the waiver and the plan does not.
       const rewardWaivedDelivery = effectiveShipping === 0 && isFreeShippingReward(discountApplied);
-      const recurringShipping = rewardWaivedDelivery
-        ? resolveDeliveryCost(subItemsTotal, null)
-        : effectiveShipping;
 
-      // CRITICAL: Ensure the recurring subscription charge includes both the plan items and the initial shipping fee
-      const subAmount = rewardWaivedDelivery
-        ? Number((subItemsTotal + recurringShipping).toFixed(2))
-        : (total > 0 ? Number(total) : Number((subItemsTotal + effectiveShipping).toFixed(2)));
+      // The recurring charge is the plan's own price plus its shipping, never
+      // the order total — see recurringAmountForNewSubscription, which the
+      // backfill script shares so the two cannot drift apart.
+      const { amount: subAmount, shipping: recurringShipping } = recurringAmountForNewSubscription({
+        subItemsTotal,
+        orderShipping: effectiveShipping,
+        orderTotal: total,
+        discountAmount: pending?.discountAmount ?? details.discountAmount,
+        storeCreditApplied,
+        rewardWaivedDelivery
+      });
+
+      // The lines the plan renews with. A reward's £0 lines — the free can the
+      // customer picked, a gift box — are part of the coupon, not of the plan,
+      // and `buildRenewalOrderItems` replays whatever is stored here on every
+      // renewal. Leaving them in shipped the reward free, forever.
+      const recurringItems = items.filter((it: any) => !it?.isRewardItem);
 
       const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       createdSubscriptionId = subId;
@@ -1007,7 +1000,7 @@ async function saveVerifiedOrder(
         lastPaymentStatus: 'authorized',
         lastPaymentId: details.transactionId || orderId,
         lastPaymentAt: new Date(),
-        items: items
+        items: recurringItems
       };
 
       // Schema-checked write - see src/lib/subscriptionRow.ts. This used to be
@@ -1901,6 +1894,20 @@ async function handleCreateHostedPaymentPage(req: Request, res: Response) {
     const deliverable = assertDeliverable(req.body);
     if (!deliverable.ok) {
       return res.status(400).json({ success: false, message: deliverable.message });
+    }
+
+    // A one-per-customer code this shopper has already spent. Refused before the
+    // payment session exists: once Worldpay holds the money, taking the discount
+    // back means refunding the order rather than showing a message.
+    if (discountApplied) {
+      const usable = await checkDiscountUsable(customerEmail, discountApplied, orderId);
+      if (!usable.ok) {
+        console.warn(
+          `[Worldpay Session] Refused order ${orderId} for ${customerEmail}: ` +
+            `discount already used on ${usable.priorOrderId}.`
+        );
+        return res.status(400).json({ success: false, message: usable.message });
+      }
     }
 
     const cfg = getEnvironmentConfig();

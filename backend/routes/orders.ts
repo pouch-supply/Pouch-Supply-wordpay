@@ -12,6 +12,7 @@ import {
 import { trackPurchaseCompleted, trackOrderRefunded, trackOrderShipped } from "../services/klaviyoService";
 import { requireAdmin, requireCustomer, mayActOnCustomer, AdminRequest } from "../middleware/requireAdmin";
 import { UK_COUNTRY_NAME, validateUkDelivery } from "../../src/utils/ukValidation";
+import { checkDiscountUsable } from "../services/discountUsage";
 
 const router = Router();
 
@@ -662,6 +663,24 @@ router.post("/create", async (req: Request, res: Response) => {
       });
       if (!check.valid) {
         return res.status(400).json({ error: check.errors[0], errors: check.errors });
+      }
+
+      // Store-credit checkouts never touch the payment session, so the
+      // one-per-customer limit has to be applied here too — otherwise a code
+      // refused at the card checkout is still spendable by paying with credit.
+      if (orderData.discountApplied) {
+        const usable = await checkDiscountUsable(
+          orderData.customerEmail,
+          orderData.discountApplied,
+          orderData.id || orderData.orderId
+        );
+        if (!usable.ok) {
+          console.warn(
+            `[Orders] Refused order ${orderData.id || orderData.orderId} for ` +
+              `${orderData.customerEmail}: discount already used on ${usable.priorOrderId}.`
+          );
+          return res.status(400).json({ error: usable.message });
+        }
       }
     }
 

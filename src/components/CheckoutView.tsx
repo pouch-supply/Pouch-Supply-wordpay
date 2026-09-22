@@ -338,7 +338,7 @@ export default function CheckoutView({
     ]);
   };
 
-  const handleApplyPromoInCheckout = (e: React.MouseEvent) => {
+  const handleApplyPromoInCheckout = async (e: React.MouseEvent) => {
     e.preventDefault();
     setPromoError('');
     setPromoSuccess('');
@@ -356,6 +356,18 @@ export default function CheckoutView({
       // A can already chosen on the loyalty rewards page or in the cart carries
       // over, so the picker only opens for what is still outstanding.
       const discount = hydrateRewardSelection(res.discount);
+
+      // Whether the code is VALID is decided in the browser; whether this
+      // shopper has already spent a one-per-customer code is decided by the
+      // server, against the orders they have actually placed. Asked here so
+      // they are told now rather than after filling the form. The payment
+      // session applies the same rule and is the one that binds.
+      const usable = await checkDiscountStillUsable(discount);
+      if (!usable.ok) {
+        setPromoError(usable.message || 'This discount code has already been used.');
+        return;
+      }
+
       setCurrentDiscount(discount);
       if (onApplyDiscount) {
         onApplyDiscount(discount);
@@ -364,6 +376,30 @@ export default function CheckoutView({
       if (rewardNeedsSelection(discount)) openPickerFor(discount);
     } else {
       setPromoError(res.error || 'Invalid or expired discount code.');
+    }
+  };
+
+  /**
+   * Asks the server whether a one-per-customer code is still available to this
+   * shopper. Any failure answers "yes": a network problem must not block a sale
+   * the payment step would have accepted.
+   */
+  const checkDiscountStillUsable = async (
+    discount: Discount
+  ): Promise<{ ok: boolean; message?: string }> => {
+    const customerEmail = (email || loggedInCustomer?.email || '').trim();
+    if (!customerEmail) return { ok: true };
+    try {
+      const res = await fetch('/api/discounts/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerEmail, discount })
+      });
+      if (!res.ok) return { ok: true };
+      const data = await res.json().catch(() => ({ ok: true }));
+      return { ok: data?.ok !== false, message: data?.message };
+    } catch (_e) {
+      return { ok: true };
     }
   };
 
@@ -539,7 +575,7 @@ export default function CheckoutView({
   const isPostcodeValid = isValidUkPostcode(postcode);
 
   // Process live payment with Worldpay HPP
-  const executePaymentProcess = async (skipAgeCheck = false) => {
+  const executePaymentProcess = async () => {
     // Validate shipping info
     if (!fullName || !email || !addressLine || !city.trim()) {
       setPaymentError('Please fill in your shipping and contact information.');
@@ -575,8 +611,10 @@ export default function CheckoutView({
       }
     }
 
-    // Enforce AgeChecked verification gate for live payments (unless bypassed for testing)
-    if (!skipAgeCheck && !currentAgeVerified) {
+    // Enforce the AgeChecked gate for live payments. There is no bypass: the
+    // "pay without AgeChecked" button that used to sit beside the pay button
+    // took real money for age-restricted goods with no 18+ check at all.
+    if (!currentAgeVerified) {
       setPaymentError(null);
       if (ageGateRef.current) {
         const approved = await ageGateRef.current.openPortal();
@@ -1226,7 +1264,7 @@ export default function CheckoutView({
                       </p>
                       <button
                         type="button"
-                        onClick={() => executePaymentProcess(false)}
+                        onClick={() => executePaymentProcess()}
                         disabled={isProcessing}
                         className="w-full bg-slate-900 hover:bg-black disabled:bg-slate-300 text-white font-black py-4 px-6 rounded-xl text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:cursor-not-allowed"
                       >
@@ -1246,26 +1284,6 @@ export default function CheckoutView({
                             ) : (
                               <span>Pay with Worldpay (£{finalTotalToPay.toFixed(2)})</span>
                             )}
-                          </>
-                        )}
-                      </button>
-
-                      {/* Pay with Worldpay without AgeChecked */}
-                      <button
-                        type="button"
-                        onClick={() => executePaymentProcess(true)}
-                        disabled={isProcessing}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-black py-3.5 px-6 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:cursor-not-allowed border border-indigo-700"
-                      >
-                        {isProcessing ? (
-                          <>
-                            <RefreshCw className="h-4 w-4 animate-spin text-white" />
-                            <span>Connecting to Worldpay...</span>
-                          </>
-                        ) : (
-                          <>
-                            <CreditCard className="h-4 w-4 text-indigo-200" />
-                            <span>Pay with Worldpay without AgeChecked (£{finalTotalToPay.toFixed(2)})</span>
                           </>
                         )}
                       </button>

@@ -11,7 +11,10 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "repair:plan-sync": "esbuild scripts/repairPlanSyncDamage.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/repairPlanSyncDamage.cjs --log-level=warning && node dist/repairPlanSyncDamage.cjs",
-    "reprice:subscriptions": "esbuild scripts/repriceSubscriptions.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/repriceSubscriptions.cjs --log-level=warning && node dist/repriceSubscriptions.cjs"
+    "reprice:subscriptions": "esbuild scripts/repriceSubscriptions.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/repriceSubscriptions.cjs --log-level=warning && node dist/repriceSubscriptions.cjs",
+    "repair:coupon-pricing": "esbuild scripts/repairCouponPricedSubscriptions.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/repairCouponPricedSubscriptions.cjs --log-level=warning && node dist/repairCouponPricedSubscriptions.cjs",
+    "verify:coupon-carryover": "esbuild scripts/verifyCouponCarryover.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/verifyCouponCarryover.cjs --log-level=warning && node dist/verifyCouponCarryover.cjs",
+    "verify:discount-usage": "esbuild scripts/verifyDiscountUsage.ts --bundle --platform=node --format=cjs --packages=external --loader:.jpg=empty --outfile=dist/verifyDiscountUsage.cjs --log-level=warning && node dist/verifyDiscountUsage.cjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

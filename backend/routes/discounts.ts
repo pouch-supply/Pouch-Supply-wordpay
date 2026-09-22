@@ -2,8 +2,37 @@ import { Router } from "express";
 import { fetchResource, saveResource, getDb } from "../../serverDb";
 
 import { requireAdmin } from "../middleware/requireAdmin";
+import { checkDiscountUsable } from "../services/discountUsage";
 
 const router = Router();
+
+/**
+ * Can this shopper still use this code?
+ *
+ * Advisory only, so the storefront can refuse a spent one-per-customer code as
+ * it is typed rather than at the payment step. The binding checks are on the
+ * payment session and on order creation — this endpoint is a courtesy, and
+ * nothing relies on the client having called it.
+ */
+router.post("/validate", async (req, res) => {
+  try {
+    const { customerEmail, discount } = req.body || {};
+    if (!discount) {
+      return res.status(400).json({ ok: false, message: "A discount is required." });
+    }
+    // No email yet (the shopper has not filled the form in): nothing to check
+    // against, and the payment step will catch it.
+    if (!customerEmail) return res.json({ ok: true });
+
+    const verdict = await checkDiscountUsable(customerEmail, discount);
+    res.json({ ok: verdict.ok, message: verdict.message });
+  } catch (err: any) {
+    console.error("[Discounts Router] POST /validate Error:", err);
+    // A failed check must not block a legitimate sale; the payment step still
+    // applies the limit.
+    res.json({ ok: true });
+  }
+});
 
 // GET all discounts
 router.get("/", async (req, res) => {
