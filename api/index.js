@@ -543,7 +543,7 @@ function toSubscriptionRow(item) {
   let cans = num2(item?.cansCount ?? item?.subCansCount);
   if (cans === void 0) {
     const box = Array.isArray(item?.items) ? item.items : [];
-    const counted = box.reduce((sum, it) => sum + (num2(it?.quantity) ?? 0), 0);
+    const counted = box.reduce((sum2, it) => sum2 + (num2(it?.quantity) ?? 0), 0);
     if (counted > 0) cans = counted;
   }
   if (cans !== void 0) row.cansCount = Math.round(cans);
@@ -1765,7 +1765,7 @@ async function createDatabaseBackup(name = "Auto Snapshot") {
     backupData[r] = await fetchResource(r);
   }
   const backupId = `backup_${Date.now()}`;
-  const totalCount = Object.values(backupData).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0);
+  const totalCount = Object.values(backupData).reduce((sum2, arr) => sum2 + (Array.isArray(arr) ? arr.length : 0), 0);
   if (isConnected) {
     try {
       await ensureNeonTablesExist();
@@ -5361,7 +5361,7 @@ var init_orders = __esm({
           return res.status(400).json({ error: "Select at least one item to withdraw." });
         }
         const refundDue = Number(
-          itemsToReturn.reduce((sum, i) => sum + (Number(i?.price) || 0) * (Number(i?.quantity) || 1), 0).toFixed(2)
+          itemsToReturn.reduce((sum2, i) => sum2 + (Number(i?.price) || 0) * (Number(i?.quantity) || 1), 0).toFixed(2)
         );
         const tags = Array.isArray(order.tags) ? [...order.tags] : [];
         if (!tags.includes("Withdrawal Requested")) tags.push("Withdrawal Requested");
@@ -5752,7 +5752,7 @@ function isSubscriptionLine(item) {
   return ids.some((v) => v.includes("sub-pack"));
 }
 function subscriptionLinesTotal(items) {
-  return (Array.isArray(items) ? items : []).filter(isSubscriptionLine).reduce((sum, it) => sum + Number(it?.price || 0) * (Number(it?.quantity) || 1), 0);
+  return (Array.isArray(items) ? items : []).filter(isSubscriptionLine).reduce((sum2, it) => sum2 + Number(it?.price || 0) * (Number(it?.quantity) || 1), 0);
 }
 function recurringAmountForNewSubscription(input) {
   const subItemsTotal = Number(input.subItemsTotal) || 0;
@@ -7194,7 +7194,7 @@ async function createRoyalMailShipment(orderId, options = {}) {
   const totalVal = Number(order.total) || 0;
   const itemsTotal = Array.isArray(order.items) ? round2(
     order.items.reduce(
-      (sum, it) => sum + (Number(it?.price) || 0) * (Number(it?.quantity) || 1),
+      (sum2, it) => sum2 + (Number(it?.price) || 0) * (Number(it?.quantity) || 1),
       0
     )
   ) : 0;
@@ -8334,8 +8334,8 @@ init_serverDb();
 init_requireAdmin();
 import { Router } from "express";
 function createCrudRouter(resourceName, options = {}) {
-  const router20 = Router();
-  router20.get("/", async (req, res) => {
+  const router21 = Router();
+  router21.get("/", async (req, res) => {
     try {
       const data = await fetchResource(resourceName);
       res.json(data);
@@ -8344,7 +8344,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to fetch ${resourceName}` });
     }
   });
-  router20.get("/:id", async (req, res) => {
+  router21.get("/:id", async (req, res) => {
     try {
       const item = await fetchSingleItem(resourceName, req.params.id);
       if (!item) {
@@ -8356,7 +8356,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to fetch ${resourceName} item` });
     }
   });
-  router20.post("/", requireAdmin, async (req, res) => {
+  router21.post("/", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       const database = await getDb();
@@ -8387,7 +8387,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to persist ${resourceName}` });
     }
   });
-  router20.put("/:id", requireAdmin, async (req, res) => {
+  router21.put("/:id", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       if (!payload || typeof payload !== "object") {
@@ -8407,7 +8407,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to update ${resourceName} item` });
     }
   });
-  router20.delete("/:id", requireAdmin, async (req, res) => {
+  router21.delete("/:id", requireAdmin, async (req, res) => {
     try {
       const database = await getDb();
       if (!database) {
@@ -8422,7 +8422,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to delete ${resourceName} item` });
     }
   });
-  return router20;
+  return router21;
 }
 
 // backend/routes/products.ts
@@ -8726,20 +8726,226 @@ router4.get("/purge-expired", requireCronOrAdmin, handlePurge);
 router4.post("/purge-expired", requireCronOrAdmin, handlePurge);
 var recycleBin_default = router4;
 
+// backend/routes/analytics.ts
+init_requireAdmin();
+import { Router as Router4 } from "express";
+
+// backend/services/vercelAnalytics.ts
+var API_BASE = "https://api.vercel.com/v1/query/web-analytics";
+var DEFAULT_RANGE_DAYS = 30;
+function readConfig() {
+  const token = (process.env.VERCEL_API_TOKEN || process.env.VERCEL_TOKEN || "").trim();
+  const projectId = (process.env.VERCEL_PROJECT_ID || process.env.VERCEL_ANALYTICS_PROJECT_ID || "").trim();
+  const missing = [];
+  if (!token) missing.push("VERCEL_API_TOKEN");
+  if (!projectId) missing.push("VERCEL_PROJECT_ID");
+  if (missing.length) return { ok: false, missing };
+  return {
+    ok: true,
+    config: {
+      token,
+      projectId,
+      teamId: (process.env.VERCEL_TEAM_ID || "").trim() || void 0,
+      teamSlug: (process.env.VERCEL_TEAM_SLUG || "").trim() || void 0
+    }
+  };
+}
+function isoDay(d) {
+  return d.toISOString().slice(0, 10);
+}
+var scopeCache = null;
+function scopeParams(scope) {
+  return scope ? { teamId: scope.teamId } : {};
+}
+async function canQuery(config, scope) {
+  const today = isoDay(/* @__PURE__ */ new Date());
+  const query = new URLSearchParams({
+    projectId: config.projectId,
+    since: today,
+    until: today,
+    by: "day",
+    limit: "1",
+    ...scopeParams(scope)
+  });
+  try {
+    const res = await fetch(`${API_BASE}/visits/aggregate?${query.toString()}`, {
+      headers: { Authorization: `Bearer ${config.token}`, Accept: "application/json" }
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+async function listTeams(config) {
+  try {
+    const res = await fetch("https://api.vercel.com/v2/teams?limit=20", {
+      headers: { Authorization: `Bearer ${config.token}`, Accept: "application/json" }
+    });
+    if (!res.ok) return [];
+    const body = await res.json().catch(() => null);
+    return Array.isArray(body?.teams) ? body.teams : [];
+  } catch {
+    return [];
+  }
+}
+async function resolveScope(config) {
+  const cacheKey = `${config.token.slice(-8)}:${config.projectId}`;
+  if (scopeCache && scopeCache.key === cacheKey) return scopeCache.value;
+  let resolved;
+  if (config.teamId) {
+    resolved = { scope: { teamId: config.teamId, label: config.teamId }, detectedFrom: "environment" };
+  } else if (config.teamSlug) {
+    const team = (await listTeams(config)).find((t) => t.slug === config.teamSlug);
+    resolved = team ? { scope: { teamId: team.id, label: team.slug || team.id }, detectedFrom: "environment" } : { scope: null, detectedFrom: "personal-account" };
+  } else if (await canQuery(config, null)) {
+    resolved = { scope: null, detectedFrom: "personal-account" };
+  } else {
+    const teams = await listTeams(config);
+    let found = null;
+    for (const team of teams) {
+      const candidate = { teamId: team.id, label: team.slug || team.name || team.id };
+      if (await canQuery(config, candidate)) {
+        found = candidate;
+        break;
+      }
+    }
+    resolved = { scope: found, detectedFrom: found ? "team-lookup" : "personal-account" };
+    if (found) {
+      console.log(
+        `[Vercel Analytics] project ${config.projectId} resolved to team "${found.label}" (${found.teamId}). Set VERCEL_TEAM_ID to skip this lookup.`
+      );
+    }
+  }
+  scopeCache = { key: cacheKey, value: resolved };
+  return resolved;
+}
+function clearScopeCache() {
+  scopeCache = null;
+}
+async function aggregate(config, scope, params) {
+  const query = new URLSearchParams({
+    projectId: config.projectId,
+    since: params.since,
+    until: params.until,
+    by: params.by,
+    ...scopeParams(scope)
+  });
+  if (params.limit) query.set("limit", String(params.limit));
+  const res = await fetch(`${API_BASE}/visits/aggregate?${query.toString()}`, {
+    headers: { Authorization: `Bearer ${config.token}`, Accept: "application/json" }
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const reason = body?.error?.message || body?.message || `HTTP ${res.status}`;
+    throw new Error(reason);
+  }
+  return Array.isArray(body?.data) ? body.data : [];
+}
+var num3 = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+var sum = (rows, key) => rows.reduce((total, row) => total + num3(row[key]), 0);
+function toNamed(rows, dimension) {
+  return rows.map((row) => ({
+    name: String(row[dimension] ?? row.name ?? "Unknown") || "Unknown",
+    pageviews: num3(row.pageviews),
+    visitors: num3(row.visitors)
+  }));
+}
+var CACHE_MS = 6e4;
+var cache = null;
+async function fetchWebAnalytics(rangeDays = DEFAULT_RANGE_DAYS) {
+  const days = Math.max(1, Math.min(365, Math.floor(rangeDays) || DEFAULT_RANGE_DAYS));
+  const cfg = readConfig();
+  if (cfg.ok === false) return { configured: false, missing: cfg.missing };
+  const cacheKey = `${days}:${cfg.config.projectId}`;
+  if (cache && cache.key === cacheKey && Date.now() - cache.at < CACHE_MS) return cache.value;
+  const { scope, detectedFrom } = await resolveScope(cfg.config);
+  const until = /* @__PURE__ */ new Date();
+  const since = new Date(until.getTime() - (days - 1) * 24 * 60 * 60 * 1e3);
+  const range = { since: isoDay(since), until: isoDay(until) };
+  const partial = [];
+  const ask = async (by, limit) => {
+    try {
+      return await aggregate(cfg.config, scope, { ...range, by, limit });
+    } catch (err) {
+      console.warn(`[Vercel Analytics] "${by}" unavailable: ${err?.message}`);
+      partial.push(by);
+      return [];
+    }
+  };
+  let daily;
+  try {
+    daily = await aggregate(cfg.config, scope, { ...range, by: "day" });
+  } catch (err) {
+    console.error("[Vercel Analytics] request failed:", err?.message);
+    const value2 = { configured: true, error: err?.message || "Vercel did not answer." };
+    cache = { key: cacheKey, at: Date.now(), value: value2 };
+    return value2;
+  }
+  const [routes, countries, referrers, devices] = await Promise.all([
+    ask("route", 8),
+    ask("country", 6),
+    ask("referrerHostname", 6),
+    ask("deviceType", 5)
+  ]);
+  const value = {
+    configured: true,
+    since: range.since,
+    until: range.until,
+    rangeDays: days,
+    totals: { pageviews: sum(daily, "pageviews"), visitors: sum(daily, "visitors") },
+    daily: daily.map((row) => ({
+      date: String(row.timestamp ?? row.day ?? "").slice(0, 10),
+      pageviews: num3(row.pageviews),
+      visitors: num3(row.visitors)
+    })),
+    topRoutes: toNamed(routes, "route"),
+    topCountries: toNamed(countries, "country"),
+    topReferrers: toNamed(referrers, "referrerHostname"),
+    devices: toNamed(devices, "deviceType"),
+    partial,
+    account: { team: scope ? scope.label : null, detectedFrom },
+    fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  cache = { key: cacheKey, at: Date.now(), value };
+  return value;
+}
+function clearCache() {
+  cache = null;
+  clearScopeCache();
+}
+
+// backend/routes/analytics.ts
+var router5 = Router4();
+router5.get("/traffic", requireAdmin, async (req, res) => {
+  try {
+    const days = Number(req.query.days) || DEFAULT_RANGE_DAYS;
+    if (req.query.refresh === "1" || req.query.refresh === "true") clearCache();
+    const data = await fetchWebAnalytics(days);
+    res.json(data);
+  } catch (err) {
+    console.error("[Analytics Router] traffic Error:", err);
+    res.status(500).json({ configured: true, error: err?.message || "Could not read Vercel Analytics" });
+  }
+});
+var analytics_default = router5;
+
 // backend/routes/files.ts
 init_prisma();
 init_cloudinary();
-import { Router as Router5 } from "express";
+import { Router as Router6 } from "express";
 
 // backend/routes/media.ts
 init_prisma();
 init_serverDb();
 init_cloudinary();
-import { Router as Router4 } from "express";
+import { Router as Router5 } from "express";
 import multer from "multer";
 import fs2 from "fs";
 import path2 from "path";
-var router5 = Router4();
+var router6 = Router5();
 var upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 }
@@ -8800,7 +9006,7 @@ async function checkMediaReferences(fileUrl) {
   }
   return references;
 }
-router5.get("/", async (req, res) => {
+router6.get("/", async (req, res) => {
   try {
     const files = await prisma.fileEntry.findMany({
       orderBy: { createdAt: "desc" }
@@ -8816,7 +9022,7 @@ router5.get("/", async (req, res) => {
     }
   }
 });
-router5.post("/check-references", async (req, res) => {
+router6.post("/check-references", async (req, res) => {
   try {
     const { url } = req.body;
     if (!url) {
@@ -8828,7 +9034,7 @@ router5.post("/check-references", async (req, res) => {
     res.status(500).json({ error: err.message || "Error checking media references" });
   }
 });
-router5.post("/upload", upload.single("file"), async (req, res) => {
+router6.post("/upload", upload.single("file"), async (req, res) => {
   try {
     let fileBuffer = null;
     let fileName = "Uploaded Asset";
@@ -9001,7 +9207,7 @@ router5.post("/upload", upload.single("file"), async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to upload media asset" });
   }
 });
-router5.patch("/:id", async (req, res) => {
+router6.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { fileName, altText, folder } = req.body;
@@ -9022,7 +9228,7 @@ router5.patch("/:id", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to update media file metadata" });
   }
 });
-router5.delete("/:id", async (req, res) => {
+router6.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const force = req.query.force === "true";
@@ -9051,13 +9257,13 @@ router5.delete("/:id", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to delete media asset" });
   }
 });
-var media_default = router5;
+var media_default = router6;
 
 // backend/routes/files.ts
 init_serverDb();
 init_requireAdmin();
-var router6 = Router5();
-router6.get("/", async (_req, res) => {
+var router7 = Router6();
+router7.get("/", async (_req, res) => {
   try {
     const data = await fetchResource("files");
     return res.json(data);
@@ -9066,7 +9272,7 @@ router6.get("/", async (_req, res) => {
     return res.status(500).json({ error: err.message || "Failed to fetch files" });
   }
 });
-router6.post("/", requireAdmin, async (req, res) => {
+router7.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -9085,7 +9291,7 @@ router6.post("/", requireAdmin, async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to persist files" });
   }
 });
-router6.delete("/:id", requireAdmin, async (req, res) => {
+router7.delete("/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const force = req.query.force === "true";
@@ -9131,14 +9337,14 @@ router6.delete("/:id", requireAdmin, async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to delete file" });
   }
 });
-var files_default = router6;
+var files_default = router7;
 
 // backend/routes/customers.ts
 init_serverDb();
 init_prisma();
 init_emailService();
 init_klaviyoService();
-import { Router as Router6 } from "express";
+import { Router as Router7 } from "express";
 import crypto3 from "crypto";
 
 // backend/services/recaptchaService.ts
@@ -9250,7 +9456,7 @@ async function verifyRecaptchaToken(token, expectedAction) {
 // backend/routes/customers.ts
 init_adminAuth();
 init_requireAdmin();
-var router7 = Router6();
+var router8 = Router7();
 function hashPassword(password) {
   return crypto3.createHash("sha256").update(password + "pouch_supply_salt_123!").digest("hex");
 }
@@ -9282,7 +9488,7 @@ async function enrichCustomerAgeStatus(customer) {
   }
   return customer;
 }
-router7.get("/", requireAdmin, async (req, res) => {
+router8.get("/", requireAdmin, async (req, res) => {
   try {
     const data = await fetchResource("customers");
     const sanitized = data.map(({ passwordHash, ...rest }) => rest);
@@ -9292,7 +9498,7 @@ router7.get("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch customers" });
   }
 });
-router7.get("/by-email", requireCustomer, async (req, res) => {
+router8.get("/by-email", requireCustomer, async (req, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
     if (!email) {
@@ -9313,7 +9519,7 @@ router7.get("/by-email", requireCustomer, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch customer" });
   }
 });
-router7.post("/", requireAdmin, async (req, res) => {
+router8.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -9332,7 +9538,7 @@ router7.post("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to persist customers" });
   }
 });
-router7.post("/signup", async (req, res) => {
+router8.post("/signup", async (req, res) => {
   try {
     const { name, email, password, phone, location = "United Kingdom", referredByCode = null, recaptchaToken, token } = req.body;
     const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, "customer_signup");
@@ -9417,7 +9623,7 @@ router7.post("/signup", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to complete customer registration" });
   }
 });
-router7.post("/forgot-password", async (req, res) => {
+router8.post("/forgot-password", async (req, res) => {
   try {
     const { email, recaptchaToken, token } = req.body;
     const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, "customer_forgot_password");
@@ -9453,7 +9659,7 @@ router7.post("/forgot-password", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to process password reset request" });
   }
 });
-router7.post("/reset-password", async (req, res) => {
+router8.post("/reset-password", async (req, res) => {
   try {
     const { token, code, email, newPassword, recaptchaToken } = req.body;
     const suppliedCodeOrToken = (code || token || "").toString().trim();
@@ -9496,7 +9702,7 @@ router7.post("/reset-password", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to reset password" });
   }
 });
-router7.post("/request-verification", async (req, res) => {
+router8.post("/request-verification", async (req, res) => {
   try {
     const { email, name } = req.body;
     if (!email) {
@@ -9521,7 +9727,7 @@ router7.post("/request-verification", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to send verification code" });
   }
 });
-router7.post("/verify-email", async (req, res) => {
+router8.post("/verify-email", async (req, res) => {
   try {
     const { email, code, name } = req.body;
     if (!email || !code) {
@@ -9556,7 +9762,7 @@ router7.post("/verify-email", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to verify email address" });
   }
 });
-router7.post("/login", async (req, res) => {
+router8.post("/login", async (req, res) => {
   try {
     const { email, password, recaptchaToken } = req.body;
     const captchaCheck = await verifyRecaptchaToken(recaptchaToken, "customer_login");
@@ -9615,7 +9821,7 @@ router7.post("/login", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to complete customer login" });
   }
 });
-router7.post("/google-login", async (req, res) => {
+router8.post("/google-login", async (req, res) => {
   try {
     const { email, name, googleId, picture } = req.body;
     if (!email) {
@@ -9688,7 +9894,7 @@ router7.post("/google-login", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to authenticate with Google" });
   }
 });
-router7.post("/admin-login", async (req, res) => {
+router8.post("/admin-login", async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -9721,7 +9927,7 @@ router7.post("/admin-login", async (req, res) => {
     res.status(500).json({ error: err.message || "Internal server error during admin validation" });
   }
 });
-router7.post("/update-profile", requireCustomer, async (req, res) => {
+router8.post("/update-profile", requireCustomer, async (req, res) => {
   try {
     const customerData = req.body.customer || req.body;
     if (!customerData || !customerData.email && !customerData.id) {
@@ -9795,15 +10001,15 @@ router7.post("/update-profile", requireCustomer, async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to update profile." });
   }
 });
-var customers_default = router7;
+var customers_default = router8;
 
 // backend/routes/discounts.ts
 init_serverDb();
 init_requireAdmin();
 init_discountUsage();
-import { Router as Router7 } from "express";
-var router8 = Router7();
-router8.get("/auto", async (req, res) => {
+import { Router as Router8 } from "express";
+var router9 = Router8();
+router9.get("/auto", async (req, res) => {
   try {
     const email = String(req.query.email || "").trim();
     if (!email) return res.json({ discount: null });
@@ -9815,7 +10021,7 @@ router8.get("/auto", async (req, res) => {
     res.json({ discount: null });
   }
 });
-router8.post("/validate", async (req, res) => {
+router9.post("/validate", async (req, res) => {
   try {
     const { customerEmail, discount } = req.body || {};
     if (!discount) {
@@ -9829,7 +10035,7 @@ router8.post("/validate", async (req, res) => {
     res.json({ ok: true });
   }
 });
-router8.get("/", async (req, res) => {
+router9.get("/", async (req, res) => {
   try {
     const data = await fetchResource("discounts");
     res.json(data);
@@ -9838,7 +10044,7 @@ router8.get("/", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch discounts" });
   }
 });
-router8.post("/", requireAdmin, async (req, res) => {
+router9.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -9857,13 +10063,13 @@ router8.post("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to persist discounts" });
   }
 });
-var discounts_default = router8;
+var discounts_default = router9;
 
 // backend/routes/customPages.ts
 init_planCatalogue();
 init_subscriptionPricingService();
 init_emailService();
-var router9 = createCrudRouter("customPages", {
+var router10 = createCrudRouter("customPages", {
   onAfterReplace: async (before, after) => {
     const previousPlans = await getPlanCatalogue(before);
     const currentPlans = await getPlanCatalogue(after);
@@ -9898,14 +10104,14 @@ var router9 = createCrudRouter("customPages", {
     );
   }
 });
-var customPages_default = router9;
+var customPages_default = router10;
 
 // backend/routes/blogs.ts
 init_serverDb();
 init_requireAdmin();
-import { Router as Router8 } from "express";
-var router10 = Router8();
-router10.get("/", async (req, res) => {
+import { Router as Router9 } from "express";
+var router11 = Router9();
+router11.get("/", async (req, res) => {
   try {
     const data = await fetchResource("blogs");
     res.json(data);
@@ -9914,7 +10120,7 @@ router10.get("/", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch blogs" });
   }
 });
-router10.post("/", requireAdmin, async (req, res) => {
+router11.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -9933,7 +10139,7 @@ router10.post("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to persist blogs" });
   }
 });
-var blogs_default = router10;
+var blogs_default = router11;
 
 // backend/routes/worldpay.ts
 init_prisma();
@@ -9942,7 +10148,7 @@ init_requireAdmin();
 init_worldpaySubscription();
 init_subscriptionCron();
 init_ukValidation();
-import { Router as Router9 } from "express";
+import { Router as Router10 } from "express";
 import crypto5 from "crypto";
 
 // src/utils/discountUtils.ts
@@ -10208,7 +10414,7 @@ function resolveDeliveryCost(subtotalAfterDiscount, discount, baseCost = STANDAR
 init_subscriptionPricing();
 init_klaviyoService();
 init_discountUsage();
-var router11 = Router9();
+var router12 = Router10();
 function assertDeliverable(body) {
   const address = body?.shippingAddress && typeof body.shippingAddress === "object" ? body.shippingAddress : {};
   const destination = String(body?.destination || body?.address || "");
@@ -11025,8 +11231,8 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
   }
   return results;
 }
-router11.get("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
-router11.post("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
+router12.get("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
+router12.post("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
 var SUBSCRIPTION_REPAIR_LIMIT = 10;
 async function billableSubscriptionsFor(orderId) {
   if (!await getDb()) {
@@ -11245,7 +11451,7 @@ var handleRepairSubscriptions = async (req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 };
-router11.post("/repair-subscriptions", requireAdmin, handleRepairSubscriptions);
+router12.post("/repair-subscriptions", requireAdmin, handleRepairSubscriptions);
 var handleRecoverTokens = async (_req, res) => {
   try {
     const results = await recoverMissingSubscriptionTokens();
@@ -11260,9 +11466,9 @@ var handleRecoverTokens = async (_req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 };
-router11.get("/recover-tokens", requireAdmin, handleRecoverTokens);
-router11.post("/recover-tokens", requireAdmin, handleRecoverTokens);
-router11.get("/config", (_req, res) => {
+router12.get("/recover-tokens", requireAdmin, handleRecoverTokens);
+router12.post("/recover-tokens", requireAdmin, handleRecoverTokens);
+router12.get("/config", (_req, res) => {
   const cfg = getEnvironmentConfig();
   res.json({
     active: true,
@@ -11551,9 +11757,9 @@ async function handleCreateHostedPaymentPage(req, res) {
     });
   }
 }
-router11.post("/session", handleCreateHostedPaymentPage);
-router11.post("/payment_pages", handleCreateHostedPaymentPage);
-router11.post("/verify-payment", async (req, res) => {
+router12.post("/session", handleCreateHostedPaymentPage);
+router12.post("/payment_pages", handleCreateHostedPaymentPage);
+router12.post("/verify-payment", async (req, res) => {
   try {
     const {
       orderId,
@@ -11678,8 +11884,8 @@ var handleWorldpayCallback = async (req, res) => {
   }
   return res.redirect(`/payment/failed?orderId=${encodeURIComponent(orderId)}&reason=unknown_status`);
 };
-router11.get("/callback", handleWorldpayCallback);
-router11.post("/callback", handleWorldpayCallback);
+router12.get("/callback", handleWorldpayCallback);
+router12.post("/callback", handleWorldpayCallback);
 var WEBHOOK_PAID_EVENTS = /* @__PURE__ */ new Set([
   "authorized",
   "authorised",
@@ -11743,7 +11949,7 @@ var lastHandlerRanAt = null;
 var lastReceiptWriteError = null;
 var lastContentType = null;
 var WEBHOOK_BUILD_MARKER = "webhook-vendor-json-parse-2026-09-16";
-router11.get("/webhook", async (_req, res) => {
+router12.get("/webhook", async (_req, res) => {
   let heldTokens = 0;
   try {
     heldTokens = (await fetchResource(PENDING_TOKENS_RESOURCE) || []).length;
@@ -11792,7 +11998,7 @@ router11.get("/webhook", async (_req, res) => {
     lastRawBodies: received.slice(0, 3).map((r) => r.rawBody)
   });
 });
-router11.post("/webhook", async (req, res) => {
+router12.post("/webhook", async (req, res) => {
   const contentType = String(req.headers["content-type"] || "none");
   if ((!req.body || typeof req.body === "object" && Object.keys(req.body).length === 0) && req.rawBody) {
     try {
@@ -11914,7 +12120,7 @@ router11.post("/webhook", async (req, res) => {
     return res.status(500).json({ received: true, processed: false, error: error.message });
   }
 });
-router11.get("/status", async (req, res) => {
+router12.get("/status", async (req, res) => {
   try {
     const orderId = req.query.orderId;
     if (!orderId) return res.status(400).json({ error: "orderId is required" });
@@ -11970,7 +12176,7 @@ router11.get("/status", async (req, res) => {
     return res.status(500).json({ error: error.message || "Failed to check payment status" });
   }
 });
-router11.get("/order/:id", async (req, res) => {
+router12.get("/order/:id", async (req, res) => {
   try {
     const orderId = req.params.id;
     let foundOrder = null;
@@ -11993,7 +12199,7 @@ router11.get("/order/:id", async (req, res) => {
     return res.status(500).json({ error: error.message || "Failed to fetch order" });
   }
 });
-router11.post("/refund", requireAdmin, async (req, res) => {
+router12.post("/refund", requireAdmin, async (req, res) => {
   try {
     const { orderId, amount, reason, transactionId } = req.body;
     if (!orderId) {
@@ -12052,7 +12258,7 @@ router11.post("/refund", requireAdmin, async (req, res) => {
     return res.status(500).json({ error: error.message || "Failed to process Worldpay refund" });
   }
 });
-var worldpay_default = router11;
+var worldpay_default = router12;
 
 // backend/routes/subscriptions.ts
 init_prisma();
@@ -12064,9 +12270,9 @@ init_klaviyoService();
 init_serverDb();
 init_worldpaySubscription();
 init_subscriptionCron();
-import { Router as Router10 } from "express";
+import { Router as Router11 } from "express";
 import crypto6 from "crypto";
-var router12 = Router10();
+var router13 = Router11();
 var handleProcessRenewals = async (_req, res) => {
   try {
     const result = await processDueSubscriptions();
@@ -12085,10 +12291,10 @@ var handleProcessRenewals = async (_req, res) => {
     });
   }
 };
-router12.get("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
-router12.post("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
-router12.get("/cron", requireCronOrAdmin, handleProcessRenewals);
-router12.post("/cron", requireCronOrAdmin, handleProcessRenewals);
+router13.get("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router13.post("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router13.get("/cron", requireCronOrAdmin, handleProcessRenewals);
+router13.post("/cron", requireCronOrAdmin, handleProcessRenewals);
 function canChargeRecurring(sub) {
   if (!sub) return false;
   const href = sub.worldpayRecurringHref || sub.recurringHref;
@@ -12195,7 +12401,7 @@ function toCustomerSubscription(s, now = /* @__PURE__ */ new Date()) {
     credentialIssue: canChargeRecurring(s) ? null : "This plan has no stored-card mandate with Worldpay, so it cannot take a recurring payment. Subscribe again to set one up."
   };
 }
-router12.get("/status", requireAdmin, async (_req, res) => {
+router13.get("/status", requireAdmin, async (_req, res) => {
   try {
     let subscriptions = [];
     try {
@@ -12250,7 +12456,7 @@ router12.get("/status", requireAdmin, async (_req, res) => {
     });
   }
 });
-router12.post("/update-schedule", requireCustomer, async (req, res) => {
+router13.post("/update-schedule", requireCustomer, async (req, res) => {
   try {
     const { subscriptionId, customerEmail, billingInterval, nextBillingDate, chargeImmediately } = req.body;
     if (!subscriptionId && !customerEmail) {
@@ -12307,7 +12513,7 @@ router12.post("/update-schedule", requireCustomer, async (req, res) => {
     });
   }
 });
-router12.post("/update-plan", requireCustomer, async (req, res) => {
+router13.post("/update-plan", requireCustomer, async (req, res) => {
   try {
     const {
       subscriptionId,
@@ -12347,7 +12553,7 @@ router12.post("/update-plan", requireCustomer, async (req, res) => {
     }
     const itemsIn = Array.isArray(subItems) ? subItems : Array.isArray(items) ? items : void 0;
     const amountIn = given(subPrice) ? Number(subPrice) : given(amount) ? Number(amount) : void 0;
-    const cansIn = given(subCansCount) ? Number(subCansCount) : given(cansCount) ? Number(cansCount) : itemsIn ? itemsIn.reduce((sum, it) => sum + (Number(it?.quantity) || 1), 0) : void 0;
+    const cansIn = given(subCansCount) ? Number(subCansCount) : given(cansCount) ? Number(cansCount) : itemsIn ? itemsIn.reduce((sum2, it) => sum2 + (Number(it?.quantity) || 1), 0) : void 0;
     const existing = ownPlans.find((s) => String(s.id) === String(targetId)) || await loadSubscriptionById(String(targetId));
     if (!existing || !mayActOnCustomer(req, existing.customerEmail)) {
       return res.status(404).json({ success: false, message: "Subscription not found" });
@@ -12471,7 +12677,7 @@ router12.post("/update-plan", requireCustomer, async (req, res) => {
     });
   }
 });
-router12.post(
+router13.post(
   "/create",
   async (req, res) => {
     try {
@@ -12598,7 +12804,7 @@ router12.post(
     }
   }
 );
-router12.post(
+router13.post(
   "/cancel",
   async (req, res) => {
     try {
@@ -12758,7 +12964,7 @@ router12.post(
     }
   }
 );
-router12.post(
+router13.post(
   "/reactivate",
   async (req, res) => {
     try {
@@ -12924,7 +13130,7 @@ router12.post(
     }
   }
 );
-router12.post(
+router13.post(
   "/delete",
   async (req, res) => {
     try {
@@ -12994,7 +13200,7 @@ router12.post(
     }
   }
 );
-router12.get(
+router13.get(
   "/customer/:email",
   async (req, res) => {
     try {
@@ -13028,13 +13234,13 @@ router12.get(
     }
   }
 );
-var subscriptions_default = router12;
+var subscriptions_default = router13;
 
 // backend/routes/structure.ts
-import { Router as Router11 } from "express";
+import { Router as Router12 } from "express";
 import fs3 from "fs";
 import path3 from "path";
-var router13 = Router11();
+var router14 = Router12();
 var EXCLUDED_DIRS = /* @__PURE__ */ new Set([
   "node_modules",
   ".git",
@@ -13099,7 +13305,7 @@ function generateAsciiTree(nodes, prefix = "") {
   });
   return result;
 }
-router13.get("/", (req, res) => {
+router14.get("/", (req, res) => {
   try {
     const rootDir = process.cwd();
     const tree = buildTree(rootDir);
@@ -13123,15 +13329,15 @@ router13.get("/", (req, res) => {
     });
   }
 });
-var structure_default = router13;
+var structure_default = router14;
 
 // backend/routes/email.ts
 init_emailService();
-import { Router as Router12 } from "express";
+import { Router as Router13 } from "express";
 init_emailTemplates();
 init_serverDb();
 init_requireAdmin();
-var router14 = Router12();
+var router15 = Router13();
 function getSampleTemplateData(type, customData) {
   const sampleItems = [
     { productId: "p1", productTitle: "VELO Freeze Max Strong 17mg Canister", price: 5.99, quantity: 2 },
@@ -13170,7 +13376,7 @@ function getSampleTemplateData(type, customData) {
   };
   return { ...defaultData, ...customData || {} };
 }
-router14.get("/settings", requireAdmin, async (_req, res) => {
+router15.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getEmailSettings();
     res.json(settings);
@@ -13178,7 +13384,7 @@ router14.get("/settings", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch email settings" });
   }
 });
-router14.post("/settings", requireAdmin, async (req, res) => {
+router15.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveEmailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -13186,7 +13392,7 @@ router14.post("/settings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save email settings" });
   }
 });
-router14.post("/verify-connection", requireAdmin, async (req, res) => {
+router15.post("/verify-connection", requireAdmin, async (req, res) => {
   try {
     const result = await verifyEmailConnection(req.body);
     res.json(result);
@@ -13194,7 +13400,7 @@ router14.post("/verify-connection", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, message: err.message || "Verification failed" });
   }
 });
-router14.get("/recaptcha-settings", async (_req, res) => {
+router15.get("/recaptcha-settings", async (_req, res) => {
   try {
     const settings = await getRecaptchaSettings();
     res.json({
@@ -13207,7 +13413,7 @@ router14.get("/recaptcha-settings", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch recaptcha settings" });
   }
 });
-router14.post("/recaptcha-settings", requireAdmin, async (req, res) => {
+router15.post("/recaptcha-settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveRecaptchaSettings(req.body);
     res.json({
@@ -13223,7 +13429,7 @@ router14.post("/recaptcha-settings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save recaptcha settings" });
   }
 });
-router14.get("/logs", requireAdmin, async (_req, res) => {
+router15.get("/logs", requireAdmin, async (_req, res) => {
   try {
     const logs = await getEmailLogs();
     res.json(logs);
@@ -13231,7 +13437,7 @@ router14.get("/logs", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch email logs" });
   }
 });
-router14.post("/logs/clear", requireAdmin, async (req, res) => {
+router15.post("/logs/clear", requireAdmin, async (req, res) => {
   try {
     const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
     const beforeRaw = req.body?.before;
@@ -13268,7 +13474,7 @@ router14.post("/logs/clear", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to clear email logs" });
   }
 });
-router14.post("/preview", requireAdmin, async (req, res) => {
+router15.post("/preview", requireAdmin, async (req, res) => {
   try {
     const { type, customData } = req.body;
     const templateType = type || "order_confirmation";
@@ -13331,7 +13537,7 @@ router14.post("/preview", requireAdmin, async (req, res) => {
     res.status(500).send(`<div style="padding:20px; color:red; font-family:sans-serif;">Error rendering preview: ${err.message}</div>`);
   }
 });
-router14.post("/test", requireAdmin, async (req, res) => {
+router15.post("/test", requireAdmin, async (req, res) => {
   try {
     const { recipient, type, customSubject, customData, apiKey, fromEmail } = req.body;
     if (!recipient || typeof recipient !== "string" || !recipient.includes("@")) {
@@ -13345,7 +13551,7 @@ router14.post("/test", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to send test email" });
   }
 });
-router14.post("/send-trigger", async (req, res) => {
+router15.post("/send-trigger", async (req, res) => {
   try {
     const { type, orderData, customerEmail, customerName, trackingNumber, carrier, refundAmount, reason, code } = req.body;
     let result = null;
@@ -13394,7 +13600,7 @@ router14.post("/send-trigger", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to dispatch email trigger" });
   }
 });
-router14.post("/contact", async (req, res) => {
+router15.post("/contact", async (req, res) => {
   try {
     const { name, email, subject, message, phone, recaptchaToken, token } = req.body;
     if (!name || !email || !message) {
@@ -13468,15 +13674,15 @@ router14.post("/contact", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to submit contact message" });
   }
 });
-var email_default = router14;
+var email_default = router15;
 
 // backend/routes/klaviyo.ts
 init_klaviyoService();
 init_serverDb();
 init_requireAdmin();
-import { Router as Router13 } from "express";
-var router15 = Router13();
-router15.get("/lists", requireAdmin, async (req, res) => {
+import { Router as Router14 } from "express";
+var router16 = Router14();
+router16.get("/lists", requireAdmin, async (req, res) => {
   try {
     const apiKey = req.query.apiKey;
     const lists = await getKlaviyoLists(apiKey);
@@ -13485,7 +13691,7 @@ router15.get("/lists", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch Klaviyo lists" });
   }
 });
-router15.get("/settings", requireAdmin, async (_req, res) => {
+router16.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getKlaviyoSettings();
     res.json(settings);
@@ -13493,7 +13699,7 @@ router15.get("/settings", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Klaviyo settings" });
   }
 });
-router15.post("/settings", requireAdmin, async (req, res) => {
+router16.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveKlaviyoSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -13578,9 +13784,9 @@ var handleVerify = async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to verify Klaviyo API key" });
   }
 };
-router15.get("/verify", requireAdmin, handleVerify);
-router15.post("/verify", requireAdmin, handleVerify);
-router15.get("/health", requireAdmin, async (_req, res) => {
+router16.get("/verify", requireAdmin, handleVerify);
+router16.post("/verify", requireAdmin, handleVerify);
+router16.get("/health", requireAdmin, async (_req, res) => {
   try {
     const settings = await getKlaviyoSettings();
     let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
@@ -13655,7 +13861,7 @@ router15.get("/health", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to read Klaviyo health" });
   }
 });
-router15.get("/logs", requireAdmin, async (_req, res) => {
+router16.get("/logs", requireAdmin, async (_req, res) => {
   try {
     const logs = await getKlaviyoLogs();
     res.json(logs);
@@ -13663,7 +13869,7 @@ router15.get("/logs", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Klaviyo logs" });
   }
 });
-router15.post("/logs/clear", requireAdmin, async (req, res) => {
+router16.post("/logs/clear", requireAdmin, async (req, res) => {
   try {
     const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
     const beforeRaw = req.body?.before;
@@ -13700,7 +13906,7 @@ router15.post("/logs/clear", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to clear klaviyo logs" });
   }
 });
-router15.post("/track", async (req, res) => {
+router16.post("/track", async (req, res) => {
   try {
     const { eventName, customerEmail, eventProperties, customerProperties, eventType, data } = req.body;
     if (eventType) {
@@ -13747,13 +13953,13 @@ router15.post("/track", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to track Klaviyo event" });
   }
 });
-var klaviyo_default = router15;
+var klaviyo_default = router16;
 
 // backend/routes/royalMail.ts
 init_royalMailService();
 init_royalMail();
 init_requireAdmin();
-import { Router as Router14 } from "express";
+import { Router as Router15 } from "express";
 function sendRoyalMailError(res, error, fallbackMessage) {
   console.error(`[Royal Mail] ${fallbackMessage}:`, error);
   if (error instanceof RoyalMailError) {
@@ -13771,8 +13977,8 @@ function sendRoyalMailError(res, error, fallbackMessage) {
     message: error?.message || fallbackMessage
   });
 }
-var router16 = Router14();
-router16.get("/connection", requireAdmin, async (_req, res) => {
+var router17 = Router15();
+router17.get("/connection", requireAdmin, async (_req, res) => {
   try {
     const settings = await getRoyalMailSettings();
     const apiKey = (settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "").trim();
@@ -13817,7 +14023,7 @@ router16.get("/connection", requireAdmin, async (_req, res) => {
     });
   }
 });
-router16.post("/create-order", requireAdmin, async (req, res) => {
+router17.post("/create-order", requireAdmin, async (req, res) => {
   try {
     const orderData = req.body;
     const settings = await getRoyalMailSettings();
@@ -13872,7 +14078,7 @@ router16.post("/create-order", requireAdmin, async (req, res) => {
     });
   }
 });
-router16.get("/orders", requireAdmin, async (req, res) => {
+router17.get("/orders", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const params = req.query;
@@ -13882,7 +14088,7 @@ router16.get("/orders", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch orders" });
   }
 });
-router16.get("/orders/:reference", requireAdmin, async (req, res) => {
+router17.get("/orders/:reference", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getOrderByReference(req.params.reference, apiKey);
@@ -13891,7 +14097,7 @@ router16.get("/orders/:reference", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch order" });
   }
 });
-router16.delete("/orders/:reference", requireAdmin, async (req, res) => {
+router17.delete("/orders/:reference", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await cancelOrder(req.params.reference, apiKey);
@@ -13900,7 +14106,7 @@ router16.delete("/orders/:reference", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to cancel order" });
   }
 });
-router16.get("/version", requireAdmin, async (_req, res) => {
+router17.get("/version", requireAdmin, async (_req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getApiVersion(apiKey);
@@ -13909,7 +14115,7 @@ router16.get("/version", requireAdmin, async (_req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch API version" });
   }
 });
-router16.get("/settings", requireAdmin, async (_req, res) => {
+router17.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getRoyalMailSettings();
     res.json(settings);
@@ -13917,7 +14123,7 @@ router16.get("/settings", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Royal Mail settings" });
   }
 });
-router16.post("/settings", requireAdmin, async (req, res) => {
+router17.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveRoyalMailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -13925,7 +14131,7 @@ router16.post("/settings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save Royal Mail settings" });
   }
 });
-router16.post("/create-shipment", requireAdmin, async (req, res) => {
+router17.post("/create-shipment", requireAdmin, async (req, res) => {
   try {
     const { orderId, serviceCode, packageType, weightGrams } = req.body;
     if (!orderId) {
@@ -13941,7 +14147,7 @@ router16.post("/create-shipment", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to create Royal Mail shipment");
   }
 });
-router16.post("/validate-address", requireAdmin, async (req, res) => {
+router17.post("/validate-address", requireAdmin, async (req, res) => {
   try {
     const result = validateAddress(req.body);
     res.json(result);
@@ -13949,7 +14155,7 @@ router16.post("/validate-address", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Address validation failed" });
   }
 });
-router16.post("/test-service-code", requireAdmin, async (req, res) => {
+router17.post("/test-service-code", requireAdmin, async (req, res) => {
   try {
     const codes = Array.isArray(req.body?.serviceCodes) ? req.body.serviceCodes : [req.body?.serviceCode].filter(Boolean);
     if (codes.length === 0) {
@@ -13964,7 +14170,7 @@ router16.post("/test-service-code", requireAdmin, async (req, res) => {
     return res.status(200).json({ success: false, message: error?.message || "Service code test failed." });
   }
 });
-router16.post("/rates", requireAdmin, async (req, res) => {
+router17.post("/rates", requireAdmin, async (req, res) => {
   try {
     const { weightGrams, countryCode } = req.body;
     const rates = getShippingRates(weightGrams || 70, countryCode || "GB");
@@ -13973,7 +14179,7 @@ router16.post("/rates", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to calculate rates" });
   }
 });
-router16.get("/label/:orderId/order-pdf", requireAdmin, async (req, res) => {
+router17.get("/label/:orderId/order-pdf", requireAdmin, async (req, res) => {
   try {
     const { orderId } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -13990,7 +14196,7 @@ router16.get("/label/:orderId/order-pdf", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Unable to retrieve the Royal Mail label");
   }
 });
-router16.put("/dispatch-order/:orderId", requireAdmin, async (req, res) => {
+router17.put("/dispatch-order/:orderId", requireAdmin, async (req, res) => {
   try {
     const result = await dispatchRoyalMailShipment(String(req.params.orderId));
     return res.json(result);
@@ -13998,7 +14204,7 @@ router16.put("/dispatch-order/:orderId", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Unable to mark the order as despatched");
   }
 });
-router16.get("/track/:trackingNumber", async (req, res) => {
+router17.get("/track/:trackingNumber", async (req, res) => {
   try {
     const { trackingNumber } = req.params;
     const trackingInfo = await getRoyalMailTracking(trackingNumber);
@@ -14007,7 +14213,7 @@ router16.get("/track/:trackingNumber", async (req, res) => {
     return sendRoyalMailError(res, err, "Tracking lookup failed");
   }
 });
-router16.post("/sync-status/:orderId", async (req, res) => {
+router17.post("/sync-status/:orderId", async (req, res) => {
   try {
     const { orderId } = req.params;
     const result = await syncRoyalMailOrderStatus(orderId);
@@ -14030,9 +14236,9 @@ var handleSyncPending = async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to sync pending Royal Mail tracking");
   }
 };
-router16.get("/sync-pending", requireCronOrAdmin, handleSyncPending);
-router16.post("/sync-pending", requireCronOrAdmin, handleSyncPending);
-router16.post("/cancel-shipment", requireAdmin, async (req, res) => {
+router17.get("/sync-pending", requireCronOrAdmin, handleSyncPending);
+router17.post("/sync-pending", requireCronOrAdmin, handleSyncPending);
+router17.post("/cancel-shipment", requireAdmin, async (req, res) => {
   try {
     const { orderId, royalMailOrderId } = req.body;
     if (!orderId) {
@@ -14044,7 +14250,7 @@ router16.post("/cancel-shipment", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to cancel shipment");
   }
 });
-router16.post("/create-return-label", requireAdmin, async (req, res) => {
+router17.post("/create-return-label", requireAdmin, async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {
@@ -14062,7 +14268,7 @@ router16.post("/create-return-label", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to retrieve the returns label");
   }
 });
-router16.get("/label/:identifier/pdf", requireAdmin, async (req, res) => {
+router17.get("/label/:identifier/pdf", requireAdmin, async (req, res) => {
   try {
     const { identifier } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -14094,7 +14300,7 @@ router16.get("/label/:identifier/pdf", requireAdmin, async (req, res) => {
     return res.status(500).json({ success: false, message: error.message || "Unable to retrieve Royal Mail label." });
   }
 });
-router16.put("/dispatch", requireAdmin, async (req, res) => {
+router17.put("/dispatch", requireAdmin, async (req, res) => {
   try {
     const { orderIdentifier, orderReference } = req.body;
     if (orderIdentifier === void 0 && !orderReference) {
@@ -14127,20 +14333,20 @@ router16.put("/dispatch", requireAdmin, async (req, res) => {
     });
   }
 });
-var royalMail_default = router16;
+var royalMail_default = router17;
 
 // backend/routes/contactMessages.ts
-var router17 = createCrudRouter("contactMessages");
-var contactMessages_default = router17;
+var router18 = createCrudRouter("contactMessages");
+var contactMessages_default = router18;
 
 // backend/routes/agechecked.ts
 init_prisma();
-import { Router as Router15 } from "express";
-var router18 = Router15();
+import { Router as Router16 } from "express";
+var router19 = Router16();
 var DEFAULT_BASE_URL = "https://staging.agechecked.com/api/acapiremote/ac0130";
 var DEFAULT_PORTAL_URL = "https://portal.agechecked.com/portal";
 var SECRET_FIELD_NAMES = ["merchantSecretKey", "merchantKey", "secretKey", "merchantSecret"];
-router18.get("/config", (req, res) => {
+router19.get("/config", (req, res) => {
   const portalUrl = process.env.NEXT_PUBLIC_AGECHECKED_PORTAL_URL || process.env.AGECHECKED_PORTAL_URL || DEFAULT_PORTAL_URL;
   const publicKey = process.env.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY || process.env.AGECHECKED_PUBLIC_KEY || "";
   res.json({
@@ -14310,7 +14516,7 @@ async function checkAgeVerificationDb(keys) {
   }
   return null;
 }
-router18.post("/init", async (req, res) => {
+router19.post("/init", async (req, res) => {
   const secretKey = normalizeSecretKey(process.env.AGECHECKED_SECRET_KEY);
   const baseUrl = (process.env.AGECHECKED_BASE_URL || process.env.VITE_AGECHECKED_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
   const body = req.body || {};
@@ -14377,7 +14583,7 @@ router18.post("/init", async (req, res) => {
     attemptedFieldNames: SECRET_FIELD_NAMES.join(", ")
   });
 });
-router18.get("/status", async (req, res) => {
+router19.get("/status", async (req, res) => {
   const reference = String(req.query.reference || "").trim();
   const agecheckid = String(req.query.agecheckid || "").trim();
   const email = String(req.query.email || "").toLowerCase().trim();
@@ -14453,7 +14659,7 @@ router18.get("/status", async (req, res) => {
   }
   return res.json({ success: false, approved: false, status: "0", statusText: "Pending" });
 });
-router18.post("/approve", async (req, res) => {
+router19.post("/approve", async (req, res) => {
   const { reference, email, agecheckid, verified, method } = req.body || {};
   if ((verified === true || verified === "true" || verified === 1 || verified === "1") && agecheckid) {
     const resolvedAgeCheckId = String(agecheckid);
@@ -14462,7 +14668,7 @@ router18.post("/approve", async (req, res) => {
   }
   return res.status(400).json({ success: false, approved: false, message: "Verification not completed or session ID is missing." });
 });
-router18.post("/reset", async (req, res) => {
+router19.post("/reset", async (req, res) => {
   const { reference, email, agecheckid } = req.body || {};
   const normalizedEmail = email ? String(email).toLowerCase().trim() : void 0;
   const keys = [reference, agecheckid, normalizedEmail].filter(
@@ -14500,7 +14706,7 @@ router18.post("/reset", async (req, res) => {
   }
   return res.json({ success: true });
 });
-router18.post("/reset", async (req, res) => {
+router19.post("/reset", async (req, res) => {
   const { reference, email, agecheckid } = req.body || {};
   const normalizedEmail = email ? String(email).toLowerCase().trim() : void 0;
   const keys = [reference, agecheckid, normalizedEmail].filter(
@@ -14538,7 +14744,7 @@ router18.post("/reset", async (req, res) => {
   }
   return res.json({ success: true });
 });
-router18.get("/demo-portal", (_req, res) => {
+router19.get("/demo-portal", (_req, res) => {
   return res.status(410).json({
     success: false,
     message: "The legacy AgeChecked demo portal is no longer available."
@@ -14660,28 +14866,28 @@ var handleCallback = async (req, res) => {
     </html>
   `);
 };
-router18.all("/callback", handleCallback);
-router18.all("/callback/", handleCallback);
-router18.all("/webhook", handleCallback);
-router18.all("/webhook/", handleCallback);
-router18.all("/notification", handleCallback);
-router18.all("/notification/", handleCallback);
-router18.all("/notify", handleCallback);
-router18.all("/notify/", handleCallback);
-router18.all("/pass", handleCallback);
-router18.all("/pass/", handleCallback);
-router18.all("/success", handleCallback);
-router18.all("/fail", handleCallback);
-router18.all("/", handleCallback);
-router18.all("", handleCallback);
-var agechecked_default = router18;
+router19.all("/callback", handleCallback);
+router19.all("/callback/", handleCallback);
+router19.all("/webhook", handleCallback);
+router19.all("/webhook/", handleCallback);
+router19.all("/notification", handleCallback);
+router19.all("/notification/", handleCallback);
+router19.all("/notify", handleCallback);
+router19.all("/notify/", handleCallback);
+router19.all("/pass", handleCallback);
+router19.all("/pass/", handleCallback);
+router19.all("/success", handleCallback);
+router19.all("/fail", handleCallback);
+router19.all("/", handleCallback);
+router19.all("", handleCallback);
+var agechecked_default = router19;
 
 // backend/routes/auth.ts
 init_serverDb();
 init_emailService();
 init_adminAuth();
-import { Router as Router16 } from "express";
-var router19 = Router16();
+import { Router as Router17 } from "express";
+var router20 = Router17();
 function getRedirectUri(req) {
   const clientOrigin = req.query.origin || req.headers["x-client-origin"];
   const isLocalOrigin = Boolean(
@@ -14702,7 +14908,7 @@ function getRedirectUri(req) {
   const proto = isCloudHost || req.get("x-forwarded-proto") === "https" || req.secure ? "https" : req.protocol || "http";
   return `${proto}://${host}/auth/google/callback`;
 }
-router19.get("/google/url", (req, res) => {
+router20.get("/google/url", (req, res) => {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || "";
     const redirectUri = getRedirectUri(req);
@@ -14733,7 +14939,7 @@ router19.get("/google/url", (req, res) => {
     return res.status(500).json({ error: "Failed to generate Google auth URL" });
   }
 });
-router19.post("/google/verify", async (req, res) => {
+router20.post("/google/verify", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     const { accessToken, idToken } = req.body;
@@ -14928,7 +15134,7 @@ async function handleGoogleOAuthCallback(req, res) {
     `);
   }
 }
-router19.get("/session", async (req, res) => {
+router20.get("/session", async (req, res) => {
   try {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
@@ -14965,10 +15171,10 @@ router19.get("/session", async (req, res) => {
     return res.json({ user: null, customer: null });
   }
 });
-router19.post("/signout", (req, res) => {
+router20.post("/signout", (req, res) => {
   return res.json({ success: true, message: "Signed out successfully" });
 });
-router19.get("/providers", (req, res) => {
+router20.get("/providers", (req, res) => {
   return res.json({
     google: {
       id: "google",
@@ -14979,7 +15185,7 @@ router19.get("/providers", (req, res) => {
     }
   });
 });
-var auth_default = router19;
+var auth_default = router20;
 
 // serverApp.ts
 init_cloudinary();
@@ -15513,6 +15719,7 @@ async function createExpressApp() {
   app.use("/api/collections", collections_default);
   app.use("/api/orders", orders_default);
   app.use("/api/recycle-bin", recycleBin_default);
+  app.use("/api/analytics", analytics_default);
   app.use("/api/files", files_default);
   app.use("/api/customers", customers_default);
   app.use("/api/discounts", discounts_default);

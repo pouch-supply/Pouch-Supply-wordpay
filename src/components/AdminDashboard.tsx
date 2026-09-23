@@ -1661,50 +1661,26 @@ export default function AdminDashboard({
     const productsInDraft = products.filter(p => p.status === 'Draft').length;
     const lowStockCount = products.filter(p => p.status === 'Active' && p.inventory <= 15).length;
     
-    // 1. Calculate dynamic conversion rate based on visits vs checkouts.
-    const totalStoreSessions = completedOrders * 12 + 150;
-    const conversionRate = totalStoreSessions > 0 ? (completedOrders / totalStoreSessions) * 100 : 0;
+    // Traffic is NOT computed here any more.
+    //
+    // It used to be `completedOrders * 12 + 150`, with a conversion rate
+    // derived from it — an invented figure that read as real, and that showed
+    // "0 orders from 150 store sessions" on a shop with no traffic at all.
+    // Visitors, page views and the conversion rate now come from Vercel Web
+    // Analytics, read through /api/analytics/traffic, and are shown as unknown
+    // when that is unavailable rather than filled in with a guess.
 
     // Calculate today's sales
     const todaySales = orders.filter(o => o.date && o.date.startsWith('Today')).reduce((sum, o) => sum + o.total, 0);
 
-    // 2. Geographic breakdown derived from real order destinations or real customer locations!
-    const geoCounts: Record<string, number> = {};
-    const locationsToCount = orders.map(o => o.destination).concat(customers.map(c => c.location));
-    locationsToCount.forEach(loc => {
-      if (!loc) return;
-      const cleanLoc = loc.toLowerCase();
-      if (cleanLoc.includes('uk') || cleanLoc.includes('united kingdom') || cleanLoc.includes('britain') || cleanLoc.includes('england') || cleanLoc.includes('london')) {
-        geoCounts['United Kingdom 🇬🇧'] = (geoCounts['United Kingdom 🇬🇧'] || 0) + 1;
-      } else if (cleanLoc.includes('us') || cleanLoc.includes('united states') || cleanLoc.includes('america') || cleanLoc.includes('usa')) {
-        geoCounts['United States 🇺🇸'] = (geoCounts['United States 🇺🇸'] || 0) + 1;
-      } else if (cleanLoc.includes('germany') || cleanLoc.includes('deutschland') || cleanLoc.includes('de')) {
-        geoCounts['Germany 🇩🇪'] = (geoCounts['Germany 🇩🇪'] || 0) + 1;
-      } else if (cleanLoc.includes('poland') || cleanLoc.includes('pl')) {
-        geoCounts['Poland 🇵🇱'] = (geoCounts['Poland 🇵🇱'] || 0) + 1;
-      } else {
-        const titleCaseLoc = loc.trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase()).join(' ');
-        const key = titleCaseLoc.length > 20 ? titleCaseLoc.substring(0, 17) + '...' : titleCaseLoc;
-        geoCounts[key] = (geoCounts[key] || 0) + 1;
-      }
-    });
-
-    const totalGeosCount = Object.values(geoCounts).reduce((a, b) => a + b, 0);
-    let finalGeos = Object.entries(geoCounts).map(([country, count]) => {
-      const percentage = totalGeosCount > 0 ? Math.round((count / totalGeosCount) * 100) : 0;
-      return { country, percentage, sessionCount: count * 12 + 3 };
-    });
-
-    if (finalGeos.length === 0) {
-      finalGeos = [
-        { country: 'United Kingdom 🇬🇧', percentage: 74, sessionCount: 154 },
-        { country: 'United States 🇺🇸', percentage: 15, sessionCount: 31 },
-        { country: 'Germany 🇩🇪', percentage: 7, sessionCount: 14 },
-        { country: 'Poland 🇵🇱', percentage: 4, sessionCount: 8 }
-      ];
-    } else {
-      finalGeos.sort((a, b) => b.sessionCount - a.sessionCount);
-    }
+    // The geographic breakdown has moved to Vercel Web Analytics too.
+    //
+    // What was here counted order destinations and customer locations, then
+    // multiplied by twelve ("sessionCount: count * 12 + 3") to present them as
+    // sessions — and when there were none it fell back to a hardcoded list
+    // claiming 154 UK sessions, 31 US, 14 German and 8 Polish. On a shop with
+    // no orders the dashboard reported traffic from four countries that had
+    // never visited. Real per-country visitors now come from the API.
 
     // 3. Dynamic Revenue Trend Graph
     const sortedOrders = [...orders].reverse();
@@ -1745,10 +1721,7 @@ export default function AdminDashboard({
       avgOrderValue,
       productsInDraft,
       lowStockCount,
-      conversionRate,
-      totalStoreSessions,
       todaySales,
-      finalGeos,
       pathD,
       graphPoints
     };
