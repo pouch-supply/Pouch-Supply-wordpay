@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Product, Collection, Order, FileEntry, Customer, Discount, CustomPage, PageSection, BlogPost, LayoutSettings, MenuItem, DevSettings } from '../types';
 import { 
   TrendingUp, BarChart3, Package, Users, Tag, FileCode, HardDrive, Percent, 
@@ -30,6 +30,7 @@ import LayoutTab from './admin/LayoutTab';
 import PagesTab from './admin/PagesTab';
 import DevelopmentTab from './admin/DevelopmentTab';
 import { DiagnosticsTab } from './admin/DiagnosticsTab';
+import RecycleBinTab from './admin/RecycleBinTab';
 import { EmailSettingsTab } from './admin/EmailSettingsTab';
 import { RoyalMailSettingsCard } from './admin/RoyalMailSettingsCard';
 import { Activity } from 'lucide-react';
@@ -575,7 +576,7 @@ function HowItWorksSectionAdmin({ sec }: HowItWorksSectionAdminProps) {
   );
 }
 
-type SidebarTab = 'analytics' | 'orders' | 'collections' | 'products' | 'pages' | 'blogs' | 'files' | 'customers' | 'discounts' | 'shipping' | 'email' | 'layout' | 'development' | 'diagnostics';
+type SidebarTab = 'analytics' | 'orders' | 'collections' | 'products' | 'pages' | 'blogs' | 'files' | 'customers' | 'discounts' | 'shipping' | 'email' | 'layout' | 'development' | 'diagnostics' | 'recycle-bin';
 
 export default function AdminDashboard({
   products: parentProducts,
@@ -618,7 +619,8 @@ export default function AdminDashboard({
     email: 'email',
     layout: 'layout',
     development: 'development',
-    diagnostics: 'diagnostics'
+    diagnostics: 'diagnostics',
+    'recycle-bin': 'recycle-bin'
   };
 
   const pathToTabMap: Record<string, SidebarTab> = {
@@ -645,6 +647,7 @@ export default function AdminDashboard({
     development: 'development',
     dev: 'development',
     diagnostics: 'diagnostics',
+    'recycle-bin': 'recycle-bin',
     status: 'diagnostics',
     db: 'diagnostics'
   };
@@ -836,6 +839,93 @@ export default function AdminDashboard({
   const [localFiles, setLocalFiles] = useState<FileEntry[]>(parentFiles);
   const [localCustomers, setLocalCustomers] = useState<Customer[]>(parentCustomers);
   const [localBlogs, setLocalBlogs] = useState<BlogPost[]>(parentBlogs);
+
+  /** How many items are in the recycle bin, for the sidebar badge. */
+  const [recycleBinCount, setRecycleBinCount] = useState<number>(0);
+
+  /**
+   * Moves one record to the recycle bin, server-side.
+   *
+   * Every delete in the dashboard goes through here. The record is taken out of
+   * its own store and written to the bin in one step, so nothing is ever both
+   * live and binned — and because the server does it, the deletion survives a
+   * refresh whether or not the admin presses Save afterwards.
+   *
+   * Returns false, with the reason shown, when the server refuses; the caller
+   * then leaves its local list alone rather than hiding a record that is still
+   * there.
+   */
+  const recycleItem = useCallback(async (resource: string, id: string): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/recycle-bin/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource, id })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || data?.success !== true) {
+        console.error(`[Recycle Bin] ${resource}/${id} was not deleted:`, data?.error);
+        window.alert(data?.error || 'That item could not be deleted. Please try again.');
+        return false;
+      }
+      setRecycleBinCount(n => n + 1);
+      return true;
+    } catch (err: any) {
+      console.error(`[Recycle Bin] ${resource}/${id} delete failed:`, err?.message);
+      window.alert('Could not reach the server, so nothing was deleted.');
+      return false;
+    }
+  }, []);
+
+  /** Pulls the sections back from the API after something is restored. */
+  const reloadAfterRestore = useCallback(async () => {
+    const pull = async (path: string) => {
+      try {
+        const res = await fetch(path);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return Array.isArray(data) ? data : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const [prods, colls, pages, blogsList, filesList, ordersList, customersList] = await Promise.all([
+      pull('/api/products'),
+      pull('/api/collections'),
+      pull('/api/customPages'),
+      pull('/api/blogs'),
+      pull('/api/files'),
+      pull('/api/orders'),
+      pull('/api/customers')
+    ]);
+
+    if (prods) setLocalProducts(prods as Product[]);
+    if (colls) setLocalCollections(colls as Collection[]);
+    if (pages) setLocalPages(pages as CustomPage[]);
+    if (blogsList) setLocalBlogs(blogsList as BlogPost[]);
+    if (filesList) setLocalFiles(filesList as FileEntry[]);
+    if (ordersList) setLocalOrders(ordersList as Order[]);
+    if (customersList) setLocalCustomers(customersList as Customer[]);
+  }, []);
+
+  // Keeps the sidebar badge right from the moment the dashboard opens.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/recycle-bin');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setRecycleBinCount(data?.counts?.total ?? 0);
+      } catch {
+        /* the badge is a convenience; a failure here changes nothing */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [localLayoutSettings, setLocalLayoutSettings] = useState<LayoutSettings>(() => {
     return layoutSettings || {
@@ -1152,8 +1242,18 @@ export default function AdminDashboard({
     if (onDirtyChange) onDirtyChange(false);
   };
 
-  const handleDeleteCustomer = (customer: { email: string }) => {
+  const handleDeleteCustomer = async (customer: { email: string; id?: string }) => {
     const customerEmail = customer.email.toLowerCase().trim();
+    // Customers are in LIST_SAVE_NEVER_DELETES, so filtering the list and saving
+    // it never actually removed one — the account came back on the next load.
+    // The bin removes it properly, and keeps it recoverable for 30 days.
+    const target = customers.find(existing => existing.email.toLowerCase().trim() === customerEmail);
+    const id = customer.id || target?.id;
+    if (!id) {
+      window.alert('That customer record has no id, so it cannot be deleted safely.');
+      return;
+    }
+    if (!(await recycleItem('customers', id))) return;
     onUpdateCustomers(customers.filter(existing => existing.email.toLowerCase().trim() !== customerEmail));
   };
 
@@ -1741,7 +1841,11 @@ export default function AdminDashboard({
   };
 
   const handleDeleteProduct = (pId: string) => {
-    triggerConfirm("Are you sure you want to delete this product?", () => {
+    triggerConfirm("Delete this product? It will be moved to the Recycle Bin, where you can restore it for 30 days.", async () => {
+      // The server moves it to the bin and out of Products. Only if that
+      // succeeds does the list on screen change, so a failed delete cannot
+      // leave the admin looking at a product that is still live.
+      if (!(await recycleItem('products', pId))) return;
       const updated = products.filter(p => p.id !== pId);
       onUpdateProducts(updated);
 
@@ -2427,7 +2531,8 @@ export default function AdminDashboard({
   };
 
   const handleDeleteCollection = (id: string) => {
-    triggerConfirm("Are you sure you want to delete this collection?", () => {
+    triggerConfirm("Delete this collection? It will be moved to the Recycle Bin, where you can restore it for 30 days.", async () => {
+      if (!(await recycleItem('collections', id))) return;
       onUpdateCollections(collections.filter(c => c.id !== id));
       setSelectedCollectionIds(prev => prev.filter(item => item !== id));
     }, "Delete Collection");
@@ -2985,12 +3090,16 @@ export default function AdminDashboard({
   };
 
   const handleDeleteFile = (id: string) => {
-    triggerConfirm("Are you sure you want to delete this media file?", () => {
+    triggerConfirm("Delete this media file? It will be moved to the Recycle Bin, where you can restore it for 30 days.", async () => {
+      // Through the bin rather than DELETE /api/files/:id, which destroys the
+      // Cloudinary asset immediately. The asset is kept while the entry sits in
+      // the bin — a restored image whose file had already been deleted would
+      // come back as a broken link — and removed when the entry is destroyed.
+      if (!(await recycleItem('files', id))) return;
       const remaining = files.filter(f => f.id !== id && f.url !== id);
       onUpdateFiles(remaining);
       setLocalFiles(remaining);
       setSelectedFileIds(prev => prev.filter(fid => fid !== id));
-      fetch(`/api/files/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
     }, "Delete Media File");
   };
 
@@ -3143,7 +3252,8 @@ export default function AdminDashboard({
   };
 
   const handleDeleteBlog = (blogId: string) => {
-    triggerConfirm("Are you sure you want to delete this blog post? This action cannot be undone.", () => {
+    triggerConfirm("Delete this blog post? It will be moved to the Recycle Bin, where you can restore it for 30 days.", async () => {
+      if (!(await recycleItem('blogs', blogId))) return;
       onUpdateBlogs(blogs.filter(b => b.id !== blogId));
     }, "Delete Blog Post");
   };
@@ -3260,6 +3370,7 @@ export default function AdminDashboard({
                 { id: 'layout', label: 'Header & Footer', icon: Settings },
                 { id: 'development', label: 'Development Mode', icon: Terminal },
                 { id: 'diagnostics', label: 'DB Diagnostics', icon: Activity },
+                { id: 'recycle-bin', label: 'Recycle Bin', icon: Trash2, badge: recycleBinCount },
               ].map(item => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
@@ -3901,6 +4012,15 @@ export default function AdminDashboard({
     {/* 12. DIAGNOSTICS & STATUS TEST BLOCK */}
     {activeTab === 'diagnostics' && (
       <DiagnosticsTab onRefreshAll={fetchDbDetails} />
+    )}
+
+    {activeTab === 'recycle-bin' && (
+      <RecycleBinTab
+        onCountChange={setRecycleBinCount}
+        // A restored record is back in its store but not in this tab's copy of
+        // it, so the dashboard reloads rather than showing a stale section.
+        onRestored={reloadAfterRestore}
+      />
     )}
 
         {/* DATABASE CONNECTION DETAILS MODAL */}

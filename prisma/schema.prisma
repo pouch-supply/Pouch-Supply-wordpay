@@ -494,3 +494,32 @@ model Subscription {
   @@index([nextBillingDate])
   @@index([sourceOrderId])
 }
+
+/// Soft-deleted records, held for 30 days before they are destroyed.
+///
+/// Deleting anything from the admin dashboard moves the whole record here and
+/// removes it from its own table, so the active data is exactly what is live.
+/// `payload` is the complete record as it was, which is what makes a restore
+/// put back the thing that was deleted rather than an approximation of it.
+model RecycleBinItem {
+  id       String @id @default(uuid())
+  /// Which store it came from: orders, products, collections, customPages,
+  /// blogs, customers, files.
+  resource String
+  /// Its id in that store, so a restore lands back on the same record.
+  itemId   String
+  /// What to show in the bin listing — a title, an order number, an email.
+  label    String?
+
+  payload Json
+
+  deletedAt DateTime  @default(now())
+  /// deletedAt + 30 days. The sweep deletes everything past this.
+  expiresAt DateTime
+  deletedBy String?
+
+  @@unique([resource, itemId])
+  @@index([resource])
+  @@index([expiresAt])
+  @@index([deletedAt])
+}

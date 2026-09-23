@@ -6081,18 +6081,6 @@
         "maggie-45-mg"
       ],
       "description": ""
-    },
-    {
-      "id": "test-collection",
-      "slug": "test-collection",
-      "type": "Manual",
-      "image": "",
-      "title": "test collection",
-      "seoTitle": "test collection",
-      "createdAt": "2026-09-12T11:40:57.476Z",
-      "updatedAt": "2026-09-12T11:40:57.476Z",
-      "productIds": [],
-      "description": ""
     }
   ],
   "orders": [],
@@ -6405,7 +6393,570 @@
       "resourceType": "image"
     }
   ],
-  "customers": [],
+  "customers": [
+    {
+      "id": "cust-1787363327079-edas9",
+      "data": {
+        "subPlan": "LITE Plan",
+        "subItems": [
+          {
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785235958/storefront_media/file_s2q4qz.jpg",
+            "price": 4.99,
+            "title": "77 5.2 mg",
+            "quantity": 9,
+            "productId": "77-52-mg"
+          },
+          {
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785236308/storefront_media/file_cpdbpp.jpg",
+            "price": 4.99,
+            "title": "77 20 mg",
+            "quantity": 1,
+            "productId": "77-20-mg"
+          }
+        ],
+        "subPrice": 5.7,
+        "subCansCount": 10,
+        "subFrequency": "Next Day (Test)",
+        "subPlanManuallyConfigured": true
+      },
+      "name": "Scott Kivlin",
+      "email": "scott@pouch-supply.com",
+      "subPlan": "LITE Plan",
+      "googleId": "103676495432835148234",
+      "location": "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
+      "subItems": [
+        {
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785235958/storefront_media/file_s2q4qz.jpg",
+          "price": 4.99,
+          "title": "77 5.2 mg",
+          "quantity": 9,
+          "productId": "77-52-mg"
+        },
+        {
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785236308/storefront_media/file_cpdbpp.jpg",
+          "price": 4.99,
+          "title": "77 20 mg",
+          "quantity": 1,
+          "productId": "77-20-mg"
+        }
+      ],
+      "subPrice": 5.7,
+      "wishlist": [],
+      "addresses": [
+        "39 Tonks Drive, telford, tf4 2tq, United Kingdom",
+        "Customer Address on File",
+        "United Kingdom",
+        "39 Tonks Drive, telford, tf4 2tq, United Kingdom, Telford, Tf4 2tq, United Kingdom",
+        "39 Tonks Drive, telford, tf4 2tq, United Kingdom, London"
+      ],
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocLxhzv5woi-Z-lMwWlTu27XVy6BPaYzCU5LDL0I-QpWsB9odg=s96-c",
+      "subStatus": "Active",
+      "ageCheckId": "25952948",
+      "ageChecked": true,
+      "savedCards": [],
+      "ageVerified": true,
+      "amountSpent": 0,
+      "nextPayment": "2026-09-16",
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "nextDelivery": "28 Aug 2026",
+      "referralCode": "REF-PS-SCOTT-6AVK",
+      "subCansCount": 10,
+      "subFrequency": "Next Day (Test)",
+      "ageVerifiedAt": "2026-09-15T10:27:27.357Z",
+      "emailVerified": true,
+      "referralsList": [],
+      "referredCount": 0,
+      "referralCredit": 0,
+      "referredByCode": null,
+      "emailVerifiedAt": "2026-08-25T06:00:51.135Z",
+      "unlockedRewards": [
+        {
+          "id": "reward_1",
+          "code": "FREESHIP",
+          "desc": "Complimentary Royal Mail shipping upgrade",
+          "title": "Free Royal Mail Tracked Delivery",
+          "redeemed": false
+        },
+        {
+          "id": "reward_2",
+          "code": "POUCH5OFF",
+          "desc": "Direct cash discount voucher",
+          "title": "£5.00 Off Order",
+          "redeemed": false
+        },
+        {
+          "id": "reward_3",
+          "code": "FREECAN",
+          "desc": "Unlock a free sample in next box",
+          "title": "Free Extra Can",
+          "redeemed": false
+        }
+      ],
+      "subscriptionStatus": "Subscribed",
+      "isSubscriptionCancelled": false,
+      "subscriptionCancelledAt": "2026-09-07T07:19:15.944Z",
+      "subPlanManuallyConfigured": true,
+      "subscriptionCancellationReason": "Taking a break"
+    },
+    {
+      "id": "cust-1789551589001",
+      "data": {
+        "subPlan": "LITE Plan",
+        "subPrice": 5.7
+      },
+      "name": "Scott kivlin",
+      "email": "scott.kivlin@yahoo.co.uk",
+      "phone": "07581708618",
+      "subPlan": "LITE Plan",
+      "location": "United Kingdom",
+      "subPrice": 5.7,
+      "wishlist": [],
+      "addresses": [
+        "39 tonks drive, Telford, Tf4 2tq, United Kingdom"
+      ],
+      "subStatus": "Cancelled",
+      "ageCheckId": null,
+      "ageChecked": false,
+      "ageVerified": false,
+      "amountSpent": 0,
+      "nextPayment": "2026-09-22",
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "referralCode": "REF-PS-SCOTT-ABSX",
+      "ageVerifiedAt": null,
+      "emailVerified": true,
+      "referredByCode": null,
+      "emailVerifiedAt": "2026-09-16T09:40:34.307Z",
+      "subscriptionStatus": "Cancelled",
+      "isSubscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-22T08:24:09.987Z",
+      "subscriptionCancellationReason": "Taking a break"
+    },
+    {
+      "id": "cust-1787363327077-e60lx",
+      "data": {
+        "subPlan": "lite",
+        "subItems": [
+          {
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785236308/storefront_media/file_cpdbpp.jpg",
+            "price": 4.99,
+            "title": "77 20 mg",
+            "quantity": 3,
+            "productId": "77-20-mg"
+          },
+          {
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785235958/storefront_media/file_s2q4qz.jpg",
+            "price": 4.99,
+            "title": "77 5.2 mg",
+            "quantity": 3,
+            "productId": "77-52-mg"
+          }
+        ],
+        "subPrice": 25.19,
+        "subCansCount": 6,
+        "subFrequency": "Next Day (Test)",
+        "subPlanManuallyConfigured": true
+      },
+      "name": "neha",
+      "email": "nehabhardwaz.gtl@gmail.com",
+      "subPlan": "lite",
+      "googleId": "100258769752533638588",
+      "location": "Daari, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
+      "subItems": [
+        {
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785236308/storefront_media/file_cpdbpp.jpg",
+          "price": 4.99,
+          "title": "77 20 mg",
+          "quantity": 3,
+          "productId": "77-20-mg"
+        },
+        {
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785235958/storefront_media/file_s2q4qz.jpg",
+          "price": 4.99,
+          "title": "77 5.2 mg",
+          "quantity": 3,
+          "productId": "77-52-mg"
+        }
+      ],
+      "subPrice": 25.19,
+      "wishlist": [
+        "PCH-364684-GHOST-COLA-ICE",
+        "velo-109-mg"
+      ],
+      "addresses": [
+        "Daari, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
+        "Customer Address on File",
+        "United Kingdom"
+      ],
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocLloHz8ZkQktIXjFxn3iSIzlCOnfG3nyOGi39jJOUDbBK4T-g=s96-c",
+      "subStatus": "Cancelled",
+      "savedCards": [],
+      "amountSpent": 0,
+      "nextPayment": "2026-09-02",
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "nextDelivery": "24 Aug 2026",
+      "referralCode": "REF-PS-NEHA-LMB8",
+      "subCansCount": 6,
+      "subFrequency": "Next Day (Test)",
+      "emailVerified": true,
+      "referralsList": [],
+      "referredCount": 0,
+      "referralCredit": 0,
+      "referredByCode": null,
+      "emailVerifiedAt": "2026-08-22T11:50:06.911Z",
+      "unlockedRewards": [
+        {
+          "id": "reward_1",
+          "code": "FREESHIP",
+          "desc": "Complimentary Royal Mail shipping upgrade",
+          "title": "Free Royal Mail Tracked Delivery",
+          "redeemed": false
+        },
+        {
+          "id": "reward_2",
+          "code": "POUCH5OFF",
+          "desc": "Direct cash discount voucher",
+          "title": "£5.00 Off Order",
+          "redeemed": false
+        },
+        {
+          "id": "reward_3",
+          "code": "FREECAN",
+          "desc": "Unlock a free sample in next box",
+          "title": "Free Extra Can",
+          "redeemed": false
+        }
+      ],
+      "subscriptionStatus": "Cancelled",
+      "isSubscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-12T05:16:04.655Z",
+      "subPlanManuallyConfigured": true,
+      "subscriptionCancellationReason": "Taking a break"
+    },
+    {
+      "id": "cust-1787363327078-yhd4l",
+      "data": {
+        "subPlan": "ultimate",
+        "subItems": [
+          {
+            "id": "velo-10-mg",
+            "name": "VELO 10 mg",
+            "brand": "velo",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785239079/storefront_media/file_hsrrzf.jpg",
+            "price": 4.99,
+            "title": "VELO 10 mg",
+            "vendor": "velo",
+            "variant": "Mint",
+            "quantity": 3,
+            "productId": "velo-10-mg",
+            "variantName": "Mint",
+            "productTitle": "VELO 10 mg",
+            "formattedLabel": "velo — VELO 10 mg — Mint (Qty:3)"
+          },
+          {
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785238651/storefront_media/file_sxvvhe.jpg",
+            "price": 4.99,
+            "title": "VELO 6 mg",
+            "quantity": 3,
+            "productId": "velo-6-mg"
+          },
+          {
+            "id": "velo-8-mg",
+            "name": "VELO 8 mg",
+            "brand": "velo",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785238789/storefront_media/file_sss2is.jpg",
+            "price": 4.99,
+            "title": "VELO 8 mg",
+            "vendor": "velo",
+            "variant": "Mint",
+            "quantity": 3,
+            "productId": "velo-8-mg",
+            "variantName": "Mint",
+            "productTitle": "VELO 8 mg",
+            "formattedLabel": "velo — VELO 8 mg — Mint (Qty:3)"
+          },
+          {
+            "id": "velo-14-mg",
+            "name": "VELO 14 mg",
+            "brand": "velo",
+            "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785239416/storefront_media/file_adm0ux.jpg",
+            "price": 4.99,
+            "title": "VELO 14 mg",
+            "vendor": "velo",
+            "variant": "Mint",
+            "quantity": 3,
+            "productId": "velo-14-mg",
+            "variantName": "Mint",
+            "productTitle": "VELO 14 mg",
+            "formattedLabel": "velo — VELO 14 mg — Mint (Qty:1)"
+          }
+        ],
+        "subPrice": 46.99,
+        "subCansCount": 12,
+        "subFrequency": "Bi-Weekly",
+        "subPlanManuallyConfigured": true
+      },
+      "name": "Ritesh Dhiman",
+      "email": "info@gtlofficial.com",
+      "subPlan": "ultimate",
+      "googleId": "102562700829072040538",
+      "location": "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
+      "subItems": [
+        {
+          "id": "velo-10-mg",
+          "name": "VELO 10 mg",
+          "brand": "velo",
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785239079/storefront_media/file_hsrrzf.jpg",
+          "price": 4.99,
+          "title": "VELO 10 mg",
+          "vendor": "velo",
+          "variant": "Mint",
+          "quantity": 3,
+          "productId": "velo-10-mg",
+          "variantName": "Mint",
+          "productTitle": "VELO 10 mg",
+          "formattedLabel": "velo — VELO 10 mg — Mint (Qty:3)"
+        },
+        {
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785238651/storefront_media/file_sxvvhe.jpg",
+          "price": 4.99,
+          "title": "VELO 6 mg",
+          "quantity": 3,
+          "productId": "velo-6-mg"
+        },
+        {
+          "id": "velo-8-mg",
+          "name": "VELO 8 mg",
+          "brand": "velo",
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785238789/storefront_media/file_sss2is.jpg",
+          "price": 4.99,
+          "title": "VELO 8 mg",
+          "vendor": "velo",
+          "variant": "Mint",
+          "quantity": 3,
+          "productId": "velo-8-mg",
+          "variantName": "Mint",
+          "productTitle": "VELO 8 mg",
+          "formattedLabel": "velo — VELO 8 mg — Mint (Qty:3)"
+        },
+        {
+          "id": "velo-14-mg",
+          "name": "VELO 14 mg",
+          "brand": "velo",
+          "image": "https://res.cloudinary.com/qfoxl8ia/image/upload/v1785239416/storefront_media/file_adm0ux.jpg",
+          "price": 4.99,
+          "title": "VELO 14 mg",
+          "vendor": "velo",
+          "variant": "Mint",
+          "quantity": 3,
+          "productId": "velo-14-mg",
+          "variantName": "Mint",
+          "productTitle": "VELO 14 mg",
+          "formattedLabel": "velo — VELO 14 mg — Mint (Qty:1)"
+        }
+      ],
+      "subPrice": 46.99,
+      "wishlist": [],
+      "addresses": [
+        "VPO Gharoh Tehsil Dharamshala District Kangra Himachal Pradesh, London, EC1A 1BB, United Kingdom, London, EC1A 1BB, United Kingdom",
+        "United Kingdom"
+      ],
+      "avatarUrl": "https://lh3.googleusercontent.com/a-/ALV-UjVFA9W1YFnUZ8QAjZnbxeJiXdZHGt9lUimkWVbOG5U4TapLnKPJGRjArJW9UNgFwdz4pWabI6T1dlOVY7mNnpLM0OBrp7t7fhdbRa9WVvXp_8KECqKQFCN2qdeZRBY2q91Agyb0XGRlC5syOsPP5LWxdhxiQAuJvK2XyGZXS2Yrq4cI2w0HVMiAD65oxGJYWU86ineNeJ527jjdeTW57cwKfIdiM365lftAm8oVY1DmCdWc58WKh9KjIblWSAzsCQiVOyQn5fUtGl1QWHuTV8XbzuuEriK4jq6cWHYob7SboJCpj_rPg4_v4RUtp4TXD3lvLHycVykhL8o_fuN1Lopepvm8t25er-j2ClhPYA_z_xOIgSnegnxDKZxd8-WTJ1eGWOWiDfUzzcdD2QqWMSeu5A4wyMrFzim9E7tNn-dQxki7cMg_cz9y8zJrQiFXhYSqfwM8uHzKZ3o07wHIzDCFZFV8TUVR6Tw5yLRC-gUGQYTfd1dvwARVq7XzsjQLXiV-Lz2dE-7zwS-65CutgMCVMDvkEXnAiUQEMDy9Z9uUUhcESRdpSwBKM4r1U6mnyMkDLpzCvN6CzgFTYABBIcEI75uy7qBk35vHZ89Jv7rY5p39dqa0PGhSLM9BP8UgCi7P7Vkb0-Bjkq6NLBh5a8QkJx9H7uN_diuYN3twxyUEX1Hh0M37lwAWabt7p2E9Elc7kiiodp_ObhjPrUI9bPHkBeCREGcTXnYCbYdUVCmr0qe2wrxctsO7OwRrQRJJ4FDk1sy284smCzY9_2MZ0TYgsNxw8IGUC4uguu2RsCY0hN0Y2so0ECs3P3HLd8BObgYRFQ4VwN2PxZqHwkuR5fZVTmddzUYCIaDiVVlrfm73oaPjYZxTokdcexW9OLU2nt2cCDN_PpoDTu6HujpwLbOiXzHg7XLkMHzXrE_lLcyErsjUtvOfLjQTBU7syjCv_bxIZ1in1_3TXYX7DGMjAazepLdSY0TFPucDtMChGg8ttEeHlIY4AgaV5iUPKC0LnQfHuYxmsoWNaib7FyiGU774KRIXXs6xHvwdAxgVJKEOWLn0xY6RIwxQqlE=s96-c",
+      "subStatus": "Cancelled",
+      "ageCheckId": "25838181",
+      "ageChecked": true,
+      "savedCards": [],
+      "ageVerified": true,
+      "amountSpent": 0,
+      "nextPayment": "23 Aug 2026",
+      "ordersCount": 0,
+      "nextDelivery": "24 Aug 2026",
+      "referralCode": "REF-PS-RITESH-ZGJH",
+      "subCansCount": 12,
+      "subFrequency": "Bi-Weekly",
+      "ageVerifiedAt": "2026-09-07T12:12:12.592Z",
+      "emailVerified": true,
+      "referralsList": [],
+      "referredCount": 0,
+      "referralCredit": 0,
+      "emailVerifiedAt": "2026-09-03T10:51:12.005Z",
+      "unlockedRewards": [
+        {
+          "id": "reward_1",
+          "code": "FREESHIP",
+          "desc": "Complimentary shipping upgrade",
+          "title": "Free Express Delivery",
+          "redeemed": false
+        },
+        {
+          "id": "reward_2",
+          "code": "POUCH5OFF",
+          "desc": "Direct cash discount voucher",
+          "title": "£5.00 Off Order",
+          "redeemed": false
+        },
+        {
+          "id": "reward_3",
+          "code": "FREECAN",
+          "desc": "Unlock a free sample in next box",
+          "title": "Free Extra Can",
+          "redeemed": false
+        }
+      ],
+      "subscriptionStatus": "Cancelled",
+      "isSubscriptionCancelled": true,
+      "subscriptionCancelledAt": "2026-09-07T07:13:28.949Z",
+      "subPlanManuallyConfigured": true,
+      "subscriptionCancellationReason": "Too many cans remaining"
+    },
+    {
+      "id": "cust_1787551327174_cjr9",
+      "name": "Pankaj Kumar",
+      "email": "apetrail.pankajhr@gmail.com",
+      "googleId": "111440189360746942125",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [
+        "United Kingdom"
+      ],
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocJpeFsrlg9NwUQTcm3jk1LJCfeNyRqCkThq67DDlWd4u1Pe9Q=s96-c",
+      "amountSpent": 0,
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "referralCode": "REF-PS-PANKAJ-PACI",
+      "emailVerified": true,
+      "emailVerifiedAt": "2026-08-24T06:02:07.174Z",
+      "subscriptionStatus": "Not subscribed"
+    },
+    {
+      "id": "cust-1787555579279",
+      "name": "neha",
+      "email": "nehadice204420@gmail.com",
+      "phone": "+918894030663",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [],
+      "amountSpent": 0,
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "referralCode": "REF-PS-NEHA-8GCZ",
+      "referredByCode": null,
+      "verificationCode": "500532",
+      "subscriptionStatus": "Not subscribed",
+      "verificationExpires": 1787556479666
+    },
+    {
+      "id": "cust_1788432744637_y3so",
+      "name": "rahul dhiman",
+      "email": "rahul@prowebcoder.com",
+      "googleId": "110039073958648958383",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [
+        "United Kingdom"
+      ],
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocJU87G3qLaxJKCn2pUI2Iaf45-xtLc6gvkvsy7kx48-cCBr7w=s96-c",
+      "ageCheckId": "AC-1788434210088",
+      "ageChecked": true,
+      "ageVerified": true,
+      "amountSpent": 0,
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "referralCode": "REF-PS-RAHUL-O6KH",
+      "ageVerifiedAt": "2026-09-03T11:16:58.498Z",
+      "emailVerified": true,
+      "emailVerifiedAt": "2026-09-03T10:52:24.637Z",
+      "subscriptionStatus": "Not subscribed"
+    },
+    {
+      "id": "cust-1787555626048",
+      "name": "neha",
+      "email": "nehadice2020@gmail.com",
+      "phone": "+918894030663",
+      "googleId": "117266585521209894215",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [],
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocKhgyaANAZGxObv8lVWir4qJ5-l-hKpgSU21AwTdEaKHu5R6Sc=s96-c",
+      "amountSpent": 0,
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "referralCode": "REF-PS-NEHA-EUM4",
+      "emailVerified": true,
+      "referredByCode": null,
+      "emailVerifiedAt": "2026-09-01T11:06:59.536Z",
+      "verificationCode": "365337",
+      "subscriptionStatus": "Not subscribed",
+      "verificationExpires": 1787556526491
+    },
+    {
+      "id": "cust_1787570812168_osgm",
+      "name": "Scott Kivlin",
+      "email": "scottkivlinpouch@gmail.com",
+      "googleId": "117930969755157126575",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [
+        "United Kingdom"
+      ],
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocKK28bjn1AnTCZqw8Z-Nz75bMnmnzndeSS-ZCGWQKSvNoG9ew0=s96-c",
+      "ageCheckId": null,
+      "ageChecked": false,
+      "ageVerified": false,
+      "amountSpent": 0,
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "referralCode": "REF-PS-SCOTT-SNJD",
+      "ageVerifiedAt": null,
+      "emailVerified": true,
+      "emailVerifiedAt": "2026-08-24T11:26:52.168Z",
+      "subscriptionStatus": "Not subscribed"
+    },
+    {
+      "id": "cust_1787668561187_j65w",
+      "name": "Abhishek Thapa",
+      "email": "abhishekthapa90@gmail.com",
+      "googleId": "105922709141220184130",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [
+        "United Kingdom"
+      ],
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocKok_aNvcnmCGv7fJkdZv4l-DkKqyG7t4wTuAaFDLd4FQhZ7khs=s96-c",
+      "ageCheckId": "AC-1788526007731",
+      "ageChecked": true,
+      "ageVerified": true,
+      "amountSpent": 0,
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "referralCode": "REF-PS-ABHISHEK-GNDU",
+      "ageVerifiedAt": "2026-09-04T12:47:13.627Z",
+      "emailVerified": true,
+      "emailVerifiedAt": "2026-08-25T14:36:01.187Z",
+      "subscriptionStatus": "Not subscribed"
+    },
+    {
+      "id": "cust-1790109679050",
+      "data": {},
+      "name": "Keir mason",
+      "email": "keirmason42@gmail.com",
+      "phone": "07495976419",
+      "location": "United Kingdom",
+      "wishlist": [],
+      "addresses": [],
+      "amountSpent": 0,
+      "ordersCount": 0,
+      "storeCredit": 0,
+      "passwordHash": "9076ac1c14647bb467e2c4182d09fb8d1d80e2813af16e6862bb245cef9fb4c0",
+      "referralCode": "REF-PS-KEIR-F6J9",
+      "emailVerified": true,
+      "referredByCode": null,
+      "emailVerifiedAt": "2026-09-22T20:42:10.909Z",
+      "subscriptionStatus": "Not subscribed"
+    }
+  ],
   "discounts": [
     {
       "id": "disc_460023",
@@ -7091,45 +7642,6 @@
       "visibility": "Visible"
     },
     {
-      "id": "page-1784697403555",
-      "slug": "test",
-      "title": "test",
-      "sections": [
-        {
-          "id": "sec-1784697403555",
-          "type": "Rich text",
-          "settings": {
-            "title": "test",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "description": "Custom sections will display below here.",
-            "headingColor": "#1E293B",
-            "backgroundColor": "#FFFFFF"
-          }
-        },
-        {
-          "id": "sec-1784697407787",
-          "type": "Image with text",
-          "settings": {
-            "title": "Curate Your Premium Package2",
-            "imageUrl": "/uploads/img-1784698495279-48330.webp",
-            "fullWidth": false,
-            "textColor": "#64748B",
-            "buttonLink": "frontend-shop",
-            "buttonText": "Purchase Packs",
-            "description": "Our plant-fiber formulations are packed under sterile medical conditions for persistent, smooth boosts.",
-            "headingColor": "#1E293B",
-            "marqueeSpeed": 3,
-            "backgroundColor": "#FFFFFF"
-          }
-        }
-      ],
-      "createdAt": "2026-07-22T05:17:00.395Z",
-      "updatedAt": "2026-07-22T05:17:10.126Z",
-      "isHomepage": false,
-      "visibility": "Visible"
-    },
-    {
       "id": "page-1785239768436",
       "slug": "faqs",
       "title": "FAQ's",
@@ -7716,6 +8228,84 @@
         }
       ],
       "updatedAt": "Just now",
+      "isHomepage": false,
+      "visibility": "Visible"
+    },
+    {
+      "id": "page-1784697403555",
+      "data": {
+        "id": "page-1784697403555",
+        "slug": "test",
+        "title": "test",
+        "sections": [
+          {
+            "id": "sec-1784697403555",
+            "type": "Rich text",
+            "settings": {
+              "title": "test",
+              "fullWidth": false,
+              "textColor": "#64748B",
+              "description": "Custom sections will display below here.",
+              "headingColor": "#1E293B",
+              "backgroundColor": "#FFFFFF"
+            }
+          },
+          {
+            "id": "sec-1784697407787",
+            "type": "Image with text",
+            "settings": {
+              "title": "Curate Your Premium Package2",
+              "imageUrl": "/uploads/img-1784698495279-48330.webp",
+              "fullWidth": false,
+              "textColor": "#64748B",
+              "buttonLink": "frontend-shop",
+              "buttonText": "Purchase Packs",
+              "description": "Our plant-fiber formulations are packed under sterile medical conditions for persistent, smooth boosts.",
+              "headingColor": "#1E293B",
+              "marqueeSpeed": 3,
+              "backgroundColor": "#FFFFFF"
+            }
+          }
+        ],
+        "createdAt": "2026-07-22T05:17:00.395Z",
+        "updatedAt": "2026-07-22T05:17:10.126Z",
+        "isHomepage": false,
+        "visibility": "Visible"
+      },
+      "slug": "test",
+      "title": "test",
+      "sections": [
+        {
+          "id": "sec-1784697403555",
+          "type": "Rich text",
+          "settings": {
+            "title": "test",
+            "fullWidth": false,
+            "textColor": "#64748B",
+            "description": "Custom sections will display below here.",
+            "headingColor": "#1E293B",
+            "backgroundColor": "#FFFFFF"
+          }
+        },
+        {
+          "id": "sec-1784697407787",
+          "type": "Image with text",
+          "settings": {
+            "title": "Curate Your Premium Package2",
+            "imageUrl": "/uploads/img-1784698495279-48330.webp",
+            "fullWidth": false,
+            "textColor": "#64748B",
+            "buttonLink": "frontend-shop",
+            "buttonText": "Purchase Packs",
+            "description": "Our plant-fiber formulations are packed under sterile medical conditions for persistent, smooth boosts.",
+            "headingColor": "#1E293B",
+            "marqueeSpeed": 3,
+            "backgroundColor": "#FFFFFF"
+          }
+        }
+      ],
+      "createdAt": "2026-09-19T12:01:34.053Z",
+      "updatedAt": "2026-09-22T11:45:58.873Z",
       "isHomepage": false,
       "visibility": "Visible"
     }
@@ -17273,7 +17863,6 @@
       "timestamp": "2026-09-17T12:34:38.286Z"
     }
   ],
-  "subscriptions": [],
   "klaviyo_logs": [
     {
       "eventName": "Ordered Product",

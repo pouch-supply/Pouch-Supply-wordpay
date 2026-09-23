@@ -5510,6 +5510,142 @@ var init_orders = __esm({
   }
 });
 
+// backend/services/cloudinary.ts
+var cloudinary_exports = {};
+__export(cloudinary_exports, {
+  buildOptimizedCloudinaryUrl: () => buildOptimizedCloudinaryUrl,
+  deleteFromCloudinary: () => deleteFromCloudinary,
+  getCloudinaryClient: () => getCloudinaryClient,
+  isCloudinaryConfigured: () => isCloudinaryConfigured,
+  uploadToCloudinary: () => uploadToCloudinary
+});
+import { v2 as cloudinary } from "cloudinary";
+function isCloudinaryConfigured() {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
+  );
+}
+function getCloudinaryClient() {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (cloudName && apiKey && apiSecret) {
+    cloudinary.config({
+      cloud_name: cloudName,
+      api_key: apiKey,
+      api_secret: apiSecret,
+      secure: true
+    });
+  }
+  return cloudinary;
+}
+async function uploadToCloudinary(fileBufferOrDataUri, options = {}) {
+  const client = getCloudinaryClient();
+  const folder = options.folder || "storefront_media";
+  const resourceType = options.resourceType || "auto";
+  if (!isCloudinaryConfigured()) {
+    throw new Error("Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) are missing.");
+  }
+  return new Promise((resolve, reject) => {
+    const uploadOptions = {
+      folder,
+      resource_type: resourceType,
+      use_filename: true,
+      unique_filename: true
+    };
+    if (options.publicId) {
+      uploadOptions.public_id = options.publicId;
+    }
+    if (options.originalFilename) {
+      uploadOptions.context = { original_filename: options.originalFilename };
+    }
+    if (Buffer.isBuffer(fileBufferOrDataUri)) {
+      const uploadStream = client.uploader.upload_stream(
+        uploadOptions,
+        (error, result) => {
+          if (error || !result) {
+            return reject(error || new Error("Upload to Cloudinary failed without error result."));
+          }
+          resolve({
+            publicId: result.public_id,
+            url: result.url,
+            secureUrl: result.secure_url,
+            resourceType: result.resource_type,
+            format: result.format || "bin",
+            width: result.width,
+            height: result.height,
+            fileSize: result.bytes,
+            folder: result.folder || folder,
+            originalFilename: options.originalFilename || result.original_filename || result.public_id,
+            createdAt: result.created_at || (/* @__PURE__ */ new Date()).toISOString()
+          });
+        }
+      );
+      uploadStream.end(fileBufferOrDataUri);
+    } else {
+      client.uploader.upload(fileBufferOrDataUri, uploadOptions, (error, result) => {
+        if (error || !result) {
+          return reject(error || new Error("Upload to Cloudinary failed without error result."));
+        }
+        resolve({
+          publicId: result.public_id,
+          url: result.url,
+          secureUrl: result.secure_url,
+          resourceType: result.resource_type,
+          format: result.format || "bin",
+          width: result.width,
+          height: result.height,
+          fileSize: result.bytes,
+          folder: result.folder || folder,
+          originalFilename: options.originalFilename || result.original_filename || result.public_id,
+          createdAt: result.created_at || (/* @__PURE__ */ new Date()).toISOString()
+        });
+      });
+    }
+  });
+}
+async function deleteFromCloudinary(publicId, resourceType = "image") {
+  if (!isCloudinaryConfigured()) return false;
+  try {
+    const client = getCloudinaryClient();
+    const result = await client.uploader.destroy(publicId, {
+      resource_type: resourceType,
+      invalidate: true
+    });
+    return result.result === "ok" || result.result === "not found";
+  } catch (err) {
+    console.error(`[Cloudinary] Delete error for publicId ${publicId}:`, err);
+    return false;
+  }
+}
+function buildOptimizedCloudinaryUrl(publicIdOrUrl, transformations = {}) {
+  if (!publicIdOrUrl) return "";
+  if (!publicIdOrUrl.includes("res.cloudinary.com")) {
+    return publicIdOrUrl;
+  }
+  const { width, height, crop = "limit", quality = "auto", format = "auto", gravity } = transformations;
+  const parts = [];
+  if (width) parts.push(`w_${width}`);
+  if (height) parts.push(`h_${height}`);
+  if (crop) parts.push(`c_${crop}`);
+  if (gravity) parts.push(`g_${gravity}`);
+  if (quality) parts.push(`q_${quality}`);
+  if (format) parts.push(`f_${format}`);
+  const transformString = parts.join(",");
+  if (publicIdOrUrl.includes("/upload/")) {
+    const [base, rest] = publicIdOrUrl.split("/upload/");
+    if (rest.startsWith("w_") || rest.startsWith("c_") || rest.startsWith("q_") || rest.startsWith("f_")) {
+      return publicIdOrUrl;
+    }
+    return `${base}/upload/${transformString}/${rest}`;
+  }
+  return publicIdOrUrl;
+}
+var init_cloudinary = __esm({
+  "backend/services/cloudinary.ts"() {
+  }
+});
+
 // backend/services/planCatalogue.ts
 function normalisePlan(raw) {
   const slug = String(raw?.slug || "").trim().toLowerCase();
@@ -8198,8 +8334,8 @@ init_serverDb();
 init_requireAdmin();
 import { Router } from "express";
 function createCrudRouter(resourceName, options = {}) {
-  const router19 = Router();
-  router19.get("/", async (req, res) => {
+  const router20 = Router();
+  router20.get("/", async (req, res) => {
     try {
       const data = await fetchResource(resourceName);
       res.json(data);
@@ -8208,7 +8344,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to fetch ${resourceName}` });
     }
   });
-  router19.get("/:id", async (req, res) => {
+  router20.get("/:id", async (req, res) => {
     try {
       const item = await fetchSingleItem(resourceName, req.params.id);
       if (!item) {
@@ -8220,7 +8356,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to fetch ${resourceName} item` });
     }
   });
-  router19.post("/", requireAdmin, async (req, res) => {
+  router20.post("/", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       const database = await getDb();
@@ -8251,7 +8387,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to persist ${resourceName}` });
     }
   });
-  router19.put("/:id", requireAdmin, async (req, res) => {
+  router20.put("/:id", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       if (!payload || typeof payload !== "object") {
@@ -8271,7 +8407,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to update ${resourceName} item` });
     }
   });
-  router19.delete("/:id", requireAdmin, async (req, res) => {
+  router20.delete("/:id", requireAdmin, async (req, res) => {
     try {
       const database = await getDb();
       if (!database) {
@@ -8286,7 +8422,7 @@ function createCrudRouter(resourceName, options = {}) {
       res.status(500).json({ error: err.message || `Failed to delete ${resourceName} item` });
     }
   });
-  return router19;
+  return router20;
 }
 
 // backend/routes/products.ts
@@ -8300,119 +8436,304 @@ var collections_default = router2;
 // serverApp.ts
 init_orders();
 
-// backend/routes/files.ts
-init_prisma();
-import { Router as Router4 } from "express";
+// backend/routes/recycleBin.ts
+init_requireAdmin();
+import { Router as Router3 } from "express";
 
-// backend/services/cloudinary.ts
-import { v2 as cloudinary } from "cloudinary";
-function isCloudinaryConfigured() {
-  return Boolean(
-    process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
-  );
+// backend/services/recycleBin.ts
+init_serverDb();
+init_prisma();
+var RETENTION_DAYS = 30;
+var RESOURCES = {
+  orders: { label: "Orders", describe: (i) => `${i?.id ?? ""} \u2014 ${i?.customerName ?? i?.customerEmail ?? ""}` },
+  products: { label: "Products", describe: (i) => i?.title ?? i?.name ?? i?.id ?? "" },
+  collections: { label: "Collections", describe: (i) => i?.title ?? i?.name ?? i?.id ?? "" },
+  customPages: { label: "Pages", describe: (i) => i?.title ?? i?.slug ?? i?.id ?? "" },
+  blogs: { label: "Blog Posts", describe: (i) => i?.title ?? i?.id ?? "" },
+  customers: { label: "Customers", describe: (i) => i?.email ?? i?.name ?? i?.id ?? "" },
+  files: { label: "Files", describe: (i) => i?.fileName ?? i?.originalFilename ?? i?.url ?? i?.id ?? "" }
+};
+var RECYCLABLE_RESOURCES = Object.keys(RESOURCES);
+function isRecyclable(resource) {
+  return Object.prototype.hasOwnProperty.call(RESOURCES, normalizeResource(resource));
 }
-function getCloudinaryClient() {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const apiKey = process.env.CLOUDINARY_API_KEY;
-  const apiSecret = process.env.CLOUDINARY_API_SECRET;
-  if (cloudName && apiKey && apiSecret) {
-    cloudinary.config({
-      cloud_name: cloudName,
-      api_key: apiKey,
-      api_secret: apiSecret,
-      secure: true
-    });
-  }
-  return cloudinary;
+function normalizeResource(resource) {
+  const r = String(resource || "").trim();
+  const lower = r.toLowerCase();
+  if (lower === "pages" || lower === "custompages") return "customPages";
+  if (lower === "fileentries" || lower === "fileentry" || lower === "media") return "files";
+  if (lower === "blog" || lower === "blogposts") return "blogs";
+  return lower;
 }
-async function uploadToCloudinary(fileBufferOrDataUri, options = {}) {
-  const client = getCloudinaryClient();
-  const folder = options.folder || "storefront_media";
-  const resourceType = options.resourceType || "auto";
-  if (!isCloudinaryConfigured()) {
-    throw new Error("Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) are missing.");
+function resourceLabel(resource) {
+  return RESOURCES[normalizeResource(resource)]?.label ?? resource;
+}
+function describe(resource, item) {
+  try {
+    return String(RESOURCES[normalizeResource(resource)]?.describe(item) ?? "").trim().slice(0, 200);
+  } catch {
+    return "";
   }
-  return new Promise((resolve, reject) => {
-    const uploadOptions = {
-      folder,
-      resource_type: resourceType,
-      use_filename: true,
-      unique_filename: true
-    };
-    if (options.publicId) {
-      uploadOptions.public_id = options.publicId;
-    }
-    if (options.originalFilename) {
-      uploadOptions.context = { original_filename: options.originalFilename };
-    }
-    if (Buffer.isBuffer(fileBufferOrDataUri)) {
-      const uploadStream = client.uploader.upload_stream(
-        uploadOptions,
-        (error, result) => {
-          if (error || !result) {
-            return reject(error || new Error("Upload to Cloudinary failed without error result."));
-          }
-          resolve({
-            publicId: result.public_id,
-            url: result.url,
-            secureUrl: result.secure_url,
-            resourceType: result.resource_type,
-            format: result.format || "bin",
-            width: result.width,
-            height: result.height,
-            fileSize: result.bytes,
-            folder: result.folder || folder,
-            originalFilename: options.originalFilename || result.original_filename || result.public_id,
-            createdAt: result.created_at || (/* @__PURE__ */ new Date()).toISOString()
-          });
-        }
-      );
-      uploadStream.end(fileBufferOrDataUri);
-    } else {
-      client.uploader.upload(fileBufferOrDataUri, uploadOptions, (error, result) => {
-        if (error || !result) {
-          return reject(error || new Error("Upload to Cloudinary failed without error result."));
-        }
-        resolve({
-          publicId: result.public_id,
-          url: result.url,
-          secureUrl: result.secure_url,
-          resourceType: result.resource_type,
-          format: result.format || "bin",
-          width: result.width,
-          height: result.height,
-          fileSize: result.bytes,
-          folder: result.folder || folder,
-          originalFilename: options.originalFilename || result.original_filename || result.public_id,
-          createdAt: result.created_at || (/* @__PURE__ */ new Date()).toISOString()
-        });
-      });
+}
+function idOf(item) {
+  return String(item?.id ?? item?.slug ?? item?.orderId ?? "").trim();
+}
+function expiryFrom(deletedAt) {
+  const d = new Date(deletedAt.getTime());
+  d.setDate(d.getDate() + RETENTION_DAYS);
+  return d;
+}
+async function findActive(resource, itemId) {
+  const list = await fetchResource(normalizeResource(resource)) || [];
+  const wanted = String(itemId);
+  return list.find((i) => idOf(i) === wanted || String(i?.id) === wanted) || null;
+}
+async function moveToRecycleBin(resource, itemId, deletedBy) {
+  const store = normalizeResource(resource);
+  if (!isRecyclable(store)) {
+    return { ok: false, message: `${resource} is not covered by the recycle bin.` };
+  }
+  const id = String(itemId || "").trim();
+  if (!id) return { ok: false, message: "An item id is required." };
+  const item = await findActive(store, id);
+  if (!item) return { ok: false, message: "That item no longer exists." };
+  const deletedAt = /* @__PURE__ */ new Date();
+  const label = describe(store, item);
+  const entry = await prisma.recycleBinItem.upsert({
+    where: { resource_itemId: { resource: store, itemId: id } },
+    update: { payload: item, label, deletedAt, expiresAt: expiryFrom(deletedAt), deletedBy: deletedBy || null },
+    create: {
+      resource: store,
+      itemId: id,
+      label,
+      payload: item,
+      deletedAt,
+      expiresAt: expiryFrom(deletedAt),
+      deletedBy: deletedBy || null
     }
   });
-}
-async function deleteFromCloudinary(publicId, resourceType = "image") {
-  if (!isCloudinaryConfigured()) return false;
-  try {
-    const client = getCloudinaryClient();
-    const result = await client.uploader.destroy(publicId, {
-      resource_type: resourceType,
-      invalidate: true
+  await deleteSingleItem(store, id);
+  if (store === "files") {
+    await prisma.fileEntry.deleteMany({ where: { id } }).catch(() => {
     });
-    return result.result === "ok" || result.result === "not found";
+  }
+  console.log(`[Recycle Bin] ${store}/${id} moved to the bin${deletedBy ? ` by ${deletedBy}` : ""}.`);
+  return { ok: true, entryId: entry.id, label };
+}
+function toBinEntry(row) {
+  const expires = new Date(row.expiresAt).getTime();
+  return {
+    id: row.id,
+    resource: row.resource,
+    resourceLabel: resourceLabel(row.resource),
+    itemId: row.itemId,
+    label: row.label || row.itemId,
+    deletedAt: new Date(row.deletedAt).toISOString(),
+    expiresAt: new Date(row.expiresAt).toISOString(),
+    daysLeft: Math.max(0, Math.ceil((expires - Date.now()) / (24 * 60 * 60 * 1e3))),
+    deletedBy: row.deletedBy ?? null
+  };
+}
+async function listRecycleBin(resource) {
+  await purgeExpired();
+  const where = resource && resource !== "all" ? { resource: normalizeResource(resource) } : {};
+  const rows = await prisma.recycleBinItem.findMany({ where, orderBy: { deletedAt: "desc" } });
+  return rows.map(toBinEntry);
+}
+async function restoreFromRecycleBin(entryIds) {
+  const result = { restored: [], failed: [] };
+  for (const entryId of entryIds) {
+    const row = await prisma.recycleBinItem.findUnique({ where: { id: entryId } }).catch(() => null);
+    if (!row) {
+      result.failed.push({ id: entryId, reason: "No longer in the recycle bin" });
+      continue;
+    }
+    try {
+      await saveSingleItem(row.resource, row.payload);
+      if (row.resource === "files") {
+        const f = row.payload;
+        await prisma.fileEntry.upsert({
+          where: { id: row.itemId },
+          update: {
+            fileName: f?.fileName ?? "restored",
+            url: f?.url ?? "",
+            altText: f?.altText ?? null,
+            mimeType: f?.mimeType ?? null,
+            publicId: f?.publicId ?? null,
+            resourceType: f?.resourceType ?? null
+          },
+          create: {
+            id: row.itemId,
+            fileName: f?.fileName ?? "restored",
+            url: f?.url ?? "",
+            altText: f?.altText ?? null,
+            mimeType: f?.mimeType ?? null,
+            publicId: f?.publicId ?? null,
+            resourceType: f?.resourceType ?? null,
+            dateAdded: f?.dateAdded ?? (/* @__PURE__ */ new Date()).toISOString(),
+            size: f?.size ?? "",
+            references: f?.references ?? ""
+          }
+        }).catch((e) => console.warn(`[Recycle Bin] FileEntry row not restored for ${row.itemId}: ${e?.message}`));
+      }
+      await prisma.recycleBinItem.delete({ where: { id: entryId } });
+      result.restored.push(entryId);
+      console.log(`[Recycle Bin] ${row.resource}/${row.itemId} restored.`);
+    } catch (err) {
+      result.failed.push({ id: entryId, reason: err?.message || "Could not restore" });
+      console.error(`[Recycle Bin] Restore failed for ${row.resource}/${row.itemId}:`, err?.message);
+    }
+  }
+  return result;
+}
+async function destroyFileAsset(row) {
+  const publicId = row?.payload?.publicId;
+  if (!publicId) return;
+  try {
+    const { deleteFromCloudinary: deleteFromCloudinary2 } = await Promise.resolve().then(() => (init_cloudinary(), cloudinary_exports));
+    await deleteFromCloudinary2(publicId, row.payload?.resourceType || "image");
   } catch (err) {
-    console.error(`[Cloudinary] Delete error for publicId ${publicId}:`, err);
-    return false;
+    console.warn(`[Recycle Bin] Cloudinary asset ${publicId} not removed: ${err?.message}`);
   }
 }
+async function permanentlyDelete(entryIds) {
+  if (!entryIds.length) return 0;
+  const rows = await prisma.recycleBinItem.findMany({ where: { id: { in: entryIds } } });
+  for (const row of rows.filter((r) => r.resource === "files")) await destroyFileAsset(row);
+  const res = await prisma.recycleBinItem.deleteMany({ where: { id: { in: entryIds } } });
+  console.log(`[Recycle Bin] ${res.count} entr(ies) permanently deleted.`);
+  return res.count;
+}
+async function clearRecycleBin() {
+  const rows = await prisma.recycleBinItem.findMany({ where: { resource: "files" } });
+  for (const row of rows) await destroyFileAsset(row);
+  const res = await prisma.recycleBinItem.deleteMany({});
+  console.log(`[Recycle Bin] cleared \u2014 ${res.count} entr(ies) permanently deleted.`);
+  return res.count;
+}
+async function purgeExpired(now = /* @__PURE__ */ new Date()) {
+  try {
+    const due = await prisma.recycleBinItem.findMany({ where: { expiresAt: { lte: now } } });
+    if (due.length === 0) return 0;
+    for (const row of due.filter((r) => r.resource === "files")) await destroyFileAsset(row);
+    const res = await prisma.recycleBinItem.deleteMany({ where: { expiresAt: { lte: now } } });
+    console.log(`[Recycle Bin] ${res.count} entr(ies) passed ${RETENTION_DAYS} days and were destroyed.`);
+    return res.count;
+  } catch (err) {
+    console.error("[Recycle Bin] Expiry sweep failed:", err?.message);
+    return 0;
+  }
+}
+async function recycleBinCounts() {
+  const rows = await prisma.recycleBinItem.groupBy({ by: ["resource"], _count: { _all: true } }).catch(() => []);
+  const byResource = {};
+  let total = 0;
+  for (const r of rows) {
+    byResource[r.resource] = r._count._all;
+    total += r._count._all;
+  }
+  return { total, byResource };
+}
+
+// backend/routes/recycleBin.ts
+init_requireAdmin();
+var router4 = Router3();
+router4.get("/", requireAdmin, async (req, res) => {
+  try {
+    const resource = typeof req.query.resource === "string" ? req.query.resource : void 0;
+    const items = await listRecycleBin(resource);
+    const counts = await recycleBinCounts();
+    res.json({ items, counts, retentionDays: RETENTION_DAYS, resources: RECYCLABLE_RESOURCES });
+  } catch (err) {
+    console.error("[Recycle Bin] GET Error:", err);
+    res.status(500).json({ error: err?.message || "Could not load the recycle bin" });
+  }
+});
+router4.post("/move", requireAdmin, async (req, res) => {
+  try {
+    const { resource, id } = req.body || {};
+    if (!resource || !id) {
+      return res.status(400).json({ error: "A resource and an id are required." });
+    }
+    if (!isRecyclable(String(resource))) {
+      return res.status(400).json({
+        error: `"${resource}" is not covered by the recycle bin.`,
+        recyclable: RECYCLABLE_RESOURCES
+      });
+    }
+    const result = await moveToRecycleBin(String(resource), String(id), req.admin?.email);
+    if (!result.ok) return res.status(404).json({ error: result.message });
+    res.json({ success: true, entryId: result.entryId, label: result.label, retentionDays: RETENTION_DAYS });
+  } catch (err) {
+    console.error("[Recycle Bin] move Error:", err);
+    res.status(500).json({ error: err?.message || "Could not move that item to the recycle bin" });
+  }
+});
+router4.post("/restore", requireAdmin, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+    if (ids.length === 0) return res.status(400).json({ error: "Select at least one item to restore." });
+    const result = await restoreFromRecycleBin(ids);
+    res.json({
+      success: result.failed.length === 0,
+      restored: result.restored.length,
+      failed: result.failed
+    });
+  } catch (err) {
+    console.error("[Recycle Bin] restore Error:", err);
+    res.status(500).json({ error: err?.message || "Could not restore those items" });
+  }
+});
+router4.post("/delete", requireAdmin, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+    if (ids.length === 0) return res.status(400).json({ error: "Select at least one item to delete." });
+    const deleted = await permanentlyDelete(ids);
+    res.json({ success: true, deleted });
+  } catch (err) {
+    console.error("[Recycle Bin] delete Error:", err);
+    res.status(500).json({ error: err?.message || "Could not delete those items" });
+  }
+});
+router4.post("/clear", requireAdmin, async (req, res) => {
+  try {
+    if (req.body?.confirm !== true) {
+      return res.status(400).json({ error: "Clearing the recycle bin must be confirmed." });
+    }
+    const deleted = await clearRecycleBin();
+    res.json({ success: true, deleted });
+  } catch (err) {
+    console.error("[Recycle Bin] clear Error:", err);
+    res.status(500).json({ error: err?.message || "Could not clear the recycle bin" });
+  }
+});
+var handlePurge = async (_req, res) => {
+  try {
+    const deleted = await purgeExpired();
+    res.json({ success: true, deleted, retentionDays: RETENTION_DAYS });
+  } catch (err) {
+    console.error("[Recycle Bin] purge Error:", err);
+    res.status(500).json({ error: err?.message || "Could not run the expiry sweep" });
+  }
+};
+router4.get("/purge-expired", requireCronOrAdmin, handlePurge);
+router4.post("/purge-expired", requireCronOrAdmin, handlePurge);
+var recycleBin_default = router4;
+
+// backend/routes/files.ts
+init_prisma();
+init_cloudinary();
+import { Router as Router5 } from "express";
 
 // backend/routes/media.ts
 init_prisma();
 init_serverDb();
-import { Router as Router3 } from "express";
+init_cloudinary();
+import { Router as Router4 } from "express";
 import multer from "multer";
 import fs2 from "fs";
 import path2 from "path";
-var router4 = Router3();
+var router5 = Router4();
 var upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 }
@@ -8473,7 +8794,7 @@ async function checkMediaReferences(fileUrl) {
   }
   return references;
 }
-router4.get("/", async (req, res) => {
+router5.get("/", async (req, res) => {
   try {
     const files = await prisma.fileEntry.findMany({
       orderBy: { createdAt: "desc" }
@@ -8489,7 +8810,7 @@ router4.get("/", async (req, res) => {
     }
   }
 });
-router4.post("/check-references", async (req, res) => {
+router5.post("/check-references", async (req, res) => {
   try {
     const { url } = req.body;
     if (!url) {
@@ -8501,7 +8822,7 @@ router4.post("/check-references", async (req, res) => {
     res.status(500).json({ error: err.message || "Error checking media references" });
   }
 });
-router4.post("/upload", upload.single("file"), async (req, res) => {
+router5.post("/upload", upload.single("file"), async (req, res) => {
   try {
     let fileBuffer = null;
     let fileName = "Uploaded Asset";
@@ -8674,7 +8995,7 @@ router4.post("/upload", upload.single("file"), async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to upload media asset" });
   }
 });
-router4.patch("/:id", async (req, res) => {
+router5.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { fileName, altText, folder } = req.body;
@@ -8695,7 +9016,7 @@ router4.patch("/:id", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to update media file metadata" });
   }
 });
-router4.delete("/:id", async (req, res) => {
+router5.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const force = req.query.force === "true";
@@ -8724,13 +9045,13 @@ router4.delete("/:id", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to delete media asset" });
   }
 });
-var media_default = router4;
+var media_default = router5;
 
 // backend/routes/files.ts
 init_serverDb();
 init_requireAdmin();
-var router5 = Router4();
-router5.get("/", async (_req, res) => {
+var router6 = Router5();
+router6.get("/", async (_req, res) => {
   try {
     const data = await fetchResource("files");
     return res.json(data);
@@ -8739,7 +9060,7 @@ router5.get("/", async (_req, res) => {
     return res.status(500).json({ error: err.message || "Failed to fetch files" });
   }
 });
-router5.post("/", requireAdmin, async (req, res) => {
+router6.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -8758,7 +9079,7 @@ router5.post("/", requireAdmin, async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to persist files" });
   }
 });
-router5.delete("/:id", requireAdmin, async (req, res) => {
+router6.delete("/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const force = req.query.force === "true";
@@ -8804,14 +9125,14 @@ router5.delete("/:id", requireAdmin, async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to delete file" });
   }
 });
-var files_default = router5;
+var files_default = router6;
 
 // backend/routes/customers.ts
 init_serverDb();
 init_prisma();
 init_emailService();
 init_klaviyoService();
-import { Router as Router5 } from "express";
+import { Router as Router6 } from "express";
 import crypto3 from "crypto";
 
 // backend/services/recaptchaService.ts
@@ -8923,7 +9244,7 @@ async function verifyRecaptchaToken(token, expectedAction) {
 // backend/routes/customers.ts
 init_adminAuth();
 init_requireAdmin();
-var router6 = Router5();
+var router7 = Router6();
 function hashPassword(password) {
   return crypto3.createHash("sha256").update(password + "pouch_supply_salt_123!").digest("hex");
 }
@@ -8955,7 +9276,7 @@ async function enrichCustomerAgeStatus(customer) {
   }
   return customer;
 }
-router6.get("/", requireAdmin, async (req, res) => {
+router7.get("/", requireAdmin, async (req, res) => {
   try {
     const data = await fetchResource("customers");
     const sanitized = data.map(({ passwordHash, ...rest }) => rest);
@@ -8965,7 +9286,7 @@ router6.get("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch customers" });
   }
 });
-router6.get("/by-email", requireCustomer, async (req, res) => {
+router7.get("/by-email", requireCustomer, async (req, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
     if (!email) {
@@ -8986,7 +9307,7 @@ router6.get("/by-email", requireCustomer, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch customer" });
   }
 });
-router6.post("/", requireAdmin, async (req, res) => {
+router7.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -9005,7 +9326,7 @@ router6.post("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to persist customers" });
   }
 });
-router6.post("/signup", async (req, res) => {
+router7.post("/signup", async (req, res) => {
   try {
     const { name, email, password, phone, location = "United Kingdom", referredByCode = null, recaptchaToken, token } = req.body;
     const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, "customer_signup");
@@ -9090,7 +9411,7 @@ router6.post("/signup", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to complete customer registration" });
   }
 });
-router6.post("/forgot-password", async (req, res) => {
+router7.post("/forgot-password", async (req, res) => {
   try {
     const { email, recaptchaToken, token } = req.body;
     const captchaCheck = await verifyRecaptchaToken(recaptchaToken || token, "customer_forgot_password");
@@ -9126,7 +9447,7 @@ router6.post("/forgot-password", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to process password reset request" });
   }
 });
-router6.post("/reset-password", async (req, res) => {
+router7.post("/reset-password", async (req, res) => {
   try {
     const { token, code, email, newPassword, recaptchaToken } = req.body;
     const suppliedCodeOrToken = (code || token || "").toString().trim();
@@ -9169,7 +9490,7 @@ router6.post("/reset-password", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to reset password" });
   }
 });
-router6.post("/request-verification", async (req, res) => {
+router7.post("/request-verification", async (req, res) => {
   try {
     const { email, name } = req.body;
     if (!email) {
@@ -9194,7 +9515,7 @@ router6.post("/request-verification", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to send verification code" });
   }
 });
-router6.post("/verify-email", async (req, res) => {
+router7.post("/verify-email", async (req, res) => {
   try {
     const { email, code, name } = req.body;
     if (!email || !code) {
@@ -9229,7 +9550,7 @@ router6.post("/verify-email", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to verify email address" });
   }
 });
-router6.post("/login", async (req, res) => {
+router7.post("/login", async (req, res) => {
   try {
     const { email, password, recaptchaToken } = req.body;
     const captchaCheck = await verifyRecaptchaToken(recaptchaToken, "customer_login");
@@ -9288,7 +9609,7 @@ router6.post("/login", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to complete customer login" });
   }
 });
-router6.post("/google-login", async (req, res) => {
+router7.post("/google-login", async (req, res) => {
   try {
     const { email, name, googleId, picture } = req.body;
     if (!email) {
@@ -9361,7 +9682,7 @@ router6.post("/google-login", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to authenticate with Google" });
   }
 });
-router6.post("/admin-login", async (req, res) => {
+router7.post("/admin-login", async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -9394,7 +9715,7 @@ router6.post("/admin-login", async (req, res) => {
     res.status(500).json({ error: err.message || "Internal server error during admin validation" });
   }
 });
-router6.post("/update-profile", requireCustomer, async (req, res) => {
+router7.post("/update-profile", requireCustomer, async (req, res) => {
   try {
     const customerData = req.body.customer || req.body;
     if (!customerData || !customerData.email && !customerData.id) {
@@ -9468,15 +9789,15 @@ router6.post("/update-profile", requireCustomer, async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to update profile." });
   }
 });
-var customers_default = router6;
+var customers_default = router7;
 
 // backend/routes/discounts.ts
 init_serverDb();
 init_requireAdmin();
 init_discountUsage();
-import { Router as Router6 } from "express";
-var router7 = Router6();
-router7.get("/auto", async (req, res) => {
+import { Router as Router7 } from "express";
+var router8 = Router7();
+router8.get("/auto", async (req, res) => {
   try {
     const email = String(req.query.email || "").trim();
     if (!email) return res.json({ discount: null });
@@ -9488,7 +9809,7 @@ router7.get("/auto", async (req, res) => {
     res.json({ discount: null });
   }
 });
-router7.post("/validate", async (req, res) => {
+router8.post("/validate", async (req, res) => {
   try {
     const { customerEmail, discount } = req.body || {};
     if (!discount) {
@@ -9502,7 +9823,7 @@ router7.post("/validate", async (req, res) => {
     res.json({ ok: true });
   }
 });
-router7.get("/", async (req, res) => {
+router8.get("/", async (req, res) => {
   try {
     const data = await fetchResource("discounts");
     res.json(data);
@@ -9511,7 +9832,7 @@ router7.get("/", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch discounts" });
   }
 });
-router7.post("/", requireAdmin, async (req, res) => {
+router8.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -9530,13 +9851,13 @@ router7.post("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to persist discounts" });
   }
 });
-var discounts_default = router7;
+var discounts_default = router8;
 
 // backend/routes/customPages.ts
 init_planCatalogue();
 init_subscriptionPricingService();
 init_emailService();
-var router8 = createCrudRouter("customPages", {
+var router9 = createCrudRouter("customPages", {
   onAfterReplace: async (before, after) => {
     const previousPlans = await getPlanCatalogue(before);
     const currentPlans = await getPlanCatalogue(after);
@@ -9571,14 +9892,14 @@ var router8 = createCrudRouter("customPages", {
     );
   }
 });
-var customPages_default = router8;
+var customPages_default = router9;
 
 // backend/routes/blogs.ts
 init_serverDb();
 init_requireAdmin();
-import { Router as Router7 } from "express";
-var router9 = Router7();
-router9.get("/", async (req, res) => {
+import { Router as Router8 } from "express";
+var router10 = Router8();
+router10.get("/", async (req, res) => {
   try {
     const data = await fetchResource("blogs");
     res.json(data);
@@ -9587,7 +9908,7 @@ router9.get("/", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch blogs" });
   }
 });
-router9.post("/", requireAdmin, async (req, res) => {
+router10.post("/", requireAdmin, async (req, res) => {
   try {
     const payload = req.body;
     if (!Array.isArray(payload)) {
@@ -9606,7 +9927,7 @@ router9.post("/", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to persist blogs" });
   }
 });
-var blogs_default = router9;
+var blogs_default = router10;
 
 // backend/routes/worldpay.ts
 init_prisma();
@@ -9615,7 +9936,7 @@ init_requireAdmin();
 init_worldpaySubscription();
 init_subscriptionCron();
 init_ukValidation();
-import { Router as Router8 } from "express";
+import { Router as Router9 } from "express";
 import crypto5 from "crypto";
 
 // src/utils/discountUtils.ts
@@ -9881,7 +10202,7 @@ function resolveDeliveryCost(subtotalAfterDiscount, discount, baseCost = STANDAR
 init_subscriptionPricing();
 init_klaviyoService();
 init_discountUsage();
-var router10 = Router8();
+var router11 = Router9();
 function assertDeliverable(body) {
   const address = body?.shippingAddress && typeof body.shippingAddress === "object" ? body.shippingAddress : {};
   const destination = String(body?.destination || body?.address || "");
@@ -10698,8 +11019,8 @@ async function recoverMissingSubscriptionTokens(limit = TOKEN_SWEEP_LIMIT) {
   }
   return results;
 }
-router10.get("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
-router10.post("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
+router11.get("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
+router11.post("/reconcile-pending", requireCronOrAdmin, handleReconcilePending);
 var SUBSCRIPTION_REPAIR_LIMIT = 10;
 async function billableSubscriptionsFor(orderId) {
   if (!await getDb()) {
@@ -10918,7 +11239,7 @@ var handleRepairSubscriptions = async (req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 };
-router10.post("/repair-subscriptions", requireAdmin, handleRepairSubscriptions);
+router11.post("/repair-subscriptions", requireAdmin, handleRepairSubscriptions);
 var handleRecoverTokens = async (_req, res) => {
   try {
     const results = await recoverMissingSubscriptionTokens();
@@ -10933,9 +11254,9 @@ var handleRecoverTokens = async (_req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 };
-router10.get("/recover-tokens", requireAdmin, handleRecoverTokens);
-router10.post("/recover-tokens", requireAdmin, handleRecoverTokens);
-router10.get("/config", (_req, res) => {
+router11.get("/recover-tokens", requireAdmin, handleRecoverTokens);
+router11.post("/recover-tokens", requireAdmin, handleRecoverTokens);
+router11.get("/config", (_req, res) => {
   const cfg = getEnvironmentConfig();
   res.json({
     active: true,
@@ -11140,14 +11461,14 @@ async function handleCreateHostedPaymentPage(req, res) {
     };
     let { res: response, parsed: responseBody } = await postPaymentPage(body);
     if (!response.ok && isSubscriptionCheckout) {
-      const describe = (parsedBody) => String(parsedBody?.description || parsedBody?.message || parsedBody?.errorName || "");
+      const describe2 = (parsedBody) => String(parsedBody?.description || parsedBody?.message || parsedBody?.errorName || "");
       const askBody = {
         ...body,
         createToken: { ...body.createToken, optIn: "ASK" }
       };
       if (tokenOptIn() !== "ASK") {
         console.warn(
-          `[Worldpay HPP] Mandate request rejected for ${transactionReference} (${response.status}): ${describe(responseBody)}. Retrying with optIn "ASK" before giving up the stored card.`
+          `[Worldpay HPP] Mandate request rejected for ${transactionReference} (${response.status}): ${describe2(responseBody)}. Retrying with optIn "ASK" before giving up the stored card.`
         );
         ({ res: response, parsed: responseBody } = await postPaymentPage(askBody));
         if (response.ok) {
@@ -11158,7 +11479,7 @@ async function handleCreateHostedPaymentPage(req, res) {
       }
       if (!response.ok) {
         console.error(
-          `[Worldpay HPP] Subscription mandate rejected for ${transactionReference} (${response.status}): ${describe(responseBody)}. Retrying as a one-off payment \u2014 this subscription will NOT be able to take recurring payments until customer agreements / tokenisation are enabled on entity ${cfg.entity}.`
+          `[Worldpay HPP] Subscription mandate rejected for ${transactionReference} (${response.status}): ${describe2(responseBody)}. Retrying as a one-off payment \u2014 this subscription will NOT be able to take recurring payments until customer agreements / tokenisation are enabled on entity ${cfg.entity}.`
         );
         const fallbackBody = { ...body };
         delete fallbackBody.customerAgreement;
@@ -11224,9 +11545,9 @@ async function handleCreateHostedPaymentPage(req, res) {
     });
   }
 }
-router10.post("/session", handleCreateHostedPaymentPage);
-router10.post("/payment_pages", handleCreateHostedPaymentPage);
-router10.post("/verify-payment", async (req, res) => {
+router11.post("/session", handleCreateHostedPaymentPage);
+router11.post("/payment_pages", handleCreateHostedPaymentPage);
+router11.post("/verify-payment", async (req, res) => {
   try {
     const {
       orderId,
@@ -11351,8 +11672,8 @@ var handleWorldpayCallback = async (req, res) => {
   }
   return res.redirect(`/payment/failed?orderId=${encodeURIComponent(orderId)}&reason=unknown_status`);
 };
-router10.get("/callback", handleWorldpayCallback);
-router10.post("/callback", handleWorldpayCallback);
+router11.get("/callback", handleWorldpayCallback);
+router11.post("/callback", handleWorldpayCallback);
 var WEBHOOK_PAID_EVENTS = /* @__PURE__ */ new Set([
   "authorized",
   "authorised",
@@ -11416,7 +11737,7 @@ var lastHandlerRanAt = null;
 var lastReceiptWriteError = null;
 var lastContentType = null;
 var WEBHOOK_BUILD_MARKER = "webhook-vendor-json-parse-2026-09-16";
-router10.get("/webhook", async (_req, res) => {
+router11.get("/webhook", async (_req, res) => {
   let heldTokens = 0;
   try {
     heldTokens = (await fetchResource(PENDING_TOKENS_RESOURCE) || []).length;
@@ -11465,7 +11786,7 @@ router10.get("/webhook", async (_req, res) => {
     lastRawBodies: received.slice(0, 3).map((r) => r.rawBody)
   });
 });
-router10.post("/webhook", async (req, res) => {
+router11.post("/webhook", async (req, res) => {
   const contentType = String(req.headers["content-type"] || "none");
   if ((!req.body || typeof req.body === "object" && Object.keys(req.body).length === 0) && req.rawBody) {
     try {
@@ -11587,7 +11908,7 @@ router10.post("/webhook", async (req, res) => {
     return res.status(500).json({ received: true, processed: false, error: error.message });
   }
 });
-router10.get("/status", async (req, res) => {
+router11.get("/status", async (req, res) => {
   try {
     const orderId = req.query.orderId;
     if (!orderId) return res.status(400).json({ error: "orderId is required" });
@@ -11643,7 +11964,7 @@ router10.get("/status", async (req, res) => {
     return res.status(500).json({ error: error.message || "Failed to check payment status" });
   }
 });
-router10.get("/order/:id", async (req, res) => {
+router11.get("/order/:id", async (req, res) => {
   try {
     const orderId = req.params.id;
     let foundOrder = null;
@@ -11666,7 +11987,7 @@ router10.get("/order/:id", async (req, res) => {
     return res.status(500).json({ error: error.message || "Failed to fetch order" });
   }
 });
-router10.post("/refund", requireAdmin, async (req, res) => {
+router11.post("/refund", requireAdmin, async (req, res) => {
   try {
     const { orderId, amount, reason, transactionId } = req.body;
     if (!orderId) {
@@ -11725,7 +12046,7 @@ router10.post("/refund", requireAdmin, async (req, res) => {
     return res.status(500).json({ error: error.message || "Failed to process Worldpay refund" });
   }
 });
-var worldpay_default = router10;
+var worldpay_default = router11;
 
 // backend/routes/subscriptions.ts
 init_prisma();
@@ -11737,9 +12058,9 @@ init_klaviyoService();
 init_serverDb();
 init_worldpaySubscription();
 init_subscriptionCron();
-import { Router as Router9 } from "express";
+import { Router as Router10 } from "express";
 import crypto6 from "crypto";
-var router11 = Router9();
+var router12 = Router10();
 var handleProcessRenewals = async (_req, res) => {
   try {
     const result = await processDueSubscriptions();
@@ -11758,10 +12079,10 @@ var handleProcessRenewals = async (_req, res) => {
     });
   }
 };
-router11.get("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
-router11.post("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
-router11.get("/cron", requireCronOrAdmin, handleProcessRenewals);
-router11.post("/cron", requireCronOrAdmin, handleProcessRenewals);
+router12.get("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router12.post("/process-renewals", requireCronOrAdmin, handleProcessRenewals);
+router12.get("/cron", requireCronOrAdmin, handleProcessRenewals);
+router12.post("/cron", requireCronOrAdmin, handleProcessRenewals);
 function canChargeRecurring(sub) {
   if (!sub) return false;
   const href = sub.worldpayRecurringHref || sub.recurringHref;
@@ -11868,7 +12189,7 @@ function toCustomerSubscription(s, now = /* @__PURE__ */ new Date()) {
     credentialIssue: canChargeRecurring(s) ? null : "This plan has no stored-card mandate with Worldpay, so it cannot take a recurring payment. Subscribe again to set one up."
   };
 }
-router11.get("/status", requireAdmin, async (_req, res) => {
+router12.get("/status", requireAdmin, async (_req, res) => {
   try {
     let subscriptions = [];
     try {
@@ -11923,7 +12244,7 @@ router11.get("/status", requireAdmin, async (_req, res) => {
     });
   }
 });
-router11.post("/update-schedule", requireCustomer, async (req, res) => {
+router12.post("/update-schedule", requireCustomer, async (req, res) => {
   try {
     const { subscriptionId, customerEmail, billingInterval, nextBillingDate, chargeImmediately } = req.body;
     if (!subscriptionId && !customerEmail) {
@@ -11980,7 +12301,7 @@ router11.post("/update-schedule", requireCustomer, async (req, res) => {
     });
   }
 });
-router11.post("/update-plan", requireCustomer, async (req, res) => {
+router12.post("/update-plan", requireCustomer, async (req, res) => {
   try {
     const {
       subscriptionId,
@@ -12144,7 +12465,7 @@ router11.post("/update-plan", requireCustomer, async (req, res) => {
     });
   }
 });
-router11.post(
+router12.post(
   "/create",
   async (req, res) => {
     try {
@@ -12271,7 +12592,7 @@ router11.post(
     }
   }
 );
-router11.post(
+router12.post(
   "/cancel",
   async (req, res) => {
     try {
@@ -12431,7 +12752,7 @@ router11.post(
     }
   }
 );
-router11.post(
+router12.post(
   "/reactivate",
   async (req, res) => {
     try {
@@ -12597,7 +12918,7 @@ router11.post(
     }
   }
 );
-router11.post(
+router12.post(
   "/delete",
   async (req, res) => {
     try {
@@ -12667,7 +12988,7 @@ router11.post(
     }
   }
 );
-router11.get(
+router12.get(
   "/customer/:email",
   async (req, res) => {
     try {
@@ -12701,13 +13022,13 @@ router11.get(
     }
   }
 );
-var subscriptions_default = router11;
+var subscriptions_default = router12;
 
 // backend/routes/structure.ts
-import { Router as Router10 } from "express";
+import { Router as Router11 } from "express";
 import fs3 from "fs";
 import path3 from "path";
-var router12 = Router10();
+var router13 = Router11();
 var EXCLUDED_DIRS = /* @__PURE__ */ new Set([
   "node_modules",
   ".git",
@@ -12772,7 +13093,7 @@ function generateAsciiTree(nodes, prefix = "") {
   });
   return result;
 }
-router12.get("/", (req, res) => {
+router13.get("/", (req, res) => {
   try {
     const rootDir = process.cwd();
     const tree = buildTree(rootDir);
@@ -12796,15 +13117,15 @@ router12.get("/", (req, res) => {
     });
   }
 });
-var structure_default = router12;
+var structure_default = router13;
 
 // backend/routes/email.ts
 init_emailService();
-import { Router as Router11 } from "express";
+import { Router as Router12 } from "express";
 init_emailTemplates();
 init_serverDb();
 init_requireAdmin();
-var router13 = Router11();
+var router14 = Router12();
 function getSampleTemplateData(type, customData) {
   const sampleItems = [
     { productId: "p1", productTitle: "VELO Freeze Max Strong 17mg Canister", price: 5.99, quantity: 2 },
@@ -12843,7 +13164,7 @@ function getSampleTemplateData(type, customData) {
   };
   return { ...defaultData, ...customData || {} };
 }
-router13.get("/settings", requireAdmin, async (_req, res) => {
+router14.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getEmailSettings();
     res.json(settings);
@@ -12851,7 +13172,7 @@ router13.get("/settings", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch email settings" });
   }
 });
-router13.post("/settings", requireAdmin, async (req, res) => {
+router14.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveEmailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -12859,7 +13180,7 @@ router13.post("/settings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save email settings" });
   }
 });
-router13.post("/verify-connection", requireAdmin, async (req, res) => {
+router14.post("/verify-connection", requireAdmin, async (req, res) => {
   try {
     const result = await verifyEmailConnection(req.body);
     res.json(result);
@@ -12867,7 +13188,7 @@ router13.post("/verify-connection", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, message: err.message || "Verification failed" });
   }
 });
-router13.get("/recaptcha-settings", async (_req, res) => {
+router14.get("/recaptcha-settings", async (_req, res) => {
   try {
     const settings = await getRecaptchaSettings();
     res.json({
@@ -12880,7 +13201,7 @@ router13.get("/recaptcha-settings", async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch recaptcha settings" });
   }
 });
-router13.post("/recaptcha-settings", requireAdmin, async (req, res) => {
+router14.post("/recaptcha-settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveRecaptchaSettings(req.body);
     res.json({
@@ -12896,7 +13217,7 @@ router13.post("/recaptcha-settings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save recaptcha settings" });
   }
 });
-router13.get("/logs", requireAdmin, async (_req, res) => {
+router14.get("/logs", requireAdmin, async (_req, res) => {
   try {
     const logs = await getEmailLogs();
     res.json(logs);
@@ -12904,7 +13225,7 @@ router13.get("/logs", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch email logs" });
   }
 });
-router13.post("/logs/clear", requireAdmin, async (req, res) => {
+router14.post("/logs/clear", requireAdmin, async (req, res) => {
   try {
     const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
     const beforeRaw = req.body?.before;
@@ -12941,7 +13262,7 @@ router13.post("/logs/clear", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to clear email logs" });
   }
 });
-router13.post("/preview", requireAdmin, async (req, res) => {
+router14.post("/preview", requireAdmin, async (req, res) => {
   try {
     const { type, customData } = req.body;
     const templateType = type || "order_confirmation";
@@ -13004,7 +13325,7 @@ router13.post("/preview", requireAdmin, async (req, res) => {
     res.status(500).send(`<div style="padding:20px; color:red; font-family:sans-serif;">Error rendering preview: ${err.message}</div>`);
   }
 });
-router13.post("/test", requireAdmin, async (req, res) => {
+router14.post("/test", requireAdmin, async (req, res) => {
   try {
     const { recipient, type, customSubject, customData, apiKey, fromEmail } = req.body;
     if (!recipient || typeof recipient !== "string" || !recipient.includes("@")) {
@@ -13018,7 +13339,7 @@ router13.post("/test", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to send test email" });
   }
 });
-router13.post("/send-trigger", async (req, res) => {
+router14.post("/send-trigger", async (req, res) => {
   try {
     const { type, orderData, customerEmail, customerName, trackingNumber, carrier, refundAmount, reason, code } = req.body;
     let result = null;
@@ -13067,7 +13388,7 @@ router13.post("/send-trigger", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to dispatch email trigger" });
   }
 });
-router13.post("/contact", async (req, res) => {
+router14.post("/contact", async (req, res) => {
   try {
     const { name, email, subject, message, phone, recaptchaToken, token } = req.body;
     if (!name || !email || !message) {
@@ -13141,15 +13462,15 @@ router13.post("/contact", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to submit contact message" });
   }
 });
-var email_default = router13;
+var email_default = router14;
 
 // backend/routes/klaviyo.ts
 init_klaviyoService();
 init_serverDb();
 init_requireAdmin();
-import { Router as Router12 } from "express";
-var router14 = Router12();
-router14.get("/lists", requireAdmin, async (req, res) => {
+import { Router as Router13 } from "express";
+var router15 = Router13();
+router15.get("/lists", requireAdmin, async (req, res) => {
   try {
     const apiKey = req.query.apiKey;
     const lists = await getKlaviyoLists(apiKey);
@@ -13158,7 +13479,7 @@ router14.get("/lists", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch Klaviyo lists" });
   }
 });
-router14.get("/settings", requireAdmin, async (_req, res) => {
+router15.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getKlaviyoSettings();
     res.json(settings);
@@ -13166,7 +13487,7 @@ router14.get("/settings", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Klaviyo settings" });
   }
 });
-router14.post("/settings", requireAdmin, async (req, res) => {
+router15.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveKlaviyoSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -13251,9 +13572,9 @@ var handleVerify = async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to verify Klaviyo API key" });
   }
 };
-router14.get("/verify", requireAdmin, handleVerify);
-router14.post("/verify", requireAdmin, handleVerify);
-router14.get("/health", requireAdmin, async (_req, res) => {
+router15.get("/verify", requireAdmin, handleVerify);
+router15.post("/verify", requireAdmin, handleVerify);
+router15.get("/health", requireAdmin, async (_req, res) => {
   try {
     const settings = await getKlaviyoSettings();
     let apiKey = (settings.apiKey || process.env.KLAVIYO_API_KEY || "").trim();
@@ -13328,7 +13649,7 @@ router14.get("/health", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to read Klaviyo health" });
   }
 });
-router14.get("/logs", requireAdmin, async (_req, res) => {
+router15.get("/logs", requireAdmin, async (_req, res) => {
   try {
     const logs = await getKlaviyoLogs();
     res.json(logs);
@@ -13336,7 +13657,7 @@ router14.get("/logs", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Klaviyo logs" });
   }
 });
-router14.post("/logs/clear", requireAdmin, async (req, res) => {
+router15.post("/logs/clear", requireAdmin, async (req, res) => {
   try {
     const status = typeof req.body?.status === "string" ? req.body.status.trim() : "";
     const beforeRaw = req.body?.before;
@@ -13373,7 +13694,7 @@ router14.post("/logs/clear", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to clear klaviyo logs" });
   }
 });
-router14.post("/track", async (req, res) => {
+router15.post("/track", async (req, res) => {
   try {
     const { eventName, customerEmail, eventProperties, customerProperties, eventType, data } = req.body;
     if (eventType) {
@@ -13420,13 +13741,13 @@ router14.post("/track", async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to track Klaviyo event" });
   }
 });
-var klaviyo_default = router14;
+var klaviyo_default = router15;
 
 // backend/routes/royalMail.ts
 init_royalMailService();
 init_royalMail();
 init_requireAdmin();
-import { Router as Router13 } from "express";
+import { Router as Router14 } from "express";
 function sendRoyalMailError(res, error, fallbackMessage) {
   console.error(`[Royal Mail] ${fallbackMessage}:`, error);
   if (error instanceof RoyalMailError) {
@@ -13444,8 +13765,8 @@ function sendRoyalMailError(res, error, fallbackMessage) {
     message: error?.message || fallbackMessage
   });
 }
-var router15 = Router13();
-router15.get("/connection", requireAdmin, async (_req, res) => {
+var router16 = Router14();
+router16.get("/connection", requireAdmin, async (_req, res) => {
   try {
     const settings = await getRoyalMailSettings();
     const apiKey = (settings.apiKey || process.env.RM_API_KEY || process.env.ROYAL_MAIL_API_KEY || "").trim();
@@ -13490,7 +13811,7 @@ router15.get("/connection", requireAdmin, async (_req, res) => {
     });
   }
 });
-router15.post("/create-order", requireAdmin, async (req, res) => {
+router16.post("/create-order", requireAdmin, async (req, res) => {
   try {
     const orderData = req.body;
     const settings = await getRoyalMailSettings();
@@ -13545,7 +13866,7 @@ router15.post("/create-order", requireAdmin, async (req, res) => {
     });
   }
 });
-router15.get("/orders", requireAdmin, async (req, res) => {
+router16.get("/orders", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const params = req.query;
@@ -13555,7 +13876,7 @@ router15.get("/orders", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch orders" });
   }
 });
-router15.get("/orders/:reference", requireAdmin, async (req, res) => {
+router16.get("/orders/:reference", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getOrderByReference(req.params.reference, apiKey);
@@ -13564,7 +13885,7 @@ router15.get("/orders/:reference", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch order" });
   }
 });
-router15.delete("/orders/:reference", requireAdmin, async (req, res) => {
+router16.delete("/orders/:reference", requireAdmin, async (req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await cancelOrder(req.params.reference, apiKey);
@@ -13573,7 +13894,7 @@ router15.delete("/orders/:reference", requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to cancel order" });
   }
 });
-router15.get("/version", requireAdmin, async (_req, res) => {
+router16.get("/version", requireAdmin, async (_req, res) => {
   try {
     const apiKey = await requireApiKey();
     const data = await getApiVersion(apiKey);
@@ -13582,7 +13903,7 @@ router15.get("/version", requireAdmin, async (_req, res) => {
     res.status(500).json({ success: false, error: err.message || "Failed to fetch API version" });
   }
 });
-router15.get("/settings", requireAdmin, async (_req, res) => {
+router16.get("/settings", requireAdmin, async (_req, res) => {
   try {
     const settings = await getRoyalMailSettings();
     res.json(settings);
@@ -13590,7 +13911,7 @@ router15.get("/settings", requireAdmin, async (_req, res) => {
     res.status(500).json({ error: err.message || "Failed to fetch Royal Mail settings" });
   }
 });
-router15.post("/settings", requireAdmin, async (req, res) => {
+router16.post("/settings", requireAdmin, async (req, res) => {
   try {
     const updated = await saveRoyalMailSettings(req.body);
     res.json({ success: true, settings: updated });
@@ -13598,7 +13919,7 @@ router15.post("/settings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to save Royal Mail settings" });
   }
 });
-router15.post("/create-shipment", requireAdmin, async (req, res) => {
+router16.post("/create-shipment", requireAdmin, async (req, res) => {
   try {
     const { orderId, serviceCode, packageType, weightGrams } = req.body;
     if (!orderId) {
@@ -13614,7 +13935,7 @@ router15.post("/create-shipment", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to create Royal Mail shipment");
   }
 });
-router15.post("/validate-address", requireAdmin, async (req, res) => {
+router16.post("/validate-address", requireAdmin, async (req, res) => {
   try {
     const result = validateAddress(req.body);
     res.json(result);
@@ -13622,7 +13943,7 @@ router15.post("/validate-address", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Address validation failed" });
   }
 });
-router15.post("/test-service-code", requireAdmin, async (req, res) => {
+router16.post("/test-service-code", requireAdmin, async (req, res) => {
   try {
     const codes = Array.isArray(req.body?.serviceCodes) ? req.body.serviceCodes : [req.body?.serviceCode].filter(Boolean);
     if (codes.length === 0) {
@@ -13637,7 +13958,7 @@ router15.post("/test-service-code", requireAdmin, async (req, res) => {
     return res.status(200).json({ success: false, message: error?.message || "Service code test failed." });
   }
 });
-router15.post("/rates", requireAdmin, async (req, res) => {
+router16.post("/rates", requireAdmin, async (req, res) => {
   try {
     const { weightGrams, countryCode } = req.body;
     const rates = getShippingRates(weightGrams || 70, countryCode || "GB");
@@ -13646,7 +13967,7 @@ router15.post("/rates", requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || "Failed to calculate rates" });
   }
 });
-router15.get("/label/:orderId/order-pdf", requireAdmin, async (req, res) => {
+router16.get("/label/:orderId/order-pdf", requireAdmin, async (req, res) => {
   try {
     const { orderId } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -13663,7 +13984,7 @@ router15.get("/label/:orderId/order-pdf", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Unable to retrieve the Royal Mail label");
   }
 });
-router15.put("/dispatch-order/:orderId", requireAdmin, async (req, res) => {
+router16.put("/dispatch-order/:orderId", requireAdmin, async (req, res) => {
   try {
     const result = await dispatchRoyalMailShipment(String(req.params.orderId));
     return res.json(result);
@@ -13671,7 +13992,7 @@ router15.put("/dispatch-order/:orderId", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Unable to mark the order as despatched");
   }
 });
-router15.get("/track/:trackingNumber", async (req, res) => {
+router16.get("/track/:trackingNumber", async (req, res) => {
   try {
     const { trackingNumber } = req.params;
     const trackingInfo = await getRoyalMailTracking(trackingNumber);
@@ -13680,7 +14001,7 @@ router15.get("/track/:trackingNumber", async (req, res) => {
     return sendRoyalMailError(res, err, "Tracking lookup failed");
   }
 });
-router15.post("/sync-status/:orderId", async (req, res) => {
+router16.post("/sync-status/:orderId", async (req, res) => {
   try {
     const { orderId } = req.params;
     const result = await syncRoyalMailOrderStatus(orderId);
@@ -13703,9 +14024,9 @@ var handleSyncPending = async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to sync pending Royal Mail tracking");
   }
 };
-router15.get("/sync-pending", requireCronOrAdmin, handleSyncPending);
-router15.post("/sync-pending", requireCronOrAdmin, handleSyncPending);
-router15.post("/cancel-shipment", requireAdmin, async (req, res) => {
+router16.get("/sync-pending", requireCronOrAdmin, handleSyncPending);
+router16.post("/sync-pending", requireCronOrAdmin, handleSyncPending);
+router16.post("/cancel-shipment", requireAdmin, async (req, res) => {
   try {
     const { orderId, royalMailOrderId } = req.body;
     if (!orderId) {
@@ -13717,7 +14038,7 @@ router15.post("/cancel-shipment", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to cancel shipment");
   }
 });
-router15.post("/create-return-label", requireAdmin, async (req, res) => {
+router16.post("/create-return-label", requireAdmin, async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {
@@ -13735,7 +14056,7 @@ router15.post("/create-return-label", requireAdmin, async (req, res) => {
     return sendRoyalMailError(res, err, "Failed to retrieve the returns label");
   }
 });
-router15.get("/label/:identifier/pdf", requireAdmin, async (req, res) => {
+router16.get("/label/:identifier/pdf", requireAdmin, async (req, res) => {
   try {
     const { identifier } = req.params;
     const includeReturnsLabel = req.query.includeReturnsLabel === "true";
@@ -13767,7 +14088,7 @@ router15.get("/label/:identifier/pdf", requireAdmin, async (req, res) => {
     return res.status(500).json({ success: false, message: error.message || "Unable to retrieve Royal Mail label." });
   }
 });
-router15.put("/dispatch", requireAdmin, async (req, res) => {
+router16.put("/dispatch", requireAdmin, async (req, res) => {
   try {
     const { orderIdentifier, orderReference } = req.body;
     if (orderIdentifier === void 0 && !orderReference) {
@@ -13800,20 +14121,20 @@ router15.put("/dispatch", requireAdmin, async (req, res) => {
     });
   }
 });
-var royalMail_default = router15;
+var royalMail_default = router16;
 
 // backend/routes/contactMessages.ts
-var router16 = createCrudRouter("contactMessages");
-var contactMessages_default = router16;
+var router17 = createCrudRouter("contactMessages");
+var contactMessages_default = router17;
 
 // backend/routes/agechecked.ts
 init_prisma();
-import { Router as Router14 } from "express";
-var router17 = Router14();
+import { Router as Router15 } from "express";
+var router18 = Router15();
 var DEFAULT_BASE_URL = "https://staging.agechecked.com/api/acapiremote/ac0130";
 var DEFAULT_PORTAL_URL = "https://portal.agechecked.com/portal";
 var SECRET_FIELD_NAMES = ["merchantSecretKey", "merchantKey", "secretKey", "merchantSecret"];
-router17.get("/config", (req, res) => {
+router18.get("/config", (req, res) => {
   const portalUrl = process.env.NEXT_PUBLIC_AGECHECKED_PORTAL_URL || process.env.AGECHECKED_PORTAL_URL || DEFAULT_PORTAL_URL;
   const publicKey = process.env.NEXT_PUBLIC_AGECHECKED_PUBLIC_KEY || process.env.AGECHECKED_PUBLIC_KEY || "";
   res.json({
@@ -13983,7 +14304,7 @@ async function checkAgeVerificationDb(keys) {
   }
   return null;
 }
-router17.post("/init", async (req, res) => {
+router18.post("/init", async (req, res) => {
   const secretKey = normalizeSecretKey(process.env.AGECHECKED_SECRET_KEY);
   const baseUrl = (process.env.AGECHECKED_BASE_URL || process.env.VITE_AGECHECKED_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
   const body = req.body || {};
@@ -14050,7 +14371,7 @@ router17.post("/init", async (req, res) => {
     attemptedFieldNames: SECRET_FIELD_NAMES.join(", ")
   });
 });
-router17.get("/status", async (req, res) => {
+router18.get("/status", async (req, res) => {
   const reference = String(req.query.reference || "").trim();
   const agecheckid = String(req.query.agecheckid || "").trim();
   const email = String(req.query.email || "").toLowerCase().trim();
@@ -14126,7 +14447,7 @@ router17.get("/status", async (req, res) => {
   }
   return res.json({ success: false, approved: false, status: "0", statusText: "Pending" });
 });
-router17.post("/approve", async (req, res) => {
+router18.post("/approve", async (req, res) => {
   const { reference, email, agecheckid, verified, method } = req.body || {};
   if ((verified === true || verified === "true" || verified === 1 || verified === "1") && agecheckid) {
     const resolvedAgeCheckId = String(agecheckid);
@@ -14135,7 +14456,7 @@ router17.post("/approve", async (req, res) => {
   }
   return res.status(400).json({ success: false, approved: false, message: "Verification not completed or session ID is missing." });
 });
-router17.post("/reset", async (req, res) => {
+router18.post("/reset", async (req, res) => {
   const { reference, email, agecheckid } = req.body || {};
   const normalizedEmail = email ? String(email).toLowerCase().trim() : void 0;
   const keys = [reference, agecheckid, normalizedEmail].filter(
@@ -14173,7 +14494,7 @@ router17.post("/reset", async (req, res) => {
   }
   return res.json({ success: true });
 });
-router17.post("/reset", async (req, res) => {
+router18.post("/reset", async (req, res) => {
   const { reference, email, agecheckid } = req.body || {};
   const normalizedEmail = email ? String(email).toLowerCase().trim() : void 0;
   const keys = [reference, agecheckid, normalizedEmail].filter(
@@ -14211,7 +14532,7 @@ router17.post("/reset", async (req, res) => {
   }
   return res.json({ success: true });
 });
-router17.get("/demo-portal", (_req, res) => {
+router18.get("/demo-portal", (_req, res) => {
   return res.status(410).json({
     success: false,
     message: "The legacy AgeChecked demo portal is no longer available."
@@ -14333,28 +14654,28 @@ var handleCallback = async (req, res) => {
     </html>
   `);
 };
-router17.all("/callback", handleCallback);
-router17.all("/callback/", handleCallback);
-router17.all("/webhook", handleCallback);
-router17.all("/webhook/", handleCallback);
-router17.all("/notification", handleCallback);
-router17.all("/notification/", handleCallback);
-router17.all("/notify", handleCallback);
-router17.all("/notify/", handleCallback);
-router17.all("/pass", handleCallback);
-router17.all("/pass/", handleCallback);
-router17.all("/success", handleCallback);
-router17.all("/fail", handleCallback);
-router17.all("/", handleCallback);
-router17.all("", handleCallback);
-var agechecked_default = router17;
+router18.all("/callback", handleCallback);
+router18.all("/callback/", handleCallback);
+router18.all("/webhook", handleCallback);
+router18.all("/webhook/", handleCallback);
+router18.all("/notification", handleCallback);
+router18.all("/notification/", handleCallback);
+router18.all("/notify", handleCallback);
+router18.all("/notify/", handleCallback);
+router18.all("/pass", handleCallback);
+router18.all("/pass/", handleCallback);
+router18.all("/success", handleCallback);
+router18.all("/fail", handleCallback);
+router18.all("/", handleCallback);
+router18.all("", handleCallback);
+var agechecked_default = router18;
 
 // backend/routes/auth.ts
 init_serverDb();
 init_emailService();
 init_adminAuth();
-import { Router as Router15 } from "express";
-var router18 = Router15();
+import { Router as Router16 } from "express";
+var router19 = Router16();
 function getRedirectUri(req) {
   const clientOrigin = req.query.origin || req.headers["x-client-origin"];
   const isLocalOrigin = Boolean(
@@ -14375,7 +14696,7 @@ function getRedirectUri(req) {
   const proto = isCloudHost || req.get("x-forwarded-proto") === "https" || req.secure ? "https" : req.protocol || "http";
   return `${proto}://${host}/auth/google/callback`;
 }
-router18.get("/google/url", (req, res) => {
+router19.get("/google/url", (req, res) => {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || "";
     const redirectUri = getRedirectUri(req);
@@ -14406,7 +14727,7 @@ router18.get("/google/url", (req, res) => {
     return res.status(500).json({ error: "Failed to generate Google auth URL" });
   }
 });
-router18.post("/google/verify", async (req, res) => {
+router19.post("/google/verify", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     const { accessToken, idToken } = req.body;
@@ -14601,7 +14922,7 @@ async function handleGoogleOAuthCallback(req, res) {
     `);
   }
 }
-router18.get("/session", async (req, res) => {
+router19.get("/session", async (req, res) => {
   try {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
@@ -14638,10 +14959,10 @@ router18.get("/session", async (req, res) => {
     return res.json({ user: null, customer: null });
   }
 });
-router18.post("/signout", (req, res) => {
+router19.post("/signout", (req, res) => {
   return res.json({ success: true, message: "Signed out successfully" });
 });
-router18.get("/providers", (req, res) => {
+router19.get("/providers", (req, res) => {
   return res.json({
     google: {
       id: "google",
@@ -14652,9 +14973,10 @@ router18.get("/providers", (req, res) => {
     }
   });
 });
-var auth_default = router18;
+var auth_default = router19;
 
 // serverApp.ts
+init_cloudinary();
 init_prisma();
 init_requireAdmin();
 async function createExpressApp() {
@@ -15184,6 +15506,7 @@ async function createExpressApp() {
   app.use("/api/products", products_default);
   app.use("/api/collections", collections_default);
   app.use("/api/orders", orders_default);
+  app.use("/api/recycle-bin", recycleBin_default);
   app.use("/api/files", files_default);
   app.use("/api/customers", customers_default);
   app.use("/api/discounts", discounts_default);
