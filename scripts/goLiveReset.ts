@@ -23,7 +23,7 @@
  * customer's agreement, which is the wrong way round.
  */
 import 'dotenv/config';
-import { fetchResource, saveResource, getDb } from '../serverDb';
+import { fetchResource, saveSingleItem, getDb } from '../serverDb';
 import { prisma } from '../src/lib/prisma';
 
 const APPLY = process.argv.includes('--apply');
@@ -135,16 +135,27 @@ async function main() {
   }
 
   if (bannerPages.length) {
-    const nextPages = pages.map((p: any) => ({
-      ...p,
-      sections: (p?.sections || []).map((sec: any) =>
-        sec?.settings?.promoBannerText === OLD_BANNER
-          ? { ...sec, settings: { ...sec.settings, promoBannerText: NEW_BANNER } }
-          : sec
-      )
-    }));
-    await saveResource('customPages', nextPages);
-    console.log(`  launch banner corrected on ${bannerPages.length} page(s)`);
+    // One page at a time, through saveSingleItem.
+    //
+    // This used to rewrite the whole list with saveResource. 'customPages' is
+    // not in LIST_SAVE_NEVER_DELETES, so that save is authoritative — and the
+    // two stores key pages differently (the JSON store by ids like
+    // "page-1784697403555", the typed table by slug), so a merged list written
+    // back does not round-trip. A page that was only in one of them was dropped
+    // by the write: it took out the "test" page on the first run, which had to
+    // be restored from the backup. An upsert per page cannot delete anything.
+    for (const page of bannerPages) {
+      const updated = {
+        ...page,
+        sections: (page?.sections || []).map((sec: any) =>
+          sec?.settings?.promoBannerText === OLD_BANNER
+            ? { ...sec, settings: { ...sec.settings, promoBannerText: NEW_BANNER } }
+            : sec
+        )
+      };
+      await saveSingleItem('customPages', updated);
+      console.log(`  launch banner corrected on "${page.slug}"`);
+    }
   }
 
   // ----------------------------------------------------------------- verify
