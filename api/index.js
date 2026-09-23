@@ -8485,8 +8485,11 @@ function expiryFrom(deletedAt) {
 }
 async function findActive(resource, itemId) {
   const list = await fetchResource(normalizeResource(resource)) || [];
-  const wanted = String(itemId);
-  return list.find((i) => idOf(i) === wanted || String(i?.id) === wanted) || null;
+  const wanted = String(itemId).trim();
+  if (!wanted) return null;
+  return list.find(
+    (i) => idOf(i) === wanted || String(i?.id ?? "") === wanted || String(i?.slug ?? "") === wanted
+  ) || null;
 }
 async function moveToRecycleBin(resource, itemId, deletedBy) {
   const store = normalizeResource(resource);
@@ -8497,14 +8500,16 @@ async function moveToRecycleBin(resource, itemId, deletedBy) {
   if (!id) return { ok: false, message: "An item id is required." };
   const item = await findActive(store, id);
   if (!item) return { ok: false, message: "That item no longer exists." };
+  const canonicalId = idOf(item) || id;
+  const slug = String(item?.slug ?? "").trim();
   const deletedAt = /* @__PURE__ */ new Date();
   const label = describe(store, item);
   const entry = await prisma.recycleBinItem.upsert({
-    where: { resource_itemId: { resource: store, itemId: id } },
+    where: { resource_itemId: { resource: store, itemId: canonicalId } },
     update: { payload: item, label, deletedAt, expiresAt: expiryFrom(deletedAt), deletedBy: deletedBy || null },
     create: {
       resource: store,
-      itemId: id,
+      itemId: canonicalId,
       label,
       payload: item,
       deletedAt,
@@ -8512,12 +8517,13 @@ async function moveToRecycleBin(resource, itemId, deletedBy) {
       deletedBy: deletedBy || null
     }
   });
-  await deleteSingleItem(store, id);
+  await deleteSingleItem(store, canonicalId);
+  if (slug && slug !== canonicalId) await deleteSingleItem(store, slug);
   if (store === "files") {
-    await prisma.fileEntry.deleteMany({ where: { id } }).catch(() => {
+    await prisma.fileEntry.deleteMany({ where: { id: canonicalId } }).catch(() => {
     });
   }
-  console.log(`[Recycle Bin] ${store}/${id} moved to the bin${deletedBy ? ` by ${deletedBy}` : ""}.`);
+  console.log(`[Recycle Bin] ${store}/${canonicalId} moved to the bin${deletedBy ? ` by ${deletedBy}` : ""}.`);
   return { ok: true, entryId: entry.id, label };
 }
 function toBinEntry(row) {

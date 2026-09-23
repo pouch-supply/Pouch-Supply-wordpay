@@ -3836,6 +3836,7 @@ export default function AdminDashboard({
         {/* 5. PAGES & SECTION BUILDER BLOCK */}
         {activeTab === 'pages' && (
           <PagesTab
+            onRecyclePage={(id: string) => recycleItem('customPages', id)}
             localPages={localPages}
             setLocalPages={setLocalPages}
             onUpdateCustomPages={onUpdateCustomPages}

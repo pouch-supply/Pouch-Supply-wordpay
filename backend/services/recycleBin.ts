@@ -70,11 +70,26 @@ function expiryFrom(deletedAt: Date): Date {
   return d;
 }
 
-/** Finds one record in its active store. */
+/**
+ * Finds one record in its active store, by id OR slug.
+ *
+ * Pages are keyed inconsistently in this data — some carry an id equal to their
+ * slug ("about"), others an id like "page-1785239768436" with a different slug
+ * ("faqs") — and the dashboard passes whichever it has. Matching on the id
+ * alone missed the second kind entirely.
+ */
 async function findActive(resource: string, itemId: string): Promise<any | null> {
   const list: any[] = (await fetchResource(normalizeResource(resource))) || [];
-  const wanted = String(itemId);
-  return list.find(i => idOf(i) === wanted || String(i?.id) === wanted) || null;
+  const wanted = String(itemId).trim();
+  if (!wanted) return null;
+  return (
+    list.find(
+      i =>
+        idOf(i) === wanted ||
+        String(i?.id ?? "") === wanted ||
+        String(i?.slug ?? "") === wanted
+    ) || null
+  );
 }
 
 export interface MoveResult {
@@ -107,17 +122,23 @@ export async function moveToRecycleBin(
   const item = await findActive(store, id);
   if (!item) return { ok: false, message: "That item no longer exists." };
 
+  // The record's OWN id, not whatever the caller happened to hold. A page can
+  // be passed by slug, and the bin entry has to be keyed the same way a restore
+  // will write it back.
+  const canonicalId = idOf(item) || id;
+  const slug = String(item?.slug ?? "").trim();
+
   const deletedAt = new Date();
   const label = describe(store, item);
 
   // Upsert, not create: deleting, restoring and deleting again should reuse the
   // one slot rather than stack duplicates for the admin to sift through.
   const entry = await prisma.recycleBinItem.upsert({
-    where: { resource_itemId: { resource: store, itemId: id } },
+    where: { resource_itemId: { resource: store, itemId: canonicalId } },
     update: { payload: item, label, deletedAt, expiresAt: expiryFrom(deletedAt), deletedBy: deletedBy || null },
     create: {
       resource: store,
-      itemId: id,
+      itemId: canonicalId,
       label,
       payload: item,
       deletedAt,
@@ -127,17 +148,22 @@ export async function moveToRecycleBin(
   });
 
   // Only now is it safe to remove the original.
-  await deleteSingleItem(store, id);
+  //
+  // Cleared under the slug as well as the id where they differ: the JSON store
+  // and the typed table do not agree on which of the two is a page's key, so
+  // deleting by one alone can leave the record behind in the other.
+  await deleteSingleItem(store, canonicalId);
+  if (slug && slug !== canonicalId) await deleteSingleItem(store, slug);
 
   // Files also hold a typed FileEntry row and a Cloudinary asset. The row goes
   // with the record; the asset is deliberately LEFT on Cloudinary until the bin
   // entry is destroyed, because an image whose file has been deleted cannot be
   // restored into a working page.
   if (store === "files") {
-    await prisma.fileEntry.deleteMany({ where: { id } }).catch(() => {});
+    await prisma.fileEntry.deleteMany({ where: { id: canonicalId } }).catch(() => {});
   }
 
-  console.log(`[Recycle Bin] ${store}/${id} moved to the bin${deletedBy ? ` by ${deletedBy}` : ""}.`);
+  console.log(`[Recycle Bin] ${store}/${canonicalId} moved to the bin${deletedBy ? ` by ${deletedBy}` : ""}.`);
   return { ok: true, entryId: entry.id, label };
 }
 

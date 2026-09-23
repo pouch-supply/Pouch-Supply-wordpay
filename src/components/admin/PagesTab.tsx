@@ -14,6 +14,12 @@ import { AVAILABLE_SECTION_TEMPLATES, getSectionLabel, getSectionIcon } from '..
 import PageRenderer from '../PageRenderer';
 
 export interface PagesTabProps {
+  /**
+   * Moves a page to the recycle bin, server-side. Resolves false when the
+   * server refused, so the caller leaves its list alone rather than hiding a
+   * page that is still live.
+   */
+  onRecyclePage: (id: string) => Promise<boolean>;
   localPages: CustomPage[];
   setLocalPages: React.Dispatch<React.SetStateAction<CustomPage[]>>;
   onUpdateCustomPages: (newPages: CustomPage[]) => void;
@@ -51,6 +57,7 @@ export interface PagesTabProps {
 }
 
 export const PagesTab: React.FC<PagesTabProps> = ({
+  onRecyclePage,
   localPages,
   setLocalPages,
   onUpdateCustomPages,
@@ -247,16 +254,19 @@ export const PagesTab: React.FC<PagesTabProps> = ({
                       <div className="relative group/tooltip">
                         <button
                           disabled={page.isHomepage}
-                          onClick={() => {
-                            if (confirm(`Are you sure you want to permanently delete "${page.title}"?`)) {
-                              const pageId = page.id || page.slug;
-                              const pageSlug = page.slug || page.id;
-                              const updated = localPages.filter(p => p.id !== page.id && p.slug !== page.slug);
-                              setLocalPages(updated);
-                              onUpdateCustomPages(updated);
-                              if (pageId) fetch(`/api/custompages/${pageId}`, { method: 'DELETE' }).catch(() => {});
-                              if (pageSlug && pageSlug !== pageId) fetch(`/api/custompages/${pageSlug}`, { method: 'DELETE' }).catch(() => {});
-                            }
+                          onClick={async () => {
+                            // Through the recycle bin, like every other delete
+                            // in the dashboard. This used to fire DELETE
+                            // /api/custompages/:id twice — once by id, once by
+                            // slug — without awaiting either, which destroyed
+                            // the page outright and bypassed the bin entirely.
+                            if (!confirm(`Delete "${page.title}"? It will be moved to the Recycle Bin, where you can restore it for 30 days.`)) return;
+                            const pageId = page.id || page.slug;
+                            if (!pageId) return;
+                            if (!(await onRecyclePage(pageId))) return;
+                            const updated = localPages.filter(p => p.id !== page.id && p.slug !== page.slug);
+                            setLocalPages(updated);
+                            onUpdateCustomPages(updated);
                           }}
                           className={`p-1.5 rounded-md transition-all flex items-center justify-center ${
                             page.isHomepage

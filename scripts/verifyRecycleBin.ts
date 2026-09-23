@@ -129,9 +129,50 @@ async function main() {
     await prisma.recycleBinItem.delete({ where: { id: fresh.id } }).catch(() => {});
 
     check('clearRecycleBin exists and is callable', typeof clearRecycleBin, 'function');
+
+    // ------------------------------------------- a page whose id is not its slug
+    //
+    // The shape that broke in production. Pages are keyed inconsistently: some
+    // carry an id equal to their slug ("about"), others an id like
+    // "page-1785239768436" with a different slug ("faqs"). The dashboard passes
+    // whichever it holds, and a lookup on the id alone missed the second kind —
+    // so deleting one destroyed it instead of binning it.
+    const ODD_ID = `${SLUG}-odd-id`;
+    const ODD_SLUG = `${SLUG}-odd-slug`;
+    const oddPage = { ...testPage, id: ODD_ID, slug: ODD_SLUG, title: 'Odd-keyed self-test' };
+    await saveSingleItem('customPages', oddPage);
+
+    const pagesWithOdd: any[] = (await fetchResource('customPages')) || [];
+    check('the odd-keyed page starts out live', pagesWithOdd.some(p => String(p?.id) === ODD_ID), true);
+
+    // Deleted BY SLUG, which is what the page list often has to hand.
+    const bySlug = await moveToRecycleBin('customPages', ODD_SLUG);
+    check('it can be binned by slug', bySlug.ok, true);
+
+    const afterOdd: any[] = (await fetchResource('customPages')) || [];
+    check('and leaves Pages under BOTH its keys',
+      afterOdd.some(p => String(p?.id) === ODD_ID || String(p?.slug) === ODD_SLUG), false);
+
+    const oddEntry = (await listRecycleBin('customPages')).find(e => e.itemId === ODD_ID);
+    check('the bin entry is keyed by its real id, not the slug', Boolean(oddEntry), true);
+    check('and is labelled by its title', oddEntry?.label, 'Odd-keyed self-test');
+
+    const oddRestore = await restoreFromRecycleBin([oddEntry!.id]);
+    check('it restores', oddRestore.restored.length, 1);
+    const restoredOdd: any[] = (await fetchResource('customPages')) || [];
+    const backOdd = restoredOdd.find(p => String(p?.id) === ODD_ID);
+    check('with its id intact', backOdd?.id, ODD_ID);
+    check('and its slug intact', backOdd?.slug, ODD_SLUG);
+
+    await moveToRecycleBin('customPages', ODD_ID);
+    const finalOdd = (await listRecycleBin('customPages')).find(e => e.itemId === ODD_ID);
+    check('deleting it again by id reuses the same slot', Boolean(finalOdd), true);
+    await permanentlyDelete([finalOdd!.id]);
   } finally {
     // Whatever happened above, leave nothing behind.
     await deleteSingleItem('customPages', SLUG).catch(() => {});
+    await deleteSingleItem('customPages', `${SLUG}-odd-id`).catch(() => {});
+    await deleteSingleItem('customPages', `${SLUG}-odd-slug`).catch(() => {});
     await prisma.recycleBinItem
       .deleteMany({ where: { itemId: { startsWith: '__recycle-bin-selftest-' } } })
       .catch(() => {});
@@ -151,6 +192,8 @@ main()
   .catch(async err => {
     console.error('[Recycle bin verify] Failed:', err);
     await deleteSingleItem('customPages', SLUG).catch(() => {});
+    await deleteSingleItem('customPages', `${SLUG}-odd-id`).catch(() => {});
+    await deleteSingleItem('customPages', `${SLUG}-odd-slug`).catch(() => {});
     await prisma.recycleBinItem
       .deleteMany({ where: { itemId: { startsWith: '__recycle-bin-selftest-' } } })
       .catch(() => {});
