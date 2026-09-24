@@ -329,6 +329,58 @@ export async function purgeExpired(now: Date = new Date()): Promise<number> {
   }
 }
 
+/**
+ * Removes anything currently in the recycle bin from a list about to be saved.
+ *
+ * The dashboard's Save posts whole lists — products, collections, pages, blogs
+ * — and a tab opened before a deletion still holds the deleted record in its
+ * copy. Saving from that tab wrote the record straight back, so an item ended
+ * up live AND in the bin at once. That is how the "test" page came back after
+ * being deleted, while its bin entry sat there.
+ *
+ * The bin is the authority: if something is in it, it is deleted, and a stale
+ * list cannot undo that. Restoring goes through `restoreFromRecycleBin`, which
+ * removes the bin entry first, so this never blocks a real restore.
+ */
+export async function stripRecycled<T extends Record<string, any>>(
+  resource: string,
+  items: T[]
+): Promise<{ kept: T[]; removed: string[] }> {
+  const store = normalizeResource(resource);
+  if (!isRecyclable(store) || !Array.isArray(items) || items.length === 0) {
+    return { kept: items || [], removed: [] };
+  }
+
+  let binned: Array<{ itemId: string }>;
+  try {
+    binned = await prisma.recycleBinItem.findMany({ where: { resource: store }, select: { itemId: true } });
+  } catch {
+    // Cannot read the bin: let the save through rather than silently dropping
+    // records the admin is trying to keep.
+    return { kept: items, removed: [] };
+  }
+  if (binned.length === 0) return { kept: items, removed: [] };
+
+  const blocked = new Set(binned.map(b => String(b.itemId)));
+  const removed: string[] = [];
+  const kept = items.filter(item => {
+    // Matched on id AND slug, because pages are keyed by either.
+    const id = String(item?.id ?? "");
+    const slug = String(item?.slug ?? "");
+    const hit = (id && blocked.has(id)) || (slug && blocked.has(slug));
+    if (hit) removed.push(id || slug);
+    return !hit;
+  });
+
+  if (removed.length) {
+    console.warn(
+      `[Recycle Bin] Ignored ${removed.length} ${store} record(s) in a saved list that are in the ` +
+        `recycle bin: ${removed.join(", ")}. Restore them from the bin to bring them back.`
+    );
+  }
+  return { kept, removed };
+}
+
 /** Counts per resource, for the sidebar badge and the filter chips. */
 export async function recycleBinCounts(): Promise<{ total: number; byResource: Record<string, number> }> {
   const rows = await prisma.recycleBinItem.groupBy({ by: ["resource"], _count: { _all: true } }).catch(() => []);

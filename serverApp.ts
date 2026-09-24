@@ -14,6 +14,7 @@ import collectionsRouter from "./backend/routes/collections";
 import ordersRouter from "./backend/routes/orders";
 import recycleBinRouter from "./backend/routes/recycleBin";
 import analyticsRouter from "./backend/routes/analytics";
+import siteStatusRouter from "./backend/routes/siteStatus";
 import filesRouter from "./backend/routes/files";
 import customersRouter from "./backend/routes/customers";
 import discountsRouter from "./backend/routes/discounts";
@@ -636,6 +637,7 @@ export async function createExpressApp() {
   app.use("/api/orders", ordersRouter);
   app.use("/api/recycle-bin", recycleBinRouter);
   app.use("/api/analytics", analyticsRouter);
+  app.use("/api/site-status", siteStatusRouter);
   app.use("/api/files", filesRouter);
   app.use("/api/customers", customersRouter);
   app.use("/api/discounts", discountsRouter);

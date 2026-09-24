@@ -21,6 +21,7 @@ import {
   ADMIN_SESSION_EXPIRED_EVENT
 } from './lib/adminApi';
 import AdminSessionExpiredModal from './components/admin/AdminSessionExpiredModal';
+import ComingSoon from './components/ComingSoon';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import ProductsGrid from './components/ProductsGrid';
@@ -744,6 +745,70 @@ export default function App() {
   const [checkoutDiscount, setCheckoutDiscount] = useState<Discount | null>(null);
   const [checkoutTotal, setCheckoutTotal] = useState<number>(0);
   const [isWithdrawalOpen, setIsWithdrawalOpen] = useState<boolean>(false);
+
+  /**
+   * The password-protected "coming soon" gate.
+   *
+   * null while the mode is still being fetched, so the storefront is not shown
+   * for a moment and then snatched away — and, just as important, so a slow
+   * request cannot black out a shop that is actually live.
+   */
+  const [siteGate, setSiteGate] = useState<{ mode: 'live' | 'password'; headline: string; message: string } | null>(null);
+  const [hasSitePass, setHasSitePass] = useState(false);
+
+  const SITE_PASS_KEY = 'ps_site_pass';
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/site-status');
+        if (!res.ok) throw new Error('unavailable');
+        const data = await res.json();
+        if (cancelled) return;
+
+        setSiteGate({
+          mode: data?.mode === 'password' ? 'password' : 'live',
+          headline: String(data?.headline || ''),
+          message: String(data?.message || '')
+        });
+
+        if (data?.mode === 'password') {
+          // A pass from a previous visit is re-checked with the server rather
+          // than trusted: changing the password must turn everyone out.
+          const stored = localStorage.getItem(SITE_PASS_KEY);
+          if (stored) {
+            const check = await fetch('/api/site-status/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pass: stored })
+            });
+            const ok = (await check.json().catch(() => null))?.ok === true;
+            if (!ok) localStorage.removeItem(SITE_PASS_KEY);
+            if (!cancelled) setHasSitePass(ok);
+          }
+        }
+      } catch {
+        // Unreachable status endpoint means the shop stays open. A site nobody
+        // can see is a worse failure than one that is briefly public.
+        if (!cancelled) setSiteGate({ mode: 'live', headline: '', message: '' });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const unlockSite = async (password: string): Promise<boolean> => {
+    const res = await fetch('/api/site-status/unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.ok !== true || !data?.pass) return false;
+    try { localStorage.setItem(SITE_PASS_KEY, data.pass); } catch { /* private mode */ }
+    setHasSitePass(true);
+    return true;
+  };
 
   /**
    * Watches the admin session and says so, out loud, the moment it ends.
@@ -1944,6 +2009,27 @@ export default function App() {
       });
     }
   };
+
+  /*
+    The coming-soon gate.
+
+    Checked before anything of the storefront renders, and deliberately NOT
+    applied to /admin-dashboard: the dashboard is where the lock is turned off,
+    so gating it would make locking yourself out unrecoverable.
+
+    This hides the shop from visitors; it is not a security boundary. The pages
+    and the public API are still served to anyone who asks for them directly.
+    Vercel's Deployment Protection is the tool for genuinely sealing a site.
+  */
+  if (siteGate?.mode === 'password' && !hasSitePass && !isAdminActive) {
+    return (
+      <ComingSoon
+        headline={siteGate.headline}
+        message={siteGate.message}
+        onUnlock={unlockSite}
+      />
+    );
+  }
 
   if (!isInitialLoadDone) {
     return (

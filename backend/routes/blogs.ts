@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { fetchResource, saveResource, getDb } from "../../serverDb";
+import { stripRecycled } from "../services/recycleBin";
 
 import { requireAdmin } from "../middleware/requireAdmin";
 
@@ -31,7 +32,9 @@ router.post("/", requireAdmin, async (req, res) => {
       res.setHeader("X-Database-Offline", "false");
     }
 
-    const updated = await saveResource("blogs", payload);
+    // A saved list cannot resurrect a blog post that is in the recycle bin.
+    const { kept } = await stripRecycled("blogs", payload);
+    const updated = await saveResource("blogs", kept);
     res.json(updated);
   } catch (err: any) {
     console.error("[Blogs Router] POST Error:", err);

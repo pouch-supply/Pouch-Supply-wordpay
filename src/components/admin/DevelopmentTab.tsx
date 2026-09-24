@@ -9,13 +9,14 @@ import {
 import { DevSettings, CustomHtmlSnippet, ThirdPartyIntegrations } from '../../types';
 import { DEFAULT_DEV_SETTINGS } from '../../data/initialDevSettings';
 import { applyDevSettingsToDOM } from '../../utils/devModeInjector';
+import WebsiteStatusPanel from './WebsiteStatusPanel';
 
 interface DevelopmentTabProps {
   settings?: DevSettings;
   onUpdateSettings?: (newSettings: DevSettings) => void;
 }
 
-type DevSubTab = 'css' | 'js' | 'head' | 'body' | 'snippets' | 'integrations';
+type DevSubTab = 'status' | 'css' | 'js' | 'head' | 'body' | 'snippets' | 'integrations';
 
 export default function DevelopmentTab({ settings: initialSettings, onUpdateSettings }: DevelopmentTabProps) {
   // Local state for DevSettings
@@ -37,7 +38,7 @@ export default function DevelopmentTab({ settings: initialSettings, onUpdateSett
     }
   }, [initialSettings]);
 
-  const [activeSubTab, setActiveSubTab] = useState<DevSubTab>('css');
+  const [activeSubTab, setActiveSubTab] = useState<DevSubTab>('status');
   const [savedSuccessMessage, setSavedSuccessMessage] = useState<string | null>(null);
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -380,6 +381,7 @@ export default function DevelopmentTab({ settings: initialSettings, onUpdateSett
       {/* Sub-Tab Navigation Bar */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-1.5 shadow-2xs flex items-center gap-1 overflow-x-auto no-scrollbar">
         {[
+          { id: 'status', label: 'Website Status', icon: Globe },
           { id: 'css', label: 'Custom CSS', icon: FileCode, badge: devSettings.customCssEnabled ? 'ON' : 'OFF' },
           { id: 'js', label: 'Custom JavaScript', icon: Code, badge: devSettings.customJsEnabled ? 'ON' : 'OFF' },
           { id: 'head', label: 'Custom Head Code', icon: Tag, badge: devSettings.customHeadEnabled ? 'ON' : 'OFF' },
@@ -753,6 +755,8 @@ export default function DevelopmentTab({ settings: initialSettings, onUpdateSett
       )}
 
       {/* 3. THIRD-PARTY INTEGRATIONS TAB */}
+      {activeSubTab === 'status' && <WebsiteStatusPanel />}
+
       {activeSubTab === 'integrations' && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs">

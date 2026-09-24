@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { fetchResource, saveResource, fetchSingleItem, saveSingleItem, deleteSingleItem, getDb } from "../../serverDb";
+import { stripRecycled } from "../services/recycleBin";
 import { requireAdmin } from "../middleware/requireAdmin";
 
 /**
@@ -62,9 +63,15 @@ export function createCrudRouter(resourceName: string, options: CrudRouterOption
       }
 
       if (Array.isArray(payload)) {
+        // A saved list cannot resurrect something in the recycle bin. The
+        // dashboard posts whole lists, and a tab opened before a deletion still
+        // holds the deleted record — saving from it used to write that record
+        // straight back while its bin entry remained.
+        const { kept } = await stripRecycled(resourceName, payload);
+
         // Captured before the write so a hook can see what actually changed.
         const before = options.onAfterReplace ? ((await fetchResource(resourceName)) || []) : [];
-        const updated = await saveResource(resourceName, payload);
+        const updated = await saveResource(resourceName, kept);
 
         if (options.onAfterReplace) {
           try {
