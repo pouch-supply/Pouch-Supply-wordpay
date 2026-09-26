@@ -31,7 +31,12 @@ const check = (name: string, got: unknown, want: unknown) => {
 async function main() {
   console.log('\n=== Website status ===\n');
 
-  const original = await fetchStoreSetting('site_status', null);
+  // Deep-cloned, not held by reference. fetchStoreSetting can hand back an
+  // object the in-memory settings cache also holds, and the writes below then
+  // mutate the very snapshot meant to restore it — which is how a test password
+  // hash survived a run and sat in the stored setting afterwards.
+  const raw = await fetchStoreSetting('site_status', null);
+  const original = raw ? JSON.parse(JSON.stringify(raw)) : null;
   console.log(`Current mode: ${(original as any)?.mode ?? 'live (unset)'} — will be restored at the end.\n`);
 
   try {

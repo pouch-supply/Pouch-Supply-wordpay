@@ -639,7 +639,9 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
             )}
 
             {/* Display list of products belonging to selected brand/collection */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+            {/* Two per row from the smallest screen up: one column made this
+                list several screens long before anything could be chosen. */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
               {filteredProducts.length > 0 ? (
                 filteredProducts.map((prod, pIdx) => {
                   const hasVariants = prod.concreteVariants && prod.concreteVariants.length > 0;
@@ -658,17 +660,21 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
                   return (
                     <div 
                       key={`sb-prod-${prod.id}-${pIdx}`} 
-                      className={`border rounded-xl p-4 flex flex-col justify-between transition-all ${
+                      className={`border rounded-xl p-2.5 sm:p-4 flex flex-col justify-between transition-all ${
                         countAllocated > 0 
                           ? 'border-indigo-500 bg-indigo-50/20 shadow-xs' 
                           : 'border-slate-200 hover:border-slate-300 bg-white'
                       }`}
                     >
+                      {/* object-CONTAIN below, not cover. A pouch can is portrait
+                          and this box is 176px of landscape, so cover cropped the
+                          top and bottom off every product image on desktop as
+                          well as mobile. Contain fits the whole can inside. */}
                       <div className="relative mb-3">
                         <img
                           src={(currentVariant && currentVariant.images && currentVariant.images.length > 0) ? currentVariant.images[0] : prod.image}
                           alt={prod.title}
-                          className="w-full h-44 object-cover rounded-lg bg-slate-50 border border-slate-100"
+                          className="w-full h-36 sm:h-44 object-contain p-2 rounded-lg bg-slate-50 border border-slate-100"
                           referrerPolicy="no-referrer"
                         />
                         {countAllocated > 0 && (
@@ -779,7 +785,11 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
 
         {/* Right column: Box Summary Panel (Floating Box state) */}
         <div className="lg:col-span-1">
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm sticky top-6 space-y-5">
+          {/* Sticky from lg up only. On a phone this is one column, so sticking
+              achieved nothing and the panel simply sat below every product —
+              which is where Add to Cart lives. The bar further down carries it
+              on small screens instead. */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm lg:sticky lg:top-6 space-y-5">
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
               <h3 className="font-extrabold text-slate-800 text-sm tracking-wide flex items-center gap-1.5">
                 <Package className="h-4.5 w-4.5 text-indigo-600" /> Subscription Box
@@ -966,6 +976,48 @@ export default function SubscriptionBuilder({ allProducts, collections, onAddSub
         </div>
 
       </div>
+
+      {/* Progress and Add to Cart, pinned for small screens.
+
+          On a phone the summary panel is the last thing on the page, below every
+          product, so the count and the Add button could only be reached by
+          scrolling to the very end. This carries both while picking, and clears
+          the iOS home bar. Hidden from lg up, where the sidebar does the job. */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-t border-slate-200 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.12)]">
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 text-[11px] font-black text-slate-800">
+              <Package className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+              <span className="truncate">
+                {totalSelectedCount} of {activeLimit} can{activeLimit === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="mt-1.5 h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                style={{ width: `${Math.min(100, activeLimit > 0 ? (totalSelectedCount / activeLimit) * 100 : 0)}%` }}
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={activePlanSlug === "ultimate" ? totalSelectedCount < 12 : totalSelectedCount !== activeLimit}
+            onClick={handleAddToCartClick}
+            className={`shrink-0 py-3 px-4 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 border ${
+              (activePlanSlug === "ultimate" ? totalSelectedCount >= 12 : totalSelectedCount === activeLimit)
+                ? "bg-emerald-600 text-white border-emerald-600 active:bg-emerald-700"
+                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+            }`}
+          >
+            <ShoppingCart className="h-3.5 w-3.5" />
+            {successAnimation ? "Added" : "Add to cart"}
+          </button>
+        </div>
+      </div>
+
+      {/* Room for the bar above, so it never covers the last product. */}
+      <div className="lg:hidden h-24" aria-hidden="true" />
     </div>
   );
 }

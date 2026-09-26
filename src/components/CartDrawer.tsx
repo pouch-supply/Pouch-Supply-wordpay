@@ -154,35 +154,46 @@ export default function CartDrawer({
             onClick={onClose}
           />
 
-          <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
+          {/*
+            The panel's own box, sized here rather than on the panel.
+
+            This was `max-w-full flex pl-10` around a `w-screen` panel. On a
+            phone that is a 100vw panel inside a box 40px narrower than the
+            viewport, so its right-hand edge — the close button and every price
+            in the column — was pushed out of view. Hence "there is no cross
+            button": it was there, just off-screen.
+          */}
+          <div className="absolute inset-y-0 right-0 flex w-full max-w-md">
             {/* Slide-in cart panel */}
-            <motion.div 
-              id="cart-drawer-panel" 
+            <motion.div
+              id="cart-drawer-panel"
               initial={{ x: '100%' }}
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 26, stiffness: 220 }}
-              className="w-screen max-w-md bg-white flex flex-col h-full shadow-2xl border-l border-slate-200 relative z-10"
+              className="w-full bg-white flex flex-col h-full shadow-2xl border-l border-slate-200 relative z-10 overflow-x-hidden"
             >
-              {/* Header */}
-              <div className="px-5 py-5 border-b border-slate-150 flex items-center justify-between bg-slate-50">
-                <div className="flex items-center gap-2">
-                  <ShoppingBag className="h-5 w-5 text-indigo-600" />
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest">
-                    My Shopping Cart ({cartItems.reduce((acc, i) => acc + i.quantity, 0)})
+              {/* Header — sticky so the close button stays reachable on a phone,
+                  where the list is long and the header would scroll away. */}
+              <div className="sticky top-0 z-20 px-4 sm:px-5 py-4 sm:py-5 border-b border-slate-150 flex items-center justify-between gap-2 bg-slate-50">
+                <div className="flex items-center gap-2 min-w-0">
+                  <ShoppingBag className="h-5 w-5 text-indigo-600 shrink-0" />
+                  <h2 className="text-[11px] sm:text-sm font-black text-slate-800 uppercase tracking-wider sm:tracking-widest truncate">
+                    My Cart ({cartItems.reduce((acc, i) => acc + i.quantity, 0)})
                   </h2>
                 </div>
-                
+
                 <button
                   onClick={onClose}
-                  className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+                  aria-label="Close cart"
+                  className="shrink-0 p-2 -mr-1 rounded-full hover:bg-slate-200 active:bg-slate-300 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                 >
-                  <X className="h-4.5 w-4.5" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
 
               {/* Cart items list */}
-              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-4">
                 {cartItems.length === 0 ? (
                   <div className="text-center py-24 space-y-3">
                     <span className="text-3xl block">🛒</span>
@@ -248,7 +259,7 @@ export default function CartDrawer({
 
                             {isSubPack && item.subscriptionFrequency && (
                               <div className="mt-1 flex items-center gap-1.5">
-                                <span className="text-[9.5px] font-extrabold bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-md">
+                                <span className="text-[9.5px] font-extrabold bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-md break-words">
                                   {item.subscriptionFrequency} {item.frequencyDiscount ? `[${item.frequencyDiscount} OFF]` : ''}
                                 </span>
                               </div>
@@ -321,9 +332,10 @@ export default function CartDrawer({
                 )}
               </div>
 
-              {/* Bottom Panel */}
+              {/* Bottom Panel. The bottom padding clears the iOS home bar, so the
+                  checkout button is not sitting underneath it on a phone. */}
               {cartItems.length > 0 && (
-                <div className="border-t border-slate-200 bg-slate-50 p-5 space-y-4 shrink-0">
+                <div className="border-t border-slate-200 bg-slate-50 px-4 sm:px-5 pt-4 sm:pt-5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-5 space-y-4 shrink-0">
                   {/* Promo code block */}
                   <form onSubmit={handleApplyPromo} className="flex gap-2">
                     <input
@@ -376,17 +388,21 @@ export default function CartDrawer({
 
                   {/* Total calculations */}
                   <div className="space-y-2 border-t border-slate-200 pt-3 text-xs leading-normal">
-                    <div className="flex justify-between text-slate-500">
-                      <span>Subtotal items</span>
-                      <span className="font-bold text-slate-800">£{subtotal.toFixed(2)}</span>
+                    <div className="flex justify-between gap-2 text-slate-500">
+                      <span className="truncate">Subtotal items</span>
+                      <span className="font-bold text-slate-800 shrink-0">£{subtotal.toFixed(2)}</span>
                     </div>
 
                     {appliedDiscount && discountValue > 0 && (
-                      <div className="flex justify-between text-emerald-600">
-                        <span className="flex items-center gap-1 font-semibold">
-                          <Ticket className="h-3.5 w-3.5" /> Discount ({appliedDiscount.title})
+                      <div className="flex justify-between gap-2 text-emerald-600">
+                        {/* min-w-0 + truncate: a prefixed loyalty code such as
+                            "NEH-PLATINUM_ODD" is long enough to push the amount
+                            off the edge of a phone screen without it. */}
+                        <span className="flex items-center gap-1 font-semibold min-w-0">
+                          <Ticket className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Discount ({appliedDiscount.title})</span>
                         </span>
-                        <span className="font-extrabold">-£{discountValue.toFixed(2)}</span>
+                        <span className="font-extrabold shrink-0">-£{discountValue.toFixed(2)}</span>
                       </div>
                     )}
 
@@ -396,16 +412,19 @@ export default function CartDrawer({
                       </div>
                     )}
 
-                    <div className="flex justify-between text-slate-500">
-                      <span>Delivery fee</span>
-                      <span className={shippingFee === 0 ? "text-emerald-600 font-extrabold" : "font-extrabold text-slate-800"}>
+                    <div className="flex justify-between gap-2 text-slate-500">
+                      <span className="truncate">Delivery fee</span>
+                      <span className={shippingFee === 0 ? "text-emerald-600 font-extrabold shrink-0" : "font-extrabold text-slate-800 shrink-0"}>
                         {shippingFee === 0 ? 'FREE' : `£${shippingFee.toFixed(2)}`}
                       </span>
                     </div>
 
-                    <div className="flex justify-between text-slate-800 text-sm font-extrabold pt-2 border-t border-slate-200">
-                      <span className="flex items-center gap-1">Total amount <Sparkles className="h-3 w-3 text-indigo-500" /></span>
-                      <span className="text-base text-slate-950">£{total.toFixed(2)}</span>
+                    <div className="flex justify-between gap-2 text-slate-800 text-sm font-extrabold pt-2 border-t border-slate-200">
+                      <span className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">Total amount</span>
+                        <Sparkles className="h-3 w-3 text-indigo-500 shrink-0" />
+                      </span>
+                      <span className="text-base text-slate-950 shrink-0">£{total.toFixed(2)}</span>
                     </div>
                   </div>
 

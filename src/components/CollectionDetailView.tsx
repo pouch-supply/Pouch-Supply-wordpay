@@ -9,6 +9,7 @@ import {
   Eye, 
   ShoppingCart, 
   Filter, 
+  X, 
   HelpCircle, 
   Heart, 
   Grid, 
@@ -376,6 +377,14 @@ export default function CollectionDetailView({
     );
   };
 
+  /** Ticked filters, shown on the mobile Filters button so its state is visible
+   *  while the panel is closed. */
+  const activeFilterCount =
+    selectedBrands.length + selectedFlavours.length + selectedNicotines.length + selectedStrengths.length;
+
+  /** Open state of the mobile filter drawer. */
+  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
+
   const resetAllFilters = () => {
     setSelectedBrands([]);
     setSelectedFlavours([]);
@@ -389,6 +398,129 @@ export default function CollectionDetailView({
     selectedFlavours.length > 0 || 
     selectedNicotines.length > 0 || 
     selectedStrengths.length > 0;
+
+  /**
+   * The filter controls themselves, declared once and rendered twice: in the
+   * desktop sidebar and in the mobile drawer. Duplicating this markup would
+   * mean every future filter had to be added in two places.
+   */
+  const filterPanelBody = (
+    <>
+
+        {/* 1. FLAVOUR CHECKBOX LIST */}
+        <div className="space-y-2.5">
+          <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Flavour</label>
+          <div className="space-y-1.5">
+            {filterOptionsAndCounts.flavours.map(flav => {
+              const isChecked = selectedFlavours.includes(flav);
+              const count = filterOptionsAndCounts.flavourCounts[flav] || 0;
+              return (
+                <label key={flav} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleFlavourFilter(flav)}
+                      className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
+                    />
+                    <span>{flav}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
+                    {count}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 2. NICOTINE CONTENT CHECKBOX LIST */}
+        <div className="space-y-2.5 pt-4 border-t border-slate-100">
+          <div className="flex items-center gap-1 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+            <span>Nicotine content</span>
+          </div>
+          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            {filterOptionsAndCounts.nicotines.map(nic => {
+              const isChecked = selectedNicotines.includes(nic);
+              const count = filterOptionsAndCounts.nicotineCounts[nic] || 0;
+              return (
+                <label key={nic} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleNicotineFilter(nic)}
+                      className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
+                    />
+                    <span>{nic}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
+                    {count}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 3. STRENGTH CHECKBOX LIST */}
+        <div className="space-y-2.5 pt-4 border-t border-slate-100">
+          <div className="flex items-center gap-1 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+            <span>Strength</span>
+            <span title="Strength categorized by standard ranges"><HelpCircle className="h-3 w-3 text-slate-300 cursor-help" /></span>
+          </div>
+          <div className="space-y-1.5">
+            {filterOptionsAndCounts.strengths.map(str => {
+              const isChecked = selectedStrengths.includes(str);
+              const count = filterOptionsAndCounts.strengthCounts[str] || 0;
+              return (
+                <label key={str} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleStrengthFilter(str)}
+                      className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
+                    />
+                    <span>{str}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
+                    {count}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 4. BRAND CHECKBOX LIST */}
+        <div className="space-y-2.5 pt-4 border-t border-slate-100">
+          <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Brand</label>
+          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            {filterOptionsAndCounts.brands.map(brand => {
+              const isChecked = selectedBrands.includes(brand);
+              const count = filterOptionsAndCounts.brandCounts[brand] || 0;
+              return (
+                <label key={brand} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleBrandFilter(brand)}
+                      className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
+                    />
+                    <span>{brand}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
+                    {count}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+    </>
+  );
 
   return (
     <div id="collection-detail-layout" className="bg-[#f6f6f7] min-h-screen py-8 px-4 sm:px-6 lg:px-8 font-sans">
@@ -443,8 +575,12 @@ export default function CollectionDetailView({
         {/* Two-Column split layout for Filters Sidebar + Products Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
           
-          {/* LEFT SIDEBAR - FILTER PANEL */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-6 shadow-xs">
+          {/* FILTERS
+              On a phone the panel used to be the FIRST thing in a single-column
+              grid, so every visitor scrolled past the whole of it before seeing
+              a product. It is a drawer there now, opened from the toolbar, and
+              still a sidebar from lg up where there is room for it. */}
+          <aside className="hidden lg:block bg-white border border-slate-200 rounded-2xl p-5 space-y-6 shadow-xs">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h2 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                 <Filter className="h-3.5 w-3.5 text-slate-400" /> FILTER PRODUCTS
@@ -458,129 +594,82 @@ export default function CollectionDetailView({
                 </button>
               )}
             </div>
+            {filterPanelBody}
+          </aside>
 
-            {/* 1. FLAVOUR CHECKBOX LIST */}
-            <div className="space-y-2.5">
-              <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Flavour</label>
-              <div className="space-y-1.5">
-                {filterOptionsAndCounts.flavours.map(flav => {
-                  const isChecked = selectedFlavours.includes(flav);
-                  const count = filterOptionsAndCounts.flavourCounts[flav] || 0;
-                  return (
-                    <label key={flav} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleFlavourFilter(flav)}
-                          className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
-                        />
-                        <span>{flav}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
-                        {count}
-                      </span>
-                    </label>
-                  );
-                })}
+          {/* The same filters as a slide-over, for phones and tablets. */}
+          {isFilterDrawerOpen && (
+            <div className="fixed inset-0 z-50 lg:hidden">
+              <div
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+                onClick={() => setIsFilterDrawerOpen(false)}
+              />
+              <div className="absolute inset-y-0 left-0 flex w-full max-w-xs">
+                <div className="w-full bg-white flex flex-col h-full shadow-2xl relative z-10 overflow-x-hidden animate-slide-in-left">
+                  <div className="sticky top-0 z-20 bg-slate-50 border-b border-slate-150 px-4 py-4 flex items-center justify-between gap-2">
+                    <h2 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5 min-w-0">
+                      <Filter className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">Filter Products</span>
+                    </h2>
+                    <button
+                      onClick={() => setIsFilterDrawerOpen(false)}
+                      aria-label="Close filters"
+                      className="shrink-0 p-2 -mr-1 rounded-full hover:bg-slate-200 active:bg-slate-300 text-slate-600 cursor-pointer"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+                    {filterPanelBody}
+                  </div>
+
+                  <div className="border-t border-slate-200 bg-slate-50 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex gap-2 shrink-0">
+                    {isAnyFilterActive && (
+                      <button
+                        onClick={resetAllFilters}
+                        className="flex-1 py-3 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-black uppercase tracking-wider cursor-pointer"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsFilterDrawerOpen(false)}
+                      className="flex-[2] py-3 rounded-xl bg-slate-900 text-white text-xs font-black uppercase tracking-wider cursor-pointer"
+                    >
+                      Show {collectionProducts.length} product{collectionProducts.length === 1 ? '' : 's'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-
-            {/* 2. NICOTINE CONTENT CHECKBOX LIST */}
-            <div className="space-y-2.5 pt-4 border-t border-slate-100">
-              <div className="flex items-center gap-1 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
-                <span>Nicotine content</span>
-              </div>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                {filterOptionsAndCounts.nicotines.map(nic => {
-                  const isChecked = selectedNicotines.includes(nic);
-                  const count = filterOptionsAndCounts.nicotineCounts[nic] || 0;
-                  return (
-                    <label key={nic} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleNicotineFilter(nic)}
-                          className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
-                        />
-                        <span>{nic}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
-                        {count}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 3. STRENGTH CHECKBOX LIST */}
-            <div className="space-y-2.5 pt-4 border-t border-slate-100">
-              <div className="flex items-center gap-1 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
-                <span>Strength</span>
-                <span title="Strength categorized by standard ranges"><HelpCircle className="h-3 w-3 text-slate-300 cursor-help" /></span>
-              </div>
-              <div className="space-y-1.5">
-                {filterOptionsAndCounts.strengths.map(str => {
-                  const isChecked = selectedStrengths.includes(str);
-                  const count = filterOptionsAndCounts.strengthCounts[str] || 0;
-                  return (
-                    <label key={str} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleStrengthFilter(str)}
-                          className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
-                        />
-                        <span>{str}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
-                        {count}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 4. BRAND CHECKBOX LIST */}
-            <div className="space-y-2.5 pt-4 border-t border-slate-100">
-              <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Brand</label>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                {filterOptionsAndCounts.brands.map(brand => {
-                  const isChecked = selectedBrands.includes(brand);
-                  const count = filterOptionsAndCounts.brandCounts[brand] || 0;
-                  return (
-                    <label key={brand} className="flex items-center justify-between text-xs text-slate-700 font-semibold hover:text-slate-900 cursor-pointer py-1">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleBrandFilter(brand)}
-                          className="rounded border-slate-300 text-indigo-650 focus:ring-indigo-500 h-3.5 w-3.5"
-                        />
-                        <span>{brand}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded">
-                        {count}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          )}
 
           {/* RIGHT COLUMN - LISTINGS GRID & CONTROLS */}
           <div className="lg:col-span-3 space-y-6">
             
             {/* Sorting and View Mode Toolbar */}
             <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-              <span className="text-xs text-slate-500 font-semibold pl-2">
-                Showing <strong className="text-slate-800">{collectionProducts.length}</strong> of {baseCollectionProducts.length} products
-              </span>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                {/* Only where the sidebar is hidden — from lg up the filters are
+                    already on screen and a button would just be noise. */}
+                <button
+                  type="button"
+                  onClick={() => setIsFilterDrawerOpen(true)}
+                  className="lg:hidden shrink-0 flex items-center gap-1.5 bg-slate-900 text-white text-[11px] font-black uppercase tracking-wider px-3 py-2 rounded-lg cursor-pointer active:bg-slate-700"
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  Filters
+                  {activeFilterCount > 0 && (
+                    <span className="bg-white text-slate-900 rounded-full min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center text-[10px] font-black">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </button>
+                <span className="text-xs text-slate-500 font-semibold sm:pl-2 truncate">
+                  Showing <strong className="text-slate-800">{collectionProducts.length}</strong> of {baseCollectionProducts.length} products
+                </span>
+              </div>
               
               <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
                 
